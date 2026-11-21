@@ -21,6 +21,7 @@ const ICONS: Record<ToastIcon, SymbolName> = {
   sent: "paperplane",
   calculation: "equalCircleFill",
   iphone: "iphone",
+  swipe: "handDrawFill",
 };
 
 export function ToastHost() {

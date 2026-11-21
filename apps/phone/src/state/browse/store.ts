@@ -23,7 +23,7 @@ import { refreshDefaultBrowser } from "../settings/defaultBrowser";
 import { forgetPosition, saveTabPosition, watchFrontScroll } from "./positions";
 import { noteLocalChange, showSpace } from "../sync/store";
 import { spaceToShow, tabsInSpace } from "../tabs/spaces";
-import { currentPreferences, loadPreferences } from "../settings/store";
+import { currentPreferences, loadPreferences, setPreference } from "../settings/store";
 import type { VisitTransition, Visit } from "../store/browserDatabase";
 import { enterTarget, rowTarget, resolve, type TrayRow } from "../search/omnibox";
 import { applySearchEngine, dismissSearch, presentSearch, refreshSearchRows, searchState, useSearch, beginPasteRead, endPasteRead } from "../search/store";
@@ -69,9 +69,9 @@ import { syncOffered } from "../../platform/system";
 export type Surface = "start" | "browsing" | "deck";
 export type Sheet = "archive" | "spaces" | null;
 
-type BrowseState = { surface: Surface; sheet: Sheet; deckEntrance: string | null; frozenOrder: string[] | null; opening: string | null; openingCardWidth: number | null; veiled: string | null; covered: string | null; leaving: string | null };
+type BrowseState = { surface: Surface; sheet: Sheet; deckEntrance: string | null; frozenOrder: string[] | null; opening: string | null; openingCardWidth: number | null; veiled: string | null; covered: string | null; arriving: string | null; leaving: string | null };
 
-export const useBrowse = create<BrowseState>()(() => ({ surface: "start", sheet: null, deckEntrance: null, frozenOrder: null, opening: null, openingCardWidth: null, veiled: null, covered: null, leaving: null }));
+export const useBrowse = create<BrowseState>()(() => ({ surface: "start", sheet: null, deckEntrance: null, frozenOrder: null, opening: null, openingCardWidth: null, veiled: null, covered: null, arriving: null, leaving: null }));
 
 const lastVisits = new Map<string, Visit>();
 
@@ -242,6 +242,8 @@ export function whenPageDrawn(id: string, capMs: number, then: (drawn: boolean) 
 export const pageDrawn = (id: string) => drawnWaiters.get(id)?.();
 
 export const OPENING_COVER_ID = "openingCover";
+
+export const ARRIVAL_COVER_ID = "pagerArrivalCover";
 
 export type CoverHidden = "drawn" | "cap" | "lost";
 
@@ -649,6 +651,33 @@ export function switchToNeighbour(id: string) {
   const order = swipeOrder();
   useBrowse.setState({ frozenOrder: order });
   openTab(id);
+  noteTabSwiped(id);
+}
+
+const ARRIVAL_COVER_LOST_MS = 400;
+let stopArrivalWait: (() => void) | null = null;
+
+export function arriveAtNeighbour(id: string) {
+  const order = swipeOrder();
+  stopArrivalWait?.();
+  useBrowse.setState({ frozenOrder: order });
+  openTab(id);
+  useBrowse.setState({ covered: id, arriving: id });
+  noteTabSwiped(id);
+  stopArrivalWait = whenPageCoverHidden(id, ARRIVAL_COVER_LOST_MS, () => {
+    stopArrivalWait = null;
+    if (useBrowse.getState().arriving === id) useBrowse.setState({ arriving: null, covered: useBrowse.getState().covered === id ? null : useBrowse.getState().covered });
+  });
+}
+
+export const arrivalCovers = (id: string) => {
+  const { arriving, covered } = useBrowse.getState();
+  return arriving === id && covered === id;
+};
+
+function noteTabSwiped(id: string) {
+  if (!currentPreferences().tabSwipeHintShown) setPreference("tabSwipeHintShown", true);
+  if (!isPrivateTab(currentTabs(), id)) countUsage("tabs_bar_swiped");
 }
 
 const transitions: Record<VisitKind, VisitTransition | null> = {

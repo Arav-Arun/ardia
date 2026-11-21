@@ -17,6 +17,7 @@ export type Preferences = {
   autoOpensKeyboard: boolean;
   hasFinishedOnboarding: boolean;
   archiveCardShown: boolean;
+  tabSwipeHintShown: boolean;
   colorChoice: ColorChoice | null;
   dynamicColors: boolean | null;
   materialYou: boolean;
@@ -38,6 +39,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   autoOpensKeyboard: true,
   hasFinishedOnboarding: false,
   archiveCardShown: false,
+  tabSwipeHintShown: false,
   colorChoice: null,
   dynamicColors: null,
   materialYou: false,
@@ -59,6 +61,7 @@ export const PREFERENCE_KEYS: Record<keyof Preferences, string> = {
   autoOpensKeyboard: "settings.autoOpenKeyboard",
   hasFinishedOnboarding: "settings.finishedOnboarding",
   archiveCardShown: "tabs.archiveCardShown",
+  tabSwipeHintShown: "tabs.swipeHintShown",
   colorChoice: "settings.color",
   dynamicColors: "settings.dynamicColors",
   materialYou: "settings.materialYou",
@@ -87,6 +90,7 @@ const PARSERS: { [K in keyof Preferences]: (raw: string) => Preferences[K] | und
   autoOpensKeyboard: flag,
   hasFinishedOnboarding: flag,
   archiveCardShown: flag,
+  tabSwipeHintShown: flag,
   colorChoice: oneOf<ColorChoice>(["plum", "blue", "purple", "pink", "red", "orange", "yellow", "green", "neutral"]),
   dynamicColors: flag,
   materialYou: flag,
