@@ -160,6 +160,10 @@ export type PageSnapshot = {
   frame?: { x: number; y: number; width: number; height: number } | null;
 };
 
+export type RefusedSnapshot = { refused: "hidden" | "blank" };
+
+export const isRefusedSnapshot = (taken: PageSnapshot | RefusedSnapshot): taken is RefusedSnapshot => "refused" in taken;
+
 export type PageScrollPosition = { y: number; viewportWidth?: number; viewportHeight: number; contentHeight: number };
 
 export type NightShadeMode = "disabled" | "automatic" | "always";

@@ -82,6 +82,10 @@ export const PHONE_WHATS_SENT: { title: string; items: SentItem[] }[] = [
         fields: ["start_no_tabs_button_taps"],
       },
       {
+        text: "In the same daily counts: how often a picture of a page for the tab switcher was thrown away because it came out as one flat colour or the page was not on screen. Counts only, and never while browsing privately",
+        fields: ["page_pictures_blank", "page_pictures_hidden"],
+      },
+      {
         text: "In the same daily counts, on Android: how often you tapped the Ardia logo on the start page to search. Counts only, and never while browsing privately",
         fields: ["start_logo_taps"],
       },

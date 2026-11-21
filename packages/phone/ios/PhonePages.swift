@@ -265,6 +265,7 @@ final class PhonePages {
   func snapshot(_ pageID: String, maxWidth: Int?, quality: Int?) async throws -> [String: Any]? {
     let page = try require(pageID)
     guard let webView = page.webView, !webView.bounds.isEmpty else { return nil }
+    guard PageSnapshots.isOnScreen(webView) else { return ["refused": "hidden"] }
     let generation = visuals.generation(pageID)
     let hostBounds = webView.superview?.bounds ?? webView.bounds
     let pageFrame = Self.restingFrame(of: webView)
@@ -275,6 +276,8 @@ final class PhonePages {
     configuration.snapshotWidth = NSNumber(value: Double(min(margined ? wanted * pageFrame.width / hostBounds.width : wanted, pageFrame.width)))
     guard let shot = try? await webView.takeSnapshot(configuration: configuration) else { return nil }
     guard Self.restingFrame(of: webView) == pageFrame, (webView.superview?.bounds ?? webView.bounds) == hostBounds else { return nil }
+    guard PageSnapshots.isOnScreen(webView) else { return ["refused": "hidden"] }
+    guard !PageSnapshots.isFlat(shot) else { return ["refused": "blank"] }
     let image = margined ? Self.withSideMargins(shot, page: pageFrame, screen: hostBounds.size, color: page.underPageBackgroundColor ?? webView.underPageBackgroundColor ?? .black) : shot
     guard let written = await PageSnapshots.write(pageID, image: image, isPrivate: page.isPrivate, quality: quality ?? 82) else { return nil }
     if tabIDs[pageID] == page.id { visuals.captured(pageID, generation: generation) }
