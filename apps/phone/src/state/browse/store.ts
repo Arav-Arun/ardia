@@ -720,6 +720,7 @@ export async function captureSnapshot(id: string, pageTop: number | null = null)
     return;
   }
   const snapshot = taken;
+  if (snapshot) pictureSaved(id, snapshot.route);
   const top = pageTop ?? (pullCapture?.id === id || deckPullGrowing() === id ? PULLED_PAGE_TOP : null);
   if (snapshot && top !== null) noteSnapshotPageTop(snapshot.uri, top);
   else if (snapshot?.frame) noteSnapshotPageTop(snapshot.uri, snapshot.frame.y);
@@ -730,6 +731,12 @@ export async function captureSnapshot(id: string, pageTop: number | null = null)
     updateTabById(id, { snapshotFileName: step.show });
     showFadingDeckThePicture(id);
   }
+}
+
+function pictureSaved(id: string, route: string | undefined) {
+  labTrace(`PAGELAB snapshot ${id} saved by ${route ?? "unknown"}`);
+  if (route !== "engine" || useTabs.getState().incognito || findTab(currentTabs(), id)?.isPrivate) return;
+  countUsage("page_pictures_webkit");
 }
 
 function pictureRefused(id: string, reason: "hidden" | "blank") {

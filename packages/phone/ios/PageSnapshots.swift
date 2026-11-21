@@ -55,6 +55,21 @@ enum PageSnapshots {
     return view.convert(view.bounds, to: window).intersects(window.bounds)
   }
 
+  static let screenCopyScale: CGFloat = 2
+
+  @MainActor
+  static func screenCopy(of view: UIView, width: CGFloat) -> UIImage? {
+    guard view.bounds.width > 0, width > 0 else { return nil }
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = screenCopyScale * width / view.bounds.width
+    format.opaque = true
+    var drawn = false
+    let image = UIGraphicsImageRenderer(bounds: view.bounds, format: format).image { _ in
+      drawn = view.drawHierarchy(in: view.bounds, afterScreenUpdates: false)
+    }
+    return drawn ? image : nil
+  }
+
   static let flatSample = 16
   static let flatSpread = 3
 

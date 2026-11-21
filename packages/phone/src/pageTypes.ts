@@ -152,7 +152,7 @@ export type PageSnapshot = {
   uri: string;
   width: number;
   height: number;
-  route?: "draw" | "windowCopy";
+  route?: "draw" | "windowCopy" | "screenCopy" | "engine";
   bytes?: number;
   kept?: boolean;
   durable?: boolean;
