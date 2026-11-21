@@ -15,6 +15,7 @@ const mirror = <K extends keyof Settings>(key: K, send: (value: Settings[K]) => 
 
 const NATIVE_SETTINGS: Mirror[] = [
   mirror("appearance", setAppearance),
+  mirror("pageScrollBars", (bars) => setThinScrollBars(bars === "thin")),
   mirror("autoPictureInPicture", setAutoPictureInPicture),
   mirror("videoUpscaling", setVideoUpscaling),
   mirror("webKitFraudWarnings", setWebKitFraudWarnings),
@@ -26,7 +27,6 @@ const NATIVE_SETTINGS: Mirror[] = [
 
 export function startNativeSettings() {
   startInterfaceScale();
-  void setThinScrollBars(false);
   const sent = new Map<keyof Settings, unknown>();
   const sync = (settings: Settings) => {
     for (const { key, send } of NATIVE_SETTINGS) {
