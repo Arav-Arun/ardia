@@ -4,6 +4,7 @@ final class LinkActivationOrder: NSObject {
   private struct Placement {
     weak var window: NSWindow?
     let below: Int
+    let covered: Bool
   }
 
   private final class Hidden {
@@ -19,6 +20,7 @@ final class LinkActivationOrder: NSObject {
     case stageManager = "stageManager"
     case windowManager = "windowManager"
     case keyRestored = "keyRestored"
+    case leftVisible = "leftVisible"
   }
 
   private static let pairing: TimeInterval = 3
@@ -136,7 +138,7 @@ final class LinkActivationOrder: NSObject {
       guard let number = (entry[kCGWindowNumber as String] as? NSNumber)?.intValue,
             let owner = (entry[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
             let layer = (entry[kCGWindowLayer as String] as? NSNumber)?.intValue,
-            let bounds = (entry[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0) })
+            let bounds = Self.bounds(entry)
       else { return nil }
       let windowServer = entry[kCGWindowOwnerName as String] as? String == "Window Server"
       return LinkActivationHold.Listed(number: number, owner: owner, layer: layer, bounds: bounds, windowServer: windowServer)
@@ -198,11 +200,17 @@ final class LinkActivationOrder: NSObject {
 
   private func hideBeforeRaise() {
     showHidden()
+    var leftMainWindowVisible = false
     for placement in placements {
       guard let window = placement.window, window.isVisible, window.alphaValue == 1 else { continue }
+      guard placement.covered else {
+        leftMainWindowVisible = leftMainWindowVisible || WindowManager.shared.isMainWindow(window)
+        continue
+      }
       window.alphaValue = 0
       hidden.append(Hidden(window))
     }
+    if leftMainWindowVisible { Self.report(.leftVisible) }
     let scheduledIn = activation
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.hiddenLimit) { [weak self] in
       guard let self, self.activation == scheduledIn else { return }
@@ -268,15 +276,23 @@ final class LinkActivationOrder: NSObject {
   private static func placements(_ list: [[String: Any]]) -> [Placement] {
     let pid = ProcessInfo.processInfo.processIdentifier
     var above: Int?
+    var othersInFront: [CGRect] = []
     var result: [Placement] = []
     for info in list where (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0 {
       guard let number = (info[kCGWindowNumber as String] as? NSNumber)?.intValue else { continue }
       guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid else {
         above = number
+        if let bounds = bounds(info), (info[kCGWindowAlpha as String] as? Double) != 0 { othersInFront.append(bounds) }
         continue
       }
-      if let above, let window = NSApp.window(withWindowNumber: number) { result.append(Placement(window: window, below: above)) }
+      guard let above, let window = NSApp.window(withWindowNumber: number) else { continue }
+      let covered = bounds(info).map { LinkActivationHold.covered($0, by: othersInFront) } ?? true
+      result.append(Placement(window: window, below: above, covered: covered))
     }
     return result
+  }
+
+  private static func bounds(_ info: [String: Any]) -> CGRect? {
+    (info[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }
   }
 }

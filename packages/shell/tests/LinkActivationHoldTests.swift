@@ -23,6 +23,17 @@ final class LinkActivationHoldTests: XCTestCase {
     window(windowServer, layer: Int(CGWindowLevelForKey(.cursorWindow)), CGRect(x: point.x - 8, y: point.y - 8, width: 32, height: 32))
   }
 
+  func testOnlyAnOverlappingWindowCovers() {
+    let browser = CGRect(x: 840, y: -1410, width: 1720, height: 1410)
+    let beside = browser.offsetBy(dx: 1720, dy: 0)
+    let otherScreen = CGRect(x: -1080, y: -1050, width: 1920, height: 1050)
+    XCTAssertFalse(LinkActivationHold.covered(browser, by: []))
+    XCTAssertFalse(LinkActivationHold.covered(browser, by: [beside, otherScreen]))
+    XCTAssertFalse(LinkActivationHold.covered(browser, by: [beside.offsetBy(dx: -1, dy: 0)]))
+    XCTAssertTrue(LinkActivationHold.covered(browser, by: [beside.offsetBy(dx: -40, dy: 0)]))
+    XCTAssertTrue(LinkActivationHold.covered(browser, by: [beside, browser]))
+  }
+
   func testARecordedCursorAboveMissionControlStillLeavesItToTheDock() {
     let pointer = CGPoint(x: 500, y: 400)
     let list = [
