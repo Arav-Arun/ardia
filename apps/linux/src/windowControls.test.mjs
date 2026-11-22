@@ -13,9 +13,134 @@ function state(settings = {}, window = {}, extra = {}) {
   };
 }
 
-test("Linux lays out its window with the Windows build's chrome", async () => {
+test("Linux lays out its window with the Windows build's chrome until Traffic lights is chosen", async () => {
   const linux = (await import("../../browser/src/lib/platformChrome.linux.ts")).WINDOW_CHROME;
-  assert.equal(linux, windowsChrome);
+  assert.deepEqual(linux, windowsChrome);
+});
+
+test("the traffic lights show only when chosen, and hide while the window or a page is full screen, as the Mac's do", async () => {
+  const { trafficLightsShown } = await import("./windowControlsRules.ts");
+  const shown = (style, pageFullScreen = false, windowFullScreen = false) => trafficLightsShown({ style, pageFullScreen, windowFullScreen });
+  assert.equal(shown("trafficLights"), true);
+  assert.equal(shown("native"), false);
+  assert.equal(shown("hidden"), false);
+  assert.equal(shown("trafficLights", true), false);
+  assert.equal(shown("trafficLights", false, true), false);
+});
+
+test("with the traffic lights every layout keeps the header's hamburger, never collapses the header and keeps Downloads in it", async () => {
+  const { menuBesideWindowButtons, linuxSidebarCaptionRoom, linuxSidebarHeaderCollapsed, linuxDownloadsInSidebarFooter, headerFitsDownloads, addressBarInSidebar } = await import("./sidebarHeaderLayout.ts");
+  const { TRAFFIC_LIGHTS_CHROME } = await import("../../browser/src/lib/platformChrome.linux.ts");
+  const layouts = [{}, { compactToolbar: true }, { sidebarSide: "right" }, { sidebarSide: "right", sidebarWidth: 160 }, { tabLayout: "top" }, { autoHideTabs: true }, { minimalismMode: true }];
+  for (const settings of layouts) {
+    for (const window of [{}, { fullScreen: true }, { kind: "small" }]) {
+      const s = state(settings, window);
+      const label = JSON.stringify([settings, window]);
+      assert.equal(menuBesideWindowButtons(s, "w", false, TRAFFIC_LIGHTS_CHROME), false, label);
+      assert.equal(linuxSidebarCaptionRoom(s, "w", false, TRAFFIC_LIGHTS_CHROME), 0, label);
+      assert.equal(linuxSidebarHeaderCollapsed(s, "w", false, TRAFFIC_LIGHTS_CHROME), false, label);
+      assert.equal(headerFitsDownloads(s, "w", false, TRAFFIC_LIGHTS_CHROME), true, label);
+    }
+    assert.equal(linuxDownloadsInSidebarFooter(state(settings), "w", false, TRAFFIC_LIGHTS_CHROME), !!addressBarInSidebar(state(settings), "w"), JSON.stringify(settings));
+  }
+});
+
+test("with the window buttons hidden every layout keeps the header's hamburger and keeps no room for buttons, so a tiling window manager's window still has its menu", async () => {
+  const { menuBesideWindowButtons, linuxSidebarCaptionRoom, linuxSidebarHeaderCollapsed, linuxDownloadsInSidebarFooter, headerFitsDownloads, addressBarInSidebar } = await import("./sidebarHeaderLayout.ts");
+  const { HIDDEN_BUTTONS_CHROME } = await import("../../browser/src/lib/platformChrome.linux.ts");
+  const layouts = [{}, { compactToolbar: true }, { sidebarSide: "right" }, { sidebarSide: "right", sidebarWidth: 160 }, { tabLayout: "top" }, { autoHideTabs: true }, { minimalismMode: true }, { addressBar: "sidebar" }];
+  for (const settings of layouts) {
+    for (const window of [{}, { fullScreen: true }, { kind: "small" }]) {
+      const s = state(settings, window);
+      const label = JSON.stringify([settings, window]);
+      assert.equal(menuBesideWindowButtons(s, "w", false, HIDDEN_BUTTONS_CHROME), false, label);
+      assert.equal(linuxSidebarCaptionRoom(s, "w", false, HIDDEN_BUTTONS_CHROME), 0, label);
+      assert.equal(linuxSidebarHeaderCollapsed(s, "w", false, HIDDEN_BUTTONS_CHROME), false, label);
+      assert.equal(headerFitsDownloads(s, "w", false, HIDDEN_BUTTONS_CHROME), true, label);
+    }
+    assert.equal(linuxDownloadsInSidebarFooter(state(settings), "w", false, HIDDEN_BUTTONS_CHROME), !!addressBarInSidebar(state(settings), "w"), JSON.stringify(settings));
+  }
+});
+
+test("with the traffic lights or the buttons hidden a hamburger is drawn even where Minimalism or the theme hides the profile, and in Little Ardia's bar; the native buttons keep it beside them", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { registerHooks } = await import("node:module");
+  const indicatorUrl = new URL("./ProfileIndicator.tsx", import.meta.url).href;
+  const fakes = new Map([
+    ["@ardia/shell", "export const Symbol = () => null;"],
+    ["./AppMenuButton", "export function AppMenuButton() { return null; }"],
+  ]);
+  registerHooks({
+    resolve: (specifier, context, next) => context.parentURL === indicatorUrl && fakes.has(specifier) ? { url: `data:text/javascript,${encodeURIComponent(fakes.get(specifier))}`, shortCircuit: true } : next(specifier, context),
+  });
+  const { mount } = await import("../../browser/src/test-hooks.mjs");
+  const { useBrowser } = await import("../../browser/src/state/browser/store.ts");
+  const { WindowContext } = await import("../../browser/src/state/browser/hooks.ts");
+  const { WINDOW_CHROME } = await import("../../browser/src/lib/windowChrome.ts");
+  const { TRAFFIC_LIGHTS_CHROME, HIDDEN_BUTTONS_CHROME } = await import("../../browser/src/lib/platformChrome.linux.ts");
+  const { HeaderAppMenu, ProfileIndicator } = await import("./ProfileIndicator.tsx");
+  const source = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+  const sidebar = source("../../browser/src/components/sidebar/Sidebar.tsx");
+  const strip = source("../../browser/src/components/tabstrip/TopTabStrip.tsx");
+  assert.match(sidebar, /\n\s*<ProfileIndicator room=\{[^\n]*\} profileShown=\{profileShown\} \/>/, "the sidebar header always mounts the indicator");
+  assert.doesNotMatch(sidebar, /profileShown \? <ProfileIndicator/);
+  assert.match(strip, /<ProfileIndicator room=\{PROFILE_ROOM\} profileShown=\{!minimal\} \/>/, "the top strip mounts it under Minimalism too");
+  assert.match(strip, /useProfileIndicatorWidth\(PROFILE_ROOM, !minimal\)/);
+  assert.match(strip, /const controls = minimal \? profileChip :/);
+  const little = source("../../browser/src/components/littleArdia/LittleArdiaWindow.tsx");
+  assert.match(little, /const appMenu = useAppMenuInHeader\(\);/);
+  assert.match(little, /\.\.\.\(appMenu \? \[<HeaderAppMenu key="menu" size=\{SMALL_BAR_BUTTON\} \/>\] : \[\]\)/, "Little Ardia's bar holds the hamburger");
+  const S = () => useBrowser.getState();
+  S().hydrate({ profiles: { default: { id: "default", name: "Personal", color: "plum", icon: null, createdAt: 0 } }, profileOrder: ["default"] });
+  const windowId = S().createWindow({ url: "https://menu.ardia.test/" });
+  const saved = { ...WINDOW_CHROME };
+  const menuButtons = (node) => !node || typeof node !== "object" ? 0 : Array.isArray(node) ? node.reduce((sum, child) => sum + menuButtons(child), 0) : (node.type?.name === "AppMenuButton" ? 1 : 0) + menuButtons(node.props?.children);
+  const menus = (profileShown) => {
+    const mounted = mount(() => ProfileIndicator({ room: 160, profileShown }), { contexts: [[WindowContext, windowId]] });
+    try {
+      return menuButtons(mounted.value);
+    } finally {
+      mounted.unmount();
+    }
+  };
+  try {
+    for (const settings of [{ tabLayout: "top", minimalismMode: true }, { tabLayout: "sidebar", minimalismMode: false }, { tabLayout: "sidebar", sidebarSide: "right", minimalismMode: false }]) {
+      S().updateSettings(settings);
+      for (const [name, chrome] of [["trafficLights", TRAFFIC_LIGHTS_CHROME], ["hidden", HIDDEN_BUTTONS_CHROME]]) {
+        Object.assign(WINDOW_CHROME, chrome);
+        const label = JSON.stringify([settings, name]);
+        assert.equal(menus(false), 1, `profile hidden: ${label}`);
+        assert.equal(menus(true), 1, `profile shown: ${label}`);
+      }
+      Object.assign(WINDOW_CHROME, windowsChrome);
+      assert.equal(menus(false), 0, `native: ${JSON.stringify(settings)}`);
+    }
+    const little = S().createWindow({ kind: "small", url: "https://little.ardia.test/" });
+    const barMenus = () => {
+      const mounted = mount(() => HeaderAppMenu({ size: 28 }), { contexts: [[WindowContext, little]] });
+      try {
+        return menuButtons(mounted.value);
+      } finally {
+        mounted.unmount();
+      }
+    };
+    for (const [name, chrome] of [["trafficLights", TRAFFIC_LIGHTS_CHROME], ["hidden", HIDDEN_BUTTONS_CHROME]]) {
+      Object.assign(WINDOW_CHROME, chrome);
+      assert.equal(barMenus(), 1, `Little Ardia: ${name}`);
+    }
+    Object.assign(WINDOW_CHROME, windowsChrome);
+    assert.equal(barMenus(), 0, "Little Ardia: native keeps the menu beside its buttons");
+  } finally {
+    Object.assign(WINDOW_CHROME, saved);
+  }
+});
+
+test("the header's empty room beside the hamburger drags the window: the profile controls pass presses through except on their buttons", async () => {
+  const { readFileSync } = await import("node:fs");
+  const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+  const rule = (selector) => new RegExp(`(^|\\n)${selector.replace(/[.>]/g, (c) => `\\${c}`)} \\{([^}]*)\\}`).exec(css)?.[2] ?? "";
+  assert.match(rule(".ardia-profile-controls"), /pointer-events: none;/);
+  assert.match(rule(".ardia-profile-controls > .ardia-header-button"), /pointer-events: auto;/);
 });
 
 test("minimize and maximize reach the Linux host's window calls; caption regions are the shell's own drag regions", async () => {
@@ -332,12 +457,25 @@ test("without a frame, as on Wayland, the shell's outer size is compared with th
 
 test("the Linux wrapper hides the buttons over a full-screen page, makes the hidden copy inert, and offers the window menu only in browser windows", async () => {
   const { linuxControlsBehaviour } = await import("./windowControlsRules.ts");
-  const base = { pageFullScreen: false, hidden: false, utility: false, windowMenu: true };
-  assert.deepEqual(linuxControlsBehaviour(base), { rendered: true, inert: false, windowMenuOnRightClick: true });
+  const base = { pageFullScreen: false, hidden: false, utility: false, windowMenu: true, shown: true };
+  assert.deepEqual(linuxControlsBehaviour(base), { rendered: true, inert: false, takesInput: true, windowMenuOnRightClick: true });
   assert.equal(linuxControlsBehaviour({ ...base, pageFullScreen: true }).rendered, false);
   assert.equal(linuxControlsBehaviour({ ...base, hidden: true }).inert, true);
   assert.equal(linuxControlsBehaviour({ ...base, utility: true }).windowMenuOnRightClick, false, "Settings and Import");
   assert.equal(linuxControlsBehaviour({ ...base, windowMenu: false }).windowMenuOnRightClick, false);
+});
+
+test("the wrapper's input region follows the live window-button style, so buttons drawn by a live switch to Native take input and none is left behind by a switch away", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { linuxControlsBehaviour } = await import("./windowControlsRules.ts");
+  const base = { pageFullScreen: false, hidden: false, utility: false, windowMenu: true, shown: true };
+  assert.equal(linuxControlsBehaviour(base).takesInput, true);
+  assert.equal(linuxControlsBehaviour({ ...base, shown: false }).takesInput, false, "Traffic lights and Hidden draw no buttons");
+  assert.equal(linuxControlsBehaviour({ ...base, hidden: true }).takesInput, false);
+  assert.equal(linuxControlsBehaviour({ ...base, pageFullScreen: true }).takesInput, false);
+  const wrapper = readFileSync(new URL("./WindowControls.tsx", import.meta.url), "utf8");
+  assert.match(wrapper, /shown: useControlsShown\(\)/);
+  assert.match(wrapper, /\}, \[behaviour\.takesInput\]\);/);
 });
 
 test("a primary-button press on a window button leaves focus where it was; other buttons and other targets are untouched", async () => {
@@ -348,6 +486,25 @@ test("a primary-button press on a window button leaves focus where it was; other
   assert.equal(pressKeepsFocusWhereItWas({ button: 2, target: button }), false);
   assert.equal(pressKeepsFocusWhereItWas({ button: 0, target: gap }), false);
   assert.equal(pressKeepsFocusWhereItWas({ button: 0, target: null }), false);
+});
+
+test("a primary press on a traffic light leaves keyboard focus where it was, and lights slid off the window can't be reached with Tab", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { lightPressKeepsFocusWhereItWas } = await import("./windowControlsRules.ts");
+  const { trafficLightsOffWindow } = await import("./shims/web/windowChrome.tsx");
+  const light = { closest: (selector) => (selector === ".ardia-window-control" ? {} : null) };
+  const caption = { closest: (selector) => (selector === '[role="button"]' ? {} : null) };
+  assert.equal(lightPressKeepsFocusWhereItWas({ button: 0, target: light }), true);
+  assert.equal(lightPressKeepsFocusWhereItWas({ button: 2, target: light }), false, "a right press still opens the window menu");
+  assert.equal(lightPressKeepsFocusWhereItWas({ button: 0, target: caption }), false);
+  assert.equal(lightPressKeepsFocusWhereItWas({ button: 0, target: null }), false);
+  assert.equal(trafficLightsOffWindow({ center: [25, 27], trailing: false }), false);
+  assert.equal(trafficLightsOffWindow({ center: [-165, 27], trailing: false }), true, "a hidden left sidebar takes its lights with it");
+  assert.equal(trafficLightsOffWindow({ center: [25, 27], trailing: true }), false);
+  assert.equal(trafficLightsOffWindow({ center: [-40, 27], trailing: true }), true, "and a hidden right sidebar too");
+  const lights = readFileSync(new URL("./TrafficLights.tsx", import.meta.url), "utf8");
+  assert.match(lights, /inert=\{trafficLightsOffWindow\(place\) \|\| undefined\}/);
+  assert.match(lights, /onMouseDown=\{\(e\) => \{\n\s*if \(lightPressKeepsFocusWhereItWas\(e\)\) e\.preventDefault\(\);/);
 });
 
 test("a right or middle press on the … neither anchors nor toggles its menu", async () => {
