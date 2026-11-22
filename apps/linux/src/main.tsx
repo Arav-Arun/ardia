@@ -64,6 +64,7 @@ import { inputRegions, startShellAbove } from "./shellAbove";
 import { InWindowPlayer } from "./InWindowPlayer";
 import { startLinuxUpdates } from "./linuxUpdates";
 import { noticeUnsandboxedLaunch } from "./sandboxNotice";
+import { watchWindowDecorations } from "./windowDecorations";
 import { countLoginPasswordChecks } from "./reauthCounts";
 import { startPipPlayer } from "./pipPlayer";
 import { startLinuxShortcuts } from "./shortcutsRuntime";
@@ -116,6 +117,7 @@ async function start() {
   startConfigFiles(colorRoles, launch);
   startHostTelemetry({ host: ardiaHost, candidate: !utility, locks: navigator.locks as unknown as LeaderLocks });
   countLoginPasswordChecks(linuxTelemetryHooks.leading);
+  watchWindowDecorations(ardiaHost, windowId);
   const capabilities = linuxCapabilities(ardiaHost);
   if (capabilities.cliControl) startProgramControl();
   await startLinuxShortcuts(ardiaHost);
