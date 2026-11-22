@@ -17,10 +17,9 @@ import {
   noteElementPickerFromContextMenu,
   noteHiddenElementsRestored,
   noteHiddenElementWriteFailure,
-  noteUnsafeHidingRulesRemoved,
+  notePickedSelectorEscaped,
 } from "../telemetry/hiddenElementCounts";
 import { consentToken } from "../telemetry/client";
-import type { ConsentToken } from "../telemetry/choice";
 
 const HIDING_RULE = /^[a-z0-9.-]+##(?![+^\s])(?!.*\/\*)[^\0-\x1f\x7f\x85\u2028\u2029{}]+$/;
 const MAX_FILTER = 1024;
@@ -45,6 +44,16 @@ export function hidingFilter(host: string, selector: string): string | null {
   return filter.length <= MAX_FILTER && HIDING_RULE.test(filter) ? filter : null;
 }
 
+const PICKED_ATTRIBUTE = /\[(data-testid|data-test-id|data-test|data-qa|data-component|data-module)="([^"\\]*)"\]/g;
+const CSS_LINE_BREAK = /[\r\n\f]/;
+const ESCAPED_IN_ATTRIBUTE = /[\x01-\x1f\x7f\x85\u2028\u2029{}]|(?<=\/)\*/g;
+const cssEscape = (c: string) => `\\${c.charCodeAt(0).toString(16)} `;
+
+export function savablePickedSelector(selector: string): string | null {
+  if (CSS_LINE_BREAK.test(selector)) return null;
+  return selector.replace(PICKED_ATTRIBUTE, (_, name: string, value: string) => `[${name}="${value.replace(ESCAPED_IN_ATTRIBUTE, cssEscape)}"]`);
+}
+
 export function parseHidingFilter(filter: string, session = false): HiddenElement | null {
   if (!HIDING_RULE.test(filter)) return null;
   const at = filter.indexOf("##");
@@ -64,48 +73,8 @@ const changed = () => useHiddenElements.setState((s) => ({ changes: s.changes + 
 
 const privateWindowOf = (profile: string) => (isIncognitoProfile(profile) ? profile.slice("incognito:".length, profile.indexOf("@")) : null);
 
-const UBLOCK_LINE_BREAK = /[\r\n]/;
-
-export const isUnsafeStoredRule = (filter: string) => UBLOCK_LINE_BREAK.test(filter);
-
-const swept = new Set<string>();
-
-const unsafeRulesIn = (profile: string) => getHiddenElements(profile).then((stored) => stored.filter(isUnsafeStoredRule));
-
-export async function removeUnsafeHidingRules(profile: string, consent: ConsentToken | null) {
-  if (swept.has(profile)) return;
-  swept.add(profile);
-  try {
-    const unsafe = await unsafeRulesIn(profile);
-    if (!unsafe.length) return;
-    await restoreElements(profile, unsafe);
-    const left = await unsafeRulesIn(profile);
-    noteUnsafeHidingRulesRemoved(unsafe.length - left.length, consent);
-    if (left.length) throw new Error("unsafe hiding rules are still saved");
-    changed();
-  } catch {
-    swept.delete(profile);
-    noteHiddenElementWriteFailure(consent);
-  }
-}
-
-function sweepProfilesOf(s: BrowserState, tabIds: Iterable<string>, consent: ConsentToken | null) {
-  for (const tabId of tabIds) {
-    const tab = s.tabs[tabId];
-    if (tab && canHideElements(s, tabId)) void removeUnsafeHidingRules(savedProfileOf(engineProfile(s, tab.profileId)), consent);
-  }
-}
-
-export function startUnsafeHidingRuleSweep() {
-  sweepProfilesOf(store(), Object.keys(store().tabs), consentToken());
-  return useBrowser.subscribeTo(["tabs"], (s, prev) => {
-    if (s.tabs !== prev.tabs) sweepProfilesOf(s, changedIds(s.tabs, prev.tabs), consentToken());
-  });
-}
-
 export function startHiddenElements() {
-  const stopSweeping = startUnsafeHidingRuleSweep();
-  const stopWatchingWindows = useBrowser.subscribeTo(["windows"], (s, prev) => {
+  return useBrowser.subscribeTo(["windows"], (s, prev) => {
     if (s.windows === prev.windows) return;
     const session = useHiddenElements.getState().session;
     const kept = Object.entries(session).filter(([profile]) => {
@@ -114,10 +83,6 @@ export function startHiddenElements() {
     });
     if (kept.length !== Object.keys(session).length) useHiddenElements.setState({ session: Object.fromEntries(kept) });
   });
-  return () => {
-    stopSweeping();
-    stopWatchingWindows();
-  };
 }
 
 const store = () => useBrowser.getState();
@@ -180,8 +145,21 @@ export async function startHidingElement(tabId: string, point: [number, number] 
   }
   const after = pageOf(tabId);
   const samePage = after?.host === page.host && after.profile === page.profile;
-  const filter = samePage && result?.selector ? hidingFilter(page.host, result.selector) : null;
-  if (!filter) return void noteElementPickerCancelled(consent);
+  const picked = samePage && typeof result?.selector === "string" ? result.selector : null;
+  const savable = picked ? savablePickedSelector(picked) : null;
+  const filter = savable ? hidingFilter(page.host, savable) : null;
+  if (!filter) {
+    if (picked) void web.evaluate(pickerCall("unhide", [picked]));
+    return void noteElementPickerCancelled(consent);
+  }
+  const selector = filter.slice(filter.indexOf("##") + 2);
+  if (selector !== picked) {
+    notePickedSelectorEscaped(consent);
+    void web
+      .evaluate(pickerCall("apply", [selector]))
+      .then(() => web.evaluate(pickerCall("unhide", [picked])))
+      .catch(() => {});
+  }
   noteElementHidden(page.inPrivateWindow, consent);
   if (page.inPrivateWindow) {
     useHiddenElements.setState((s) => {
