@@ -2441,6 +2441,12 @@ Not audited at all: Compose's `SyncSetupContent` internals inside onboarding.
     - it lays the WebView out between the bands and paints the bands in those colours;
     - it samples the tone at the WebView's own edge;
     - it composes deck snapshots with the bands, so a card is the page as shown.
+  - **The tone under the bars on Android** (2026-11-22): each sampled edge also keeps its strip's commonest colour,
+    even when text or images keep any one colour from a third of it (`ToneSampler.shade`). The theme colour, the
+    page's background colour and earlier samples are used only when they are on the same side of dark as that
+    shade, so a site that declares a light `theme-color` but draws dark (Wikipedia at night) gets dark bars and a dark
+    fade. An edge the latest sample can't tell keeps the last one sampled on the same document. iPhone still puts the
+    theme colour first at the top.
   - **Revisit** if Android's WebView gains an equivalent of `obscuredContentInsets`: then hand it the bar's height
     as iPhone does, so fixed footers and the page's end clear the bar too.
 - Long press on links and images in a page: iPhone shows WebKit's system menu with Open in New Tab, Open in Background, Copy Link, Share… and Download Linked File, as the SwiftUI app does; Android shows the app's drawn menu from `page.longPress` (c317c5b8f).
