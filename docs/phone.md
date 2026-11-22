@@ -2431,7 +2431,7 @@ Not audited at all: Compose's `SyncSetupContent` internals inside onboarding.
   - **iPhone:** the page runs full screen under the glass bar, and WebKit gets the covered edges as
     `obscuredContentInsets`, so fixed footers and the page's last lines stay above the bar.
   - **Android, with Collapse Bottom Bar on (the default):** the page runs full screen under the bar and the host
-    pill, as on iPhone, and the bar's base fades over it as it does there. The page is never resized while
+    pill, as on iPhone, with no fade over it (the owner, 2026-11-22: iPhone keeps its fade). The page is never resized while
     scrolling, so no flat band shows behind the pill. Android's WebView has no obscured-insets equivalent (only
     `viewport-fit=cover` pages on WebView 140 and later get `env(safe-area-inset-*)`), so a fixed footer sits
     under the bar until a scroll down folds it to the pill, and the page's last lines sit under the pill's base.
