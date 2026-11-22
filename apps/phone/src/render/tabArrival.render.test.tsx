@@ -6,6 +6,7 @@ import { BrowsingScreen } from "../components/browsing/BrowsingScreen";
 import { neighbours } from "../lib/pagerPhysics";
 import { TAB_SWIPE_HINT } from "../components/browsing/tabSwipeHint";
 import * as browse from "../state/browse/store";
+import { useSettingsNav } from "../state/settings/nav";
 import { currentPreferences, setPreference } from "../state/settings/store";
 import { useSelectedTab } from "../state/tabs/hooks";
 import { currentTabs, selectTabById, useTabs } from "../state/tabs/store";
@@ -133,6 +134,30 @@ test("on Android, the first loaded page with a neighbour shows the bar swipe onc
     expect(useToasts.getState().toast).toBeNull();
     expect(currentPreferences().tabSwipeHintShown).toBe(false);
   }
+  unmount(root);
+});
+
+test("a step to the next tab that isn't a swipe, such as VoiceOver's Next Tab, isn't counted as one", () => {
+  const right = neighbour().id;
+  const root = renderSurface(<Page />);
+  act(() => browse.switchToNeighbour(right));
+  expect(currentTabs().selectedId).toBe(right);
+  expect(counted).not.toHaveBeenCalledWith("tabs_bar_swiped");
+  unmount(root);
+});
+
+test("the hint waits while Settings covers the page, and shows once it closes", () => {
+  setPreference("tabSwipeHintShown", false);
+  const root = renderSurface(<Page />, { flushTimers: false });
+  loaded(currentTabs().selectedId!);
+  act(() => useSettingsNav.setState({ open: true }));
+  act(() => jest.advanceTimersByTime(TAB_SWIPE_HINT.delayMs * 2 + 10));
+  expect(currentPreferences().tabSwipeHintShown).toBe(false);
+  expect(useToasts.getState().toast).toBeNull();
+  act(() => useSettingsNav.setState({ open: false }));
+  act(() => jest.advanceTimersByTime(TAB_SWIPE_HINT.delayMs + 10));
+  if (Platform.OS === "android") expect(useToasts.getState().toast?.message).toBe(TAB_SWIPE_HINT.text);
+  else expect(useToasts.getState().toast).toBeNull();
   unmount(root);
 });
 

@@ -650,13 +650,15 @@ export function swipeOrder(): string[] {
   return [...kept, ...live.filter((id) => !known.has(id))];
 }
 
-export function switchToNeighbour(id: string) {
+export function switchToNeighbour(id: string, swiped = false) {
   const order = swipeOrder();
   const from = currentTabs().selectedId;
   useBrowse.setState({ frozenOrder: order });
   openTab(id);
-  noteTabSwiped(from, id);
+  if (swiped) noteTabSwiped(from, id);
 }
+
+export const swipeToNeighbour = (id: string) => switchToNeighbour(id, true);
 
 const ARRIVAL_COVER_LOST_MS = 400;
 let stopArrivalWait: (() => void) | null = null;

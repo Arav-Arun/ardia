@@ -13,7 +13,7 @@ import { armDeckPull, beginDeckPull, deckPull, disarmDeckPull, releaseDeckPull, 
 import { refreshHiddenDeck } from "../../state/browse/deckHold";
 import { closePageMenu, editPageQuery, openDockedSiteSettings, openPageMenu } from "../../state/page/actions";
 import { useFindOpen, useMenuDocked, useMenuOpen, usePressOpen, useReaderTabId } from "../../state/page/hooks";
-import { ARRIVAL_COVER_ID, arriveAtNeighbour, captureCurrentCover, deckPullBegan, deckPullReleased, deckPullSettled, newTab, pageLaidOut, showDeck, swipeOrder, switchToNeighbour, useBrowse } from "../../state/browse/store";
+import { ARRIVAL_COVER_ID, arriveAtNeighbour, captureCurrentCover, deckPullBegan, deckPullReleased, deckPullSettled, newTab, pageLaidOut, showDeck, swipeOrder, swipeToNeighbour, switchToNeighbour, useBrowse } from "../../state/browse/store";
 import { useSearchFromDockedMenu, useSearchOpen } from "../../state/search/hooks";
 import { usePages } from "../../state/pages/store";
 import { reportBarPill } from "../../state/search/stageBar";
@@ -116,7 +116,7 @@ export const BrowsingScreen = memo(function BrowsingScreen({ tab }: { tab: Brows
     left: left?.id ?? null,
     right: right?.id ?? null,
     landsEarly: handsOver,
-    onCommit: handsOver ? arriveAtNeighbour : switchToNeighbour,
+    onCommit: handsOver ? arriveAtNeighbour : swipeToNeighbour,
     onGrab: captureCurrentCover,
   });
   useDemoMotion(pager, width);

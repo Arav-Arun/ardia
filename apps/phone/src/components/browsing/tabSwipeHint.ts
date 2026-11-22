@@ -2,6 +2,8 @@ import { useEffect } from "react";
 import { Platform } from "react-native";
 import { useNavigation } from "../../state/browse/hooks";
 import { useBrowse } from "../../state/browse/store";
+import { useLibrary } from "../../state/library/store";
+import { settingsNav } from "../../state/settings/nav";
 import { usePreferences } from "../../state/settings/hooks";
 import { currentPreferences, setPreference } from "../../state/settings/store";
 import { showToast, TOAST_LONG_DURATION_MS } from "../../state/toasts/store";
@@ -27,7 +29,7 @@ function useTabSwipeHint(pager: TabPager, toward: -1 | 0 | 1, tabId: string, cal
     let timer: ReturnType<typeof setTimeout>;
     const offer = () => {
       if (currentPreferences().tabSwipeHintShown) return;
-      if (!pager.peek(toward === 1 ? 1 : -1)) {
+      if (settingsNav().open || useLibrary.getState().open || !pager.peek(toward === 1 ? 1 : -1)) {
         timer = setTimeout(offer, TAB_SWIPE_HINT.delayMs);
         return;
       }
