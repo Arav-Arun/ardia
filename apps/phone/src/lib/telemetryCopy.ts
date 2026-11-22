@@ -70,6 +70,10 @@ export const PHONE_WHATS_SENT: { title: string; items: SentItem[] }[] = [
         fields: ["page_summaries_pinched", "page_summaries_from_menu", "page_summaries_on_device", "page_summaries_excerpts", "page_summaries_failed"],
       },
       {
+        text: "In the same daily counts, on Android: when a search answer or a page summary couldn’t use Gemini Nano, why: it was still downloading, Google doesn’t offer it to apps on this phone, it needed a Google AICore or system update, or it failed. Counts only, never what you searched for or which page",
+        fields: ["gemini_nano_downloading", "gemini_nano_not_offered", "gemini_nano_needs_update", "gemini_nano_errors"],
+      },
+      {
         text: "In the same daily counts: how often you tapped Paste and Go with a link or with text, and how often it found nothing to paste because you didn’t allow the paste or the clipboard had emptied. Never what you copied, and never while browsing privately",
         fields: ["paste_and_go_links", "paste_and_go_texts", "paste_and_go_unread"],
       },
