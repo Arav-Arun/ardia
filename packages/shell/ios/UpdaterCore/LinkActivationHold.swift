@@ -9,15 +9,7 @@ enum LinkActivationHold {
     var windowServer = false
   }
 
-  private static let sharedEdge: CGFloat = 1
   static let overlayLayer = Int(CGWindowLevelForKey(.draggingWindow))
-
-  static func covered(_ window: CGRect, by inFront: [CGRect]) -> Bool {
-    inFront.contains {
-      let overlap = window.intersection($0)
-      return overlap.width > sharedEdge && overlap.height > sharedEdge
-    }
-  }
 
   static func underPointer(_ pointer: CGPoint, frontToBack list: [Listed]) -> Listed? {
     list.first { !$0.windowServer && (0..<overlayLayer).contains($0.layer) && $0.bounds.contains(pointer) }
