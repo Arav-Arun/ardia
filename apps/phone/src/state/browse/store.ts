@@ -714,13 +714,15 @@ export function captureCurrentCover() {
 
 export async function captureSnapshot(id: string, pageTop: number | null = null) {
   if (!snapshotAllowed(id)) return;
+  const countable = pictureCountable(id);
   const taken = await snapshotPage(id);
+  const counts = countable && pictureCountable(id);
   if (taken && isRefusedSnapshot(taken)) {
-    pictureRefused(id, taken.refused);
+    pictureRefused(id, taken.refused, counts);
     return;
   }
   const snapshot = taken;
-  if (snapshot) pictureSaved(id, snapshot.route);
+  if (snapshot) pictureSaved(id, snapshot.route, counts);
   const top = pageTop ?? (pullCapture?.id === id || deckPullGrowing() === id ? PULLED_PAGE_TOP : null);
   if (snapshot && top !== null) noteSnapshotPageTop(snapshot.uri, top);
   else if (snapshot?.frame) noteSnapshotPageTop(snapshot.uri, snapshot.frame.y);
@@ -733,15 +735,19 @@ export async function captureSnapshot(id: string, pageTop: number | null = null)
   }
 }
 
-function pictureSaved(id: string, route: string | undefined) {
-  labTrace(`PAGELAB snapshot ${id} saved by ${route ?? "unknown"}`);
-  if (route !== "engine" || useTabs.getState().incognito || findTab(currentTabs(), id)?.isPrivate) return;
-  countUsage("page_pictures_webkit");
+function pictureCountable(id: string) {
+  const tab = findTab(currentTabs(), id);
+  return tab !== undefined && !tab.isPrivate && !useTabs.getState().incognito;
 }
 
-function pictureRefused(id: string, reason: "hidden" | "blank") {
+function pictureSaved(id: string, route: string | undefined, counts: boolean) {
+  labTrace(`PAGELAB snapshot ${id} saved by ${route ?? "unknown"}`);
+  if (route === "engine" && counts) countUsage("page_pictures_webkit");
+}
+
+function pictureRefused(id: string, reason: "hidden" | "blank", counts: boolean) {
   labTrace(`PAGELAB snapshot ${id} refused: page ${reason}, the card keeps its last picture`);
-  if (useTabs.getState().incognito || findTab(currentTabs(), id)?.isPrivate) return;
+  if (!counts) return;
   countUsage(reason === "blank" ? "page_pictures_blank" : "page_pictures_hidden");
 }
 
