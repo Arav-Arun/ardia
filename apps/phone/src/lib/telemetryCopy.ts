@@ -38,6 +38,10 @@ export const PHONE_WHATS_SENT: { title: string; items: SentItem[] }[] = [
         fields: ["interface_style", "color_scheme"],
       },
       {
+        text: "With each launch, whether your color matches your Mac, is one of Ardia’s colors, or is a custom theme. Never which colors",
+        fields: ["color_choice"],
+      },
+      {
         text: "On Android, with each launch, whether the Material You design was off, and with it on, whether Dynamic Colors used your wallpaper, Ardia used your custom colour, or the phone gave no wallpaper palette and Ardia used its own",
         fields: ["material_colors"],
       },
@@ -92,6 +96,10 @@ export const PHONE_WHATS_SENT: { title: string; items: SentItem[] }[] = [
       {
         text: "In the same daily counts: how often a picture of a page for the tab switcher was thrown away because it came out as one flat colour or the page was not on screen, and how often it had to come from the page engine instead of a copy of the screen. Counts only, and never while browsing privately",
         fields: ["page_pictures_blank", "page_pictures_hidden", "page_pictures_webkit"],
+      },
+      {
+        text: "In the same daily counts: how often you chose Custom in Settings › Appearance, and how many changes you made on its Theme page. Counts only, never the colors or settings you picked",
+        fields: ["custom_theme_chosen", "theme_edits"],
       },
       {
         text: "In the same daily counts, on Android: how often you tapped the Ardia logo on the start page to search. Counts only, and never while browsing privately",
