@@ -2,6 +2,7 @@ export { blocking } from "./blocking";
 export { browseForMe, BrowseForMeSettings, type BrowseForMeEvent, type BrowseForMeOutcome, type ChatGPTAccountState, type ChatGPTModelChoice } from "./browseForMe";
 export { defaultBrowser, type DefaultBrowserStatus } from "./defaultBrowser";
 export { downloads } from "./downloads";
+export { isRefusedSnapshot } from "./pageTypes";
 export type { DownloadedFile, DownloadedFileKind } from "./downloads";
 export {
   legacy,
@@ -118,6 +119,7 @@ export type {
   PageSecurity,
   PageSetup,
   PageSnapshot,
+  RefusedSnapshot,
   PageState,
   PageSummaryProvider,
   PageTone,
