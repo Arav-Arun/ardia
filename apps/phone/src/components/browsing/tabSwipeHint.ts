@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Platform } from "react-native";
 import { useNavigation } from "../../state/browse/hooks";
 import { useBrowse } from "../../state/browse/store";
@@ -24,12 +24,14 @@ function useTabSwipeHint(pager: TabPager, toward: -1 | 0 | 1, tabId: string, cal
   const alone = useBrowse((s) => s.surface === "browsing" && s.sheet === null && s.opening === null && s.arriving === null);
   const settled = useNavigation(tabId, (page) => page?.isLive === true && !page.isLoading);
   const offered = Platform.OS === "android" && !shown && toward !== 0 && calm && alone && settled;
+  const currentPager = useRef(pager);
+  currentPager.current = pager;
   useEffect(() => {
     if (!offered) return;
     let timer: ReturnType<typeof setTimeout>;
     const offer = () => {
       if (currentPreferences().tabSwipeHintShown) return;
-      if (settingsNav().open || useLibrary.getState().open || !pager.peek(toward === 1 ? 1 : -1)) {
+      if (settingsNav().open || useLibrary.getState().open || !currentPager.current.peek(toward === 1 ? 1 : -1)) {
         timer = setTimeout(offer, TAB_SWIPE_HINT.delayMs);
         return;
       }
