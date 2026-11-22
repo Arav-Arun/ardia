@@ -19,7 +19,7 @@ export type TabPager = {
   grab: () => boolean;
   track: (raw: number) => void;
   settleTo: (target: number, velocity: number) => void;
-  peek: (toward: -1 | 1) => void;
+  peek: (toward: -1 | 1) => boolean;
 };
 
 type Options = { width: number; selectedId: string | null; left: string | null; right: string | null; landsEarly?: boolean; onCommit: (id: string) => void; onGrab: () => void };
@@ -86,7 +86,8 @@ export function useTabPager({ width, selectedId, left, right, landsEarly = false
     settle(target, velocity);
   };
   const peek = (toward: -1 | 1) => {
-    if (reduceMotion || (toward < 0 && !hasLeft.value) || (toward > 0 && !hasRight.value)) return;
+    if (active.value || landing.value !== 0) return false;
+    if (reduceMotion || (toward < 0 && !hasLeft.value) || (toward > 0 && !hasRight.value)) return true;
     active.value = 1;
     landing.value = 0;
     offset.value = withSequence(
@@ -96,6 +97,7 @@ export function useTabPager({ width, selectedId, left, right, landsEarly = false
         if (finished && landing.value === 0) active.value = 0;
       }),
     );
+    return true;
   };
   const grab = () => {
     if (!hasLeft.value && !hasRight.value) return false;

@@ -24,13 +24,18 @@ function useTabSwipeHint(pager: TabPager, toward: -1 | 0 | 1, tabId: string, cal
   const offered = Platform.OS === "android" && !shown && toward !== 0 && calm && alone && settled;
   useEffect(() => {
     if (!offered) return;
-    const timer = setTimeout(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const offer = () => {
       if (currentPreferences().tabSwipeHintShown) return;
+      if (!pager.peek(toward === 1 ? 1 : -1)) {
+        timer = setTimeout(offer, TAB_SWIPE_HINT.delayMs);
+        return;
+      }
       setPreference("tabSwipeHintShown", true);
       if (!incognito) countUsage("tab_swipe_hints_shown");
-      pager.peek(toward === 1 ? 1 : -1);
       showToast(TAB_SWIPE_HINT.text, "swipe", TOAST_LONG_DURATION_MS);
-    }, TAB_SWIPE_HINT.delayMs);
+    };
+    timer = setTimeout(offer, TAB_SWIPE_HINT.delayMs);
     return () => clearTimeout(timer);
   }, [offered, toward, tabId, incognito]);
 }
