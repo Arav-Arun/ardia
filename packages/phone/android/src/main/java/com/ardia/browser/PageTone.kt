@@ -4,6 +4,8 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 
 data class PageTone(val top: Int? = null, val bottom: Int? = null) {
+    fun over(earlier: PageTone?): PageTone = PageTone(top ?: earlier?.top, bottom ?: earlier?.bottom)
+
     companion object {
         fun resolve(themeColor: Int?, backgroundColor: Int?, sampled: PageTone?, stored: Int?): PageTone = PageTone(
             top = themeColor ?: sampled?.top ?: backgroundColor ?: stored,

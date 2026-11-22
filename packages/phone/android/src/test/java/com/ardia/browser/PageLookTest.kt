@@ -80,6 +80,16 @@ class PageLookTest {
     }
 
     @Test
+    fun aSampleThatCantTellAnEdgesColourKeepsTheOneSampledBefore() {
+        val dark = 0xFF101418.toInt()
+        val light = 0xFFFFFFFF.toInt()
+        assertEquals(PageTone(dark, dark), PageTone(dark, null).over(PageTone(light, dark)))
+        assertEquals(PageTone(light, dark), PageTone(null, dark).over(PageTone(light, light)))
+        assertEquals(PageTone(dark, null), PageTone(dark, null).over(null))
+        assertEquals(PageTone(dark, light), PageTone(dark, light).over(PageTone(light, dark)))
+    }
+
+    @Test
     fun networkErrorsBecomeTheIphoneFailures() {
         assertEquals(NetworkFailure.HostNotFound, NetworkFailure.fromWebViewError(WebViewClient.ERROR_HOST_LOOKUP, isOnline = true))
         assertEquals(NetworkFailure.Offline, NetworkFailure.fromWebViewError(WebViewClient.ERROR_HOST_LOOKUP, isOnline = false))
