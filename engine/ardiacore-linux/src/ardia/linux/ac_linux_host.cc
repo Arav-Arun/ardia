@@ -876,8 +876,7 @@ SessionWriteResult MergeAndWriteSession(const base::FilePath& directory,
   return result;
 }
 
-base::DictValue ReadDocuments(const base::FilePath& directory,
-                              base::Value::List& unreadable) {
+base::DictValue ReadDocuments(const base::FilePath& directory) {
   base::DictValue documents;
   if (!PrepareDocuments(directory)) {
     return documents;
@@ -889,11 +888,7 @@ base::DictValue ReadDocuments(const base::FilePath& directory,
     if (name == kSessionName || LinuxDocuments::Reserved(name) ||
         linux_policy::DocumentLimit(name) > kDocumentLimit) continue;
     auto contents = ReadDocument(directory, name);
-    if (!contents) {
-      unreadable.Append(name);
-      continue;
-    }
-    if (documents.size() < 128 &&
+    if (contents && documents.size() < 128 &&
         bytes + contents->size() <= kDocumentLimit) {
       bytes += contents->size();
       documents.Set(name, std::move(*contents));
@@ -1018,15 +1013,11 @@ std::optional<std::string> ReadAsset(base::FilePath directory,
     return std::nullopt;
   }
   if (path == "host-bootstrap.js") {
-    base::Value::List unreadable;
-    base::DictValue saved = ReadDocuments(documents, unreadable);
+    base::DictValue saved = ReadDocuments(documents);
     if (auto session = ReadSession(documents)) {
       bootstrap.Set("session", std::move(*session));
     }
     bootstrap.Set("documents", std::move(saved));
-    if (!unreadable.empty()) {
-      bootstrap.Set("unreadableDocuments", base::Value(std::move(unreadable)));
-    }
     const auto json = base::WriteJson(bootstrap);
     if (!json) return std::nullopt;
     return "globalThis.__ardiaBootstrap=" + *json + ";\n" + kArdiaHostBootstrap;

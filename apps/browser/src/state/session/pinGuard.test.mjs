@@ -470,12 +470,16 @@ test("a pins-backup.json that can't be read is kept, and the new backup goes bes
 });
 
 test("a pins-backup.json that exists but the store can't read is not replaced, and the new backup goes beside it (#3205)", async () => {
+  sharing(true);
   const { stop, pin, profileId } = onePin();
   stub.unreadableDocs.add(PINS_BACKUP_DOCUMENT);
+  takeSessionWrites();
   try {
     dropPins([pin]);
     await settle();
+    assert.equal(takeSessionWrites().session_pin_backups_beside, 1, "counted as a backup kept beside");
   } finally {
+    sharing(false);
     stop();
   }
   assert.ok(!stub.docs.has(PINS_BACKUP_DOCUMENT), "the unreadable file was never written over");
@@ -486,12 +490,36 @@ test("a pins-backup.json that exists but the store can't read is not replaced, a
   assert.ok(!sessionUrls().includes("https://pin.com"));
 });
 
-test("with no pins-backup.json at all, the first backup still takes the primary name (#3205)", async () => {
-  const { stop, pin } = onePin();
+test("when the store answers whether pins-backup.json exists only later, as Linux does, an unreadable one is still kept (#3205)", async () => {
+  const { stop, pin, profileId } = onePin();
+  stub.unreadableDocs.add(PINS_BACKUP_DOCUMENT);
+  stub.asyncExists.on = true;
   try {
     dropPins([pin]);
     await settle();
   } finally {
+    stub.asyncExists.on = false;
+    stop();
+  }
+  assert.ok(!stub.docs.has(PINS_BACKUP_DOCUMENT), "the unreadable file was never written over");
+  const beside = [...stub.docs.keys()].filter((name) => name.startsWith("pins-backup-") && name.endsWith(".json"));
+  assert.equal(beside.length, 1);
+  assert.deepEqual(parsePinBackups(stub.docs.get(beside[0]))[0].pins[profileId].tabs.map((t) => t.url), ["https://pin.com"]);
+  assert.ok(!sessionUrls().includes("https://pin.com"), "and the session that drops the pin is saved after it");
+});
+
+test("with no pins-backup.json at all, the first backup still takes the primary name (#3205)", async () => {
+  sharing(true);
+  const { stop, pin } = onePin();
+  takeSessionWrites();
+  try {
+    dropPins([pin]);
+    await settle();
+    const counts = takeSessionWrites();
+    assert.equal(counts.session_pin_backups, 1);
+    assert.equal(counts.session_pin_backups_beside, 0);
+  } finally {
+    sharing(false);
     stop();
   }
   assert.ok(stub.docs.has(PINS_BACKUP_DOCUMENT), "a missing file is written as the primary backup");

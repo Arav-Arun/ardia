@@ -259,8 +259,8 @@ class DocumentStore {
       if (State().staged.find(key) != State().staged.end()) return true;
       if (State().removing.contains(key)) return false;
     }
-    std::error_code ignored;
-    return std::filesystem::exists(*url, ignored);
+    std::error_code unknown;
+    return std::filesystem::exists(*url, unknown) || unknown;
   }
 
   static bool Write(std::string_view name, std::string contents, Done done = nullptr) noexcept {

@@ -39,6 +39,7 @@ const testGlobals = globalThis as { acTestUserScripts?: UserScriptsHost };
 export const docs = new Map<string, string>();
 export const stagedDocs = new Map<string, string>();
 export const unreadableDocs = new Set<string>();
+export const asyncExists = { on: false };
 export const heldSaves = { on: false, queue: [] as (() => void)[] };
 export const refusedSaves = { on: false };
 export const refusedWrites = { on: false, returnsFalse: false, landingFails: false };
@@ -220,7 +221,10 @@ const dialogs: Modules["ArdiaDialogs"] = {
 
 const documents: Modules["ArdiaDocuments"] = {
   readDocument: (name) => (unreadableDocs.has(name) ? null : stagedDocs.get(name) ?? docs.get(name) ?? null),
-  documentExists: (name) => stagedDocs.has(name) || docs.has(name) || unreadableDocs.has(name),
+  documentExists: (name) => {
+    const exists = stagedDocs.has(name) || docs.has(name) || unreadableDocs.has(name);
+    return asyncExists.on ? Promise.resolve(exists) : exists;
+  },
   writeDocument: (name, contents) => {
     if (refusedWrites.on) throw new Error("write refused");
     if (refusedWrites.returnsFalse) return false as unknown as void;
