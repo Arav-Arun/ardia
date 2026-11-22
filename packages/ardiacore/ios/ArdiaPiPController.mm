@@ -379,6 +379,8 @@ NSString *CornerName(int corner) {
   NSRect frame = _window.frame;
   frame.origin.x = edge == ArdiaPiPEdgeRight ? NSMaxX(visible) - NSWidth(frame) - kReturnMargin : NSMinX(visible) + kReturnMargin;
   [self setStashedEdge:ArdiaPiPEdgeNone];
+  [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(settle) object:nil];
+  _sawDrag = NO;
   if (!ThrowEnabled() || NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion) [self animateTo:frame];
   else [self throwTo:frame velocity:velocity corner:ardia_pip_throw::kNoCorner];
   return frame;
