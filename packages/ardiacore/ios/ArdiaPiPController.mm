@@ -201,6 +201,7 @@ NSString *CornerName(int corner) {
   [ArdiaPiPController abandonSwipeOn:_window];
   for (id observer in _observers) [NSNotificationCenter.defaultCenter removeObserver:observer];
   [_observers removeAllObjects];
+  [self endMomentumWait];
   [NSObject cancelPreviousPerformRequestsWithTarget:self];
   [_slide invalidate];
   [_resizeCursor detach];
@@ -425,8 +426,7 @@ NSString *CornerName(int corner) {
 }
 
 - (void)stopMotion {
-  [self forgetMomentum];
-  _swipePlacedAt = 0;
+  [self endMomentumWait];
   [_slide invalidate];
   _slide = nil;
   _animating = NO;

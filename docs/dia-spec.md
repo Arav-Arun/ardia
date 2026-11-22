@@ -1078,7 +1078,8 @@ differs in a few places:
 - A swipe whose fingers rested more than 0.1 s before lifting doesn't throw.
 - A swipe is a flick when its last event moved **10 pt** or more (`kSwipeSureFlingDelta`), or when macOS starts
   momentum for it at over 350 pt/s. Ardia waits **80 ms** for that momentum (`kMomentumWait`) and accepts it up to
-  **0.3 s** late (`kMomentumLate`). Dia's 6 pt last-event rule applies only with inertia turned off.
+  **0.3 s** late (`kMomentumLate`). Dia's 6 pt last-event rule isn't used, with inertia
+  off either: a scroll event doesn't say which device sent it, so the inertia setting can't be matched to it.
 - A flick goes to the corner closest to its direction, with no ±45° limit, so it always lands somewhere.
 - A flick tucks the window away only when the window already reaches past that side, the flick is at least twice
   as sideways as vertical (`kSidewaysFlick`), and **0.1 s** of its travel (`kFlickReach`) would carry more than half

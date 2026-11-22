@@ -389,13 +389,17 @@ try {
       if (alone === before) throw new Error("inconclusive: a slow swipe with nothing after it recorded no release");
       const tries = [];
       for (let i = 0; i < 3; i++) {
-        const was = await lastSwipe();
+        const was = await lastSwipe(), releases = await eventCount("pictureInPictureReleased");
         const swiped = pip("swipe:40,-30,10");
         await sleep(110);
         await Promise.all([swiped, pip("pinch:1.1,12,120")]);
         await settle();
         tries.push((await lastSwipe()) === was ? "left alone" : "released");
-        if (tries.at(-1) === "left alone") return { tries };
+        if (tries.at(-1) === "left alone") {
+          const counted = (await eventCount("pictureInPictureReleased")) - releases;
+          if (counted !== 1) throw new Error(`the swipe the pinch cut short was counted ${counted} times, not once`);
+          return { tries };
+        }
       }
       throw new Error(`the swipe's release ran under the pinch every time: ${tries.join(", ")}`);
     });

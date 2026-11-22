@@ -85,7 +85,6 @@ typedef NS_ENUM(NSInteger, ArdiaPiPEdge) { ArdiaPiPEdgeNone = 0, ArdiaPiPEdgeLef
   CFTimeInterval _swipeBeganAt;
   NSTimeInterval _swipeLastAt;
   BOOL _awaitingMomentum;
-  CFTimeInterval _swipePlacedAt;
   NSRect _swipePlaced;
   NSRect _swipeStart;
   BOOL _dragging;
@@ -95,6 +94,7 @@ typedef NS_ENUM(NSInteger, ArdiaPiPEdge) { ArdiaPiPEdgeNone = 0, ArdiaPiPEdgeLef
   NSTimeInterval _dragBeganAt;
   ArdiaConsentStamp *_dragStamp;
   ArdiaConsentStamp *_swipeStamp;
+  ArdiaConsentStamp *_placementStamp;
   NSInteger _dragOffCursor;
   double _dragMaxOff;
   double _dragSlowestMove;
@@ -138,7 +138,7 @@ typedef NS_ENUM(NSInteger, ArdiaPiPEdge) { ArdiaPiPEdgeNone = 0, ArdiaPiPEdgeLef
 - (ArdiaPiPEdge)edgeFlickedPast:(NSPoint)velocity;
 - (void)reportRelease:(NSString *)outcome stamp:(ArdiaConsentStamp *)stamp;
 - (void)swipeCoasted:(NSEvent *)event;
-- (void)forgetMomentum;
+- (void)endMomentumWait;
 - (ArdiaPiPEdge)edgeBeyondFor:(NSRect)frame;
 - (void)setStashedEdge:(ArdiaPiPEdge)edge;
 - (void)dragReleasedAt:(NSPoint)pointer velocity:(NSPoint)velocity;

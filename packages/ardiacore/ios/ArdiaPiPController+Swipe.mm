@@ -69,20 +69,6 @@ static __weak NSWindow *gSwipeMomentum;
   return YES;
 }
 
-static BOOL MomentumScrollingOff() {
-  NSDictionary<NSString *, NSString *> *settings = @{
-    @"com.apple.AppleMultitouchTrackpad" : @"TrackpadMomentumScroll",
-    @"com.apple.driver.AppleBluetoothMultitouch.trackpad" : @"TrackpadMomentumScroll",
-    @"com.apple.AppleMultitouchMouse" : @"MouseMomentumScroll",
-    @"com.apple.driver.AppleBluetoothMultitouch.mouse" : @"MouseMomentumScroll",
-  };
-  for (NSString *domain in settings) {
-    id value = CFBridgingRelease(CFPreferencesCopyAppValue((__bridge CFStringRef)settings[domain], (__bridge CFStringRef)domain));
-    if (value && ![value boolValue]) return YES;
-  }
-  return NO;
-}
-
 - (void)swipeEnded:(NSEvent *)event cancelled:(BOOL)cancelled {
   [self moveBy:ardia_pip_throw::FingerDelta(event.scrollingDeltaX, event.scrollingDeltaY, event.isDirectionInvertedFromDevice)];
   _swiping = NO;
@@ -102,10 +88,8 @@ static BOOL MomentumScrollingOff() {
   }
   if (_stashedEdge != ArdiaPiPEdgeNone) [self setStashedEdge:ArdiaPiPEdgeNone];
   if (NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion) return [self swipeReleased:NSZeroPoint how:@"reduceMotion"];
-  const BOOL noMomentum = MomentumScrollingOff();
-  if (fresh && (ardia_pip_throw::SwipeSurelyFlings(last) || (noMomentum && ardia_pip_throw::SwipeFlings(last))))
+  if (fresh && ardia_pip_throw::SwipeSurelyFlings(last))
     return [self swipeReleased:NSMakePoint(lastVelocity.x, lastVelocity.y) how:@"lastEvent"];
-  if (noMomentum) return [self swipeReleased:NSZeroPoint how:@"placed"];
   _awaitingMomentum = YES;
   [self performSelector:@selector(swipeDidNotCoast) withObject:nil afterDelay:ardia_pip_throw::kMomentumWait];
 }
@@ -119,22 +103,37 @@ static BOOL MomentumScrollingOff() {
 - (void)swipeDidNotCoast {
   if (!_awaitingMomentum) return;
   _awaitingMomentum = NO;
-  _swipePlacedAt = CACurrentMediaTime();
   _swipePlaced = _window.frame;
   [self swipeReleased:NSZeroPoint how:@"placed"];
 }
 
+- (void)reportPlacement {
+  if (!_placementStamp) return;
+  [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(reportPlacement) object:nil];
+  [self reportRelease:@"placed" stamp:_placementStamp];
+  _placementStamp = nil;
+}
+
+- (void)endMomentumWait {
+  [self reportPlacement];
+  if (!_awaitingMomentum) return;
+  [self forgetMomentum];
+  if (!ardia_host::Background()) [NSCursor setHiddenUntilMouseMoves:NO];
+  [self reportRelease:@"placed" stamp:_swipeStamp];
+}
+
 - (void)swipeInterrupted {
+  [self reportPlacement];
   if (!_awaitingMomentum) return;
   [self forgetMomentum];
   [self swipeSettledAt:_window.frame thrown:NO how:@"interrupted" stashed:ArdiaPiPEdgeNone velocity:NSZeroPoint];
 }
 
 - (void)swipeCoasted:(NSEvent *)event {
-  const BOOL late = !_awaitingMomentum && CACurrentMediaTime() - _swipePlacedAt < ardia_pip_throw::kMomentumLate && !_swiping && !_dragging && !_animating &&
-                    NSEqualRects(_window.frame, _swipePlaced);
+  const BOOL late = !_awaitingMomentum && _placementStamp && !_swiping && !_dragging && !_animating && NSEqualRects(_window.frame, _swipePlaced);
   if (!_awaitingMomentum && !late) return;
-  _swipePlacedAt = 0;
+  [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(reportPlacement) object:nil];
+  _placementStamp = nil;
   [self forgetMomentum];
   const auto delta = ardia_pip_throw::FingerDelta(event.scrollingDeltaX, event.scrollingDeltaY, event.isDirectionInvertedFromDevice);
   const auto velocity = ardia_pip_throw::SwipeVelocity(delta);
@@ -191,7 +190,12 @@ static BOOL MomentumScrollingOff() {
     }
   }
   NSString *outcome = [how isEqual:@"cameOut"] ? @"pullOut" : [how isEqual:@"settledInCorner"] ? @"cornerPull" : [how isEqual:@"flickedAway"] ? @"flickTuck" : edge != ArdiaPiPEdgeNone ? @"tuck" : thrown ? @"corner" : @"placed";
-  [self reportRelease:outcome stamp:_swipeStamp];
+  if ([how isEqual:@"placed"]) {
+    _placementStamp = _swipeStamp;
+    [self performSelector:@selector(reportPlacement) withObject:nil afterDelay:ardia_pip_throw::kMomentumLate];
+  } else {
+    [self reportRelease:outcome stamp:_swipeStamp];
+  }
   _lastSwipe = @{
     @"outcome" : outcome,
     @"start" : NSStringFromRect(_swipeStart),

@@ -346,7 +346,7 @@ int main() {
 
   CHECK(FingerDelta(5, 3, true).x == 5 && FingerDelta(5, 3, true).y == -3);
   CHECK(FingerDelta(5, 3, false).x == -5 && FingerDelta(5, 3, false).y == 3);
-  CHECK(!SwipeFlings({6, 0}) && SwipeFlings({5, 4}) && SwipeFlings({-7, 0}));
+  CHECK(!SwipeSurelyFlings({-7, 0}) && SwipeSurelyFlings({-10, 0}));
   CHECK(SwipeVelocity({10, -2}).x == 900 && SwipeVelocity({10, -2}).y == -180);
   CHECK(!DragFlings({350, 0}) && DragFlings({300, 200}));
 

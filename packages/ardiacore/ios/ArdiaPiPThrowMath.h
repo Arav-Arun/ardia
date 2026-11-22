@@ -22,7 +22,7 @@ constexpr double kBrowserCardInset = 9, kBrowserCardRadius = 10;
 constexpr double kFreeRadius = 6;
 constexpr double kSnappedRadius = kBrowserCardRadius - (kCornerInset - kBrowserCardInset);
 constexpr double kDragFlingSpeed = 350;
-constexpr double kSwipeFlingDelta = 6, kSwipeSureFlingDelta = 10;
+constexpr double kSwipeSureFlingDelta = 10;
 constexpr double kTuckPastEdge = 0.5, kUntuckPull = 48, kCornerPull = 80;
 constexpr double kSwipeEventsPerSecond = 90;
 constexpr double kResponse = 0.9, kDampingRatio = 0.9, kResolve = 0.2;
@@ -106,8 +106,6 @@ inline Point FingerDelta(double scrollingDeltaX, double scrollingDeltaY, bool in
 }
 
 inline Point SwipeVelocity(Point lastDelta) { return {lastDelta.x * kSwipeEventsPerSecond, lastDelta.y * kSwipeEventsPerSecond}; }
-
-inline bool SwipeFlings(Point lastDelta) { return std::hypot(lastDelta.x, lastDelta.y) > kSwipeFlingDelta; }
 
 inline bool SwipeSurelyFlings(Point lastDelta) { return std::hypot(lastDelta.x, lastDelta.y) >= kSwipeSureFlingDelta; }
 
