@@ -175,6 +175,32 @@ export const settingsLayout = {
   titleWidth: 240,
 } as const;
 
+export const themeEditorLayout = {
+  pad: 232,
+  padWedges: 90,
+  knob: 30,
+  knobHitSlop: 10,
+  knobBorder: 2,
+  knobBorderSelected: 3,
+  knobHalo: 3,
+  lightnessSteps: 24,
+  lightnessHeight: 10,
+  track: 4,
+  thumb: 26,
+  dial: 44,
+  dialSnap: 4,
+  dialNotch: 45,
+  dialHand: 2,
+  dialHub: 6,
+  preview: 150,
+  stepper: 32,
+  accessibilityStep: 0.1,
+  accessibilityTurn: 1 / 24,
+  rainbowStops: 7,
+} as const;
+
+export const themeEditorInk = { knobOutline: "rgba(0,0,0,0.25)" } as const;
+
 export const settingsTint = {
   neutral: "#86888D",
   sync: "#458AFF",
