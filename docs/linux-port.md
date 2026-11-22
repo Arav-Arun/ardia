@@ -874,13 +874,41 @@ pnpm --filter @ardia/linux acceptance -- <extracted>/ardia/bin/ardia
     otherwise (window or page full screen). Linux keeps the sidebar header the Windows rule would collapse whenever
     the hamburger has no other home (`sidebarHeaderLayout.ts`). Some full-screen layouts still have none, as before
     this change: top tabs with minimalism, or a sidebar whose profile part is hidden.
-  - Restore: the engine sends no `maximized` event, so each window reads `ArdiaShell.windowFrame` at start and once
+  - Desktop layout and window state: the engine answers two calls, each advertised in the bootstrap's capabilities
+    (`ac_linux_window_state.h`), and sends an `ArdiaShell` event of the same name when a value changes:
+    - `ArdiaShell.windowButtonLayout` → `{ layout, desktop }`: `layout` is GTK's raw `gtk-decoration-layout` string
+      (GNOME fills it from `org.gnome.desktop.wm.preferences button-layout`: Ubuntu `:minimize,maximize,close`, upstream
+      GNOME `appmenu:close`, elementary `close:maximize`), or `null` without GTK's Linux UI; `desktop` is the browser's
+      `XDG_CURRENT_DESKTOP` (`""` when unset). `chromium-linux-window-state.patch` keeps the string GTK parses, and the
+      event follows Chromium's window-button-order observer, to every window. Subscribe to the event first, then call:
+      the engine sends a layout only when it differs from the last one it saw, including changes no shell was open for,
+      so a shell that loads later learns the current value from the call, not from an event.
+    - `ArdiaShell.windowState` `[windowId]` → `{ maximized, tiled, fullScreen }`, the event adding `windowId` and going to
+      that window's shell. Subscribe first, then call, as with the layout. `fullScreen` is the window's own full screen,
+      the same signal as the `fullScreen` window event (`WindowFullScreen()`): a page's full screen (a video) is not it,
+      and while a page is full screen `windowState` keeps `maximized` and `tiled` from the last state settled before
+      the window went full screen, so they don't flip and no event fires; `fullScreen` still reads the window's own
+      full screen, so it is `false` then. A window settles its state when its shell attaches, so
+      that holds for a window that was already maximized. One exception: when the configure that enters page full
+      screen also changes the tiled edges and Chromium defers applying it, one `tiled` change can surface during page
+      full screen; it corrects itself when full screen ends. `maximized` is the platform's current state, so a maximized
+      window reads `maximized: false` while it is minimized, and `true` again once restored. `tiled` means the
+      compositor tiled all four edges (Wayland's xdg_toplevel `tiled_*` states), whatever else is set: a GNOME half
+      tile is not tiled, but mutter also tiles all four edges of a maximized window, and Hyprland 0.56 sends
+      `maximized` and all four edges to every tiled window, half-width ones too, and keeps sending them after the
+      window is floated, so tell a tiling desktop from a maximized window with `desktop`, not with `tiled` alone. X11
+      derives its edges from maximized, so there `tiled` is always false. Full screen wins over maximized. The patch keeps the
+      edges on the browser widget and tells the host when they change, comparing each configure with the edges it last
+      reported, not the ones the window last applied, so a configure the window never applied can't hide the next
+      change. Bounds, show-state and edge changes in the same task coalesce, so one configure usually gives one event;
+      a maximize can still give an intermediate one when its state and edges land in different tasks.
+  - Restore: the shell doesn't read `windowState` yet, so each window reads `ArdiaShell.windowFrame` at start and once
     per animation frame of resizing, and marks itself maximized when the frame fills the work area, feeding the shared
     `useMaximizedWindows` through `captionRegions.ts`'s `noteMaximized` (`windowMaximized.ts`). Settings and Import
     too. Known limits: a window that fills the work area without being maximized, such as a lone tiled window on a
     tiling window manager (X11 or Wayland), shows restore. On Wayland `windowFrame` is null and the work area is the
     whole output, so the shell compares its outer size with that, and with a panel, a bar or gaps a maximized window
-    keeps the maximize glyph. Clicking still toggles correctly; the glyph needs the engine to report maximized state.
+    keeps the maximize glyph. Clicking still toggles correctly; the glyph waits for the shell to read `windowState`.
 - **Header drag and double-click.** Dragging the header moves the window (`DispatchHostWindowDragMovement`).
   Double-clicking it runs the desktop's titlebar action.
 - **Outer frame.** The host overlays Chromium's client view and doesn't replace its frame. Without the Wayland
