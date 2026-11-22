@@ -755,6 +755,11 @@ off in the lab`.
 sync20b; `--no-r8` builds the unshrunk control.
 The keep rules are in `apps/phone/android/app/proguard-rules.pro`. R8's reports (`mapping.txt`, `usage.txt`,
 `seeds.txt`, `configuration.txt`) land in `<name>-r8/` beside the APK in `/tmp/ardia-phone`.
+ML Kit finds its parts through Firebase's `ComponentRegistrar` classes, made by reflection from their no-argument
+constructor. R8 dropped `CommonComponentRegistrar`'s, so every release APK through 1.0.3-nightly.1 logged
+`NoSuchMethodException: CommonComponentRegistrar.<init>` at launch and Gemini Nano never started, even on phones
+Google lists. The rules keep every registrar's constructor and all of `com.google.mlkit` and
+`com.google.android.gms.internal.mlkit_*`.
 `apps/phone/test/r8/check-names.py <r8 apk> <unshrunk apk>` checks that what Android and the JavaScript reach by
 name survived. R8 renames the libraries' classes, so a crash's stack trace names classes like `a.b.c`: run
 `~/Library/Android/sdk/cmdline-tools/latest/bin/retrace <name>-r8/mapping.txt <trace.txt>` (or paste the trace into
