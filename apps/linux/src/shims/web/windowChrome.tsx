@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
-import { lightsOffWindow } from "../../../../browser/src/state/windows/dockMotion";
+import { lightsPlaceOffWindow } from "../../../../browser/src/state/windows/dockMotion";
+
+export { lightsPlaceOffWindow as trafficLightsOffWindow };
 
 const DEFAULT_CENTER: [number, number] = [25, 27];
 const SPACING = 23;
@@ -34,9 +36,6 @@ export function setTrafficLightsCenter(windowId: string, next: readonly [number,
   for (const watcher of watchers) watcher();
   return Promise.resolve();
 }
-
-export const trafficLightsOffWindow = ({ center, trailing }: TrafficLightsPlace): boolean =>
-  lightsOffWindow(trailing ? [center[0], center[1], "right"] : [center[0], center[1]]);
 
 export function trafficLightPosition({ center, trailing }: TrafficLightsPlace, index: number) {
   const top = center[1] - DIAMETER / 2;
