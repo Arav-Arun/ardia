@@ -71,6 +71,30 @@ forward.
   recreation or a JS reload is asked again: the first answer wins, and one granted in the meantime skips the dialog.
   An unanswered request is sent again when JS reopens a page it was already watching (07fca2a67).
 
+**Night Shade's timing on Android.** `night-shade.js` is added with `addDocumentStartJavaScript`, with the state for the
+page's host baked in: `WebViewPage` removes the old script and adds one carrying the host, the mode and the site's
+cached verdict (`light`: shade it, `dark`: it has its own dark look, or `unknown`) before each main-frame navigation
+(`prepareNavigation`, which `loadUrl`, reload, back and forward, restores, and renderer navigations and redirects
+through `shouldOverrideUrlLoading` all call), again in `onPageStarted`, when a site's verdict changes and when site
+settings change. The script trusts the baked state only when its host matches `location.hostname`; otherwise (a POST,
+a popup, a WebView without `DOCUMENT_START_SCRIPT`, which runs it at `onPageStarted`) it asks native over the
+`ardiaPage` listener at document start, which answers `"<mode> <verdict>"`. With the mode on (Always, or Automatic
+while the page sees a dark scheme) and the verdict `light`, the `#ardia-night-shade` style goes in as soon as `<html>`
+exists (a `MutationObserver` on the document), before any of the page's scripts and before the first paint. With no
+verdict, the page is measured when `<body>` exists (left alone while it has no background and stylesheets are still
+loading, as on iPhone) and again as each stylesheet loads, then at `DOMContentLoaded` and `load`. A cached verdict holds
+until `DOMContentLoaded`, then is measured again there and at `load`, so a redesigned site is corrected. When a
+measurement from `DOMContentLoaded` on differs from what the page was given, the script posts
+`nightShadeVerdict:light|dark` (accepted from the main frame only, keyed by its origin's host). `NightShadeVerdicts`
+keeps it: for regular tabs in the site preferences (`nightShade.verdicts`, at most 400 hosts, the least recently used
+dropped first, a use saved at most once a minute), for private tabs in memory until private browsing ends. Clear
+Browsing Data with History forgets the verdicts used in its range (`forgetNightShadeVerdicts`). The iPhone does the
+same in `WebEngine` and `NightShadeVerdicts.swift`; the measurement and the style are the same text on both
+(`PageScriptsTest`). Tests: `NightShadeVerdictsTest` (cap, order, private, clearing), `PageScriptsTest` (the baked
+script and the messages) and the device test `NightShadeStartTest` (an inline script at the top of `<body>` sees the
+style on a second load of a light site, typed, reloaded or followed from a script; a dark site is learned and left
+alone; a site that turned dark is corrected; Night Shade off shades nothing).
+
 `browser`'s `Omnibox.kt` (the ScriptEngine bridge) and `PageSurface.kt` (Compose) are left out of the module's build:
 the Expo app calls `@ardia/core` itself and hosts the page's view natively.
 
@@ -111,6 +135,12 @@ minutes, and a flush after the app leaves the screen) runs it without React Nati
   the sync state (`noBackupFilesDir/PhoneSync`), written whole and renamed into place, until the app applies
   them to its store (`sync.inbox()`, `sync.inboxApplied(ids)`, the `sync.inbox` event). Visits waiting to be
   removed are left out of what sync reads, so they never go back to the Mac.
+- **One SQLite engine for `browser.db`.** expo-sqlite bundles its own SQLite (`exsqlite3_*`) and the app's JS keeps
+  `browser.db` open through it, so native code reads the file through that same engine: on iPhone
+  `SQLiteEngine.expoSQLite` (sync's `PhoneBrowsingSource`, Spotlight and Shortcuts' `TabRecords`), on Android
+  `ExpoSqliteBrowserRows` over `ExpoSqliteConnection`. A second engine in the process can't see the first one's file
+  locks: it resets the WAL index the first has mapped and the app dies with SIGBUS (the iPhone crash on reopening the
+  app, 0.2.47 and 1.0.1). `apps/phone/scripts/one-sqlite-engine.test.mjs` fails on any other use of the system SQLite.
 - **Lab.** The page lab's Sync button connects with a typed phrase and a picked folder and shows the status and
   the synced view's counts. Runtime checks runs semantic fixtures (closures in loops, microtask order around a
   host call, sort stability, Map and Set order, large integers, string comparison) in a second sync runtime and
@@ -1656,12 +1686,15 @@ Every count and timing the phone can send, for the owner to read as one set and 
 | `page_summaries_on_device`, `page_summaries_excerpts`, `page_summaries_failed` | Pinch to Summarize on iPhone | A rising excerpt share can point to problems with Apple Intelligence. A rising failure share can point to problems reading pages |
 | `page_summaries_chatgpt`, `page_summaries_chatgpt_fallbacks` | Pinch to Summarize on Android | Android has no excerpts, so `page_summaries_failed` against `page_summaries_on_device` is the share of phones without a ready Gemini Nano. How many summaries the opt-in ChatGPT choice writes; fallbacks rising against `page_summaries_chatgpt` mean the Responses call or the token refresh broke. On Android, pinch opens against menu opens show the passive pinch watcher working, and zero pinch opens after a release with steady menu opens mean it stopped |
 | `start_no_tabs_button_taps` | Start's Archive or Synced Tabs button, which takes the place of Tabs when no tabs are open (#3324) | Whether people use it instead of landing on an empty tab view; zero across testers after a release means the swap stopped or the button stopped opening the Archive or the spaces |
+| `page_pictures_blank`, `page_pictures_hidden` | A tab switcher picture the iPhone threw away instead of saving: it came out one flat colour (`blank`), or the page was hidden or off screen when it was taken (`hidden`) | `blank` is how often a device still makes the empty card from the hltv report; the card keeps its last picture each time. A sudden rise in `hidden` means captures are being asked for pages that aren't showing |
+| `page_pictures_webkit` | An iPhone tab switcher picture that came from the page engine's snapshot because the instant screen copy failed or came out one flat colour | Should stay near zero: the screen copy is the normal route. A rise means the copy stopped working on some iOS version and pictures depend on the late, sometimes blank engine snapshot again |
 | `paste_and_go_links`, `paste_and_go_texts`, `paste_and_go_unread` | Paste and Go, now on iPhone too | iPhone taps should appear beside Android's. A high unread share on iPhone means people refuse the paste prompt, or the row shows when nothing can be pasted |
 | `search_tile_taps`, `voice_tile_taps`, `incognito_tile_taps` | Android's Quick Settings tiles | Voice and Incognito should appear once the release is out; a tile that stays at zero while Search counts can point to a broken tile |
 | `browse_chatgpt_fallbacks` | Browse for Me on Expo | How often a connected ChatGPT plan fails to answer; a jump after a release, or against `browse_answers_chatgpt`, means the Responses call or the token refresh broke |
 | `material_you_turned_on`, `material_you_turned_off` | the Material You switch in Android Settings (the owner, 2026-11-20) | How many testers try Material You and how many go back. Read `off` against `on`: a share near one means it is tried and dropped. `app_launched.material_colors` says how many launches run with it on |
 | `card_close_tapped` | the × on a card in Android's Material deck | Whether people close tabs with the card's own button rather than a flick; zero across Android testers after a release means the × stopped closing cards, or its tap zone opens the card instead |
 | `material_back_swiped` | a predictive back swipe on Android's Material sheets, dialogs, menus and library | Whether people swipe back out of Material surfaces; zero across Android testers after a release means the swipe stopped reaching them, or Back goes to the wrong surface |
+| `night_shade_verdicts_reused`, `night_shade_verdicts_learned`, `night_shade_verdicts_corrected` | Night Shade's cached verdicts on Android (a tester's report: yahoo.com loaded white until half way) | Counted natively and drained with the pending counts, never for private tabs. `reused` is a page load, with Night Shade not off, whose site's verdict was already known, so the shade was decided before the first paint; `learned` is a site measured for the first time, whose first load can still shade late; `corrected` is a site whose verdict changed, so that load showed the old one until `DOMContentLoaded`. Read `reused` against `learned` for the hit rate, which should climb as testers revisit sites; a `corrected` share that grows means the measurement disagrees with itself between loads |
 
 ## What is left before the Expo app replaces both native apps
 

@@ -152,13 +152,17 @@ export type PageSnapshot = {
   uri: string;
   width: number;
   height: number;
-  route?: "draw" | "windowCopy";
+  route?: "draw" | "windowCopy" | "screenCopy" | "engine";
   bytes?: number;
   kept?: boolean;
   durable?: boolean;
   generation?: number;
   frame?: { x: number; y: number; width: number; height: number } | null;
 };
+
+export type RefusedSnapshot = { refused: "hidden" | "blank" };
+
+export const isRefusedSnapshot = (taken: PageSnapshot | RefusedSnapshot): taken is RefusedSnapshot => "refused" in taken;
 
 export type PageScrollPosition = { y: number; viewportWidth?: number; viewportHeight: number; contentHeight: number };
 
