@@ -607,6 +607,31 @@ leaves out stay out, as before: `disable-download-quarantine` (Chrome quarantine
 `com.apple.quarantine` and its source URL in `kMDItemWhereFroms`), `prefs-always-prompt-for-download-directory`
 (Chrome's default, save to Downloads without asking, is Ardia's) and `enable-extra-locales`.
 
+### Tracking upstream
+
+The pins live in four files that have to agree: `env.sh` (`CHROMIUM_VERSION`, `HELIUM_TAG`, `HELIUM_MACOS_TAG`,
+`HELIUM_LINUX_TAG`), this folder's `helium-pins.ini` (macOS and Linux), `scripts/windows/engine/helium-pins.ini` and
+`scripts/windows/engine/prebuilt.json` (its `chromium`, and its `source`, a full commit). `scripts/engine/upstream-pins.mjs --check`
+fails, offline, when one is missing or malformed (versions and tags are dotted numbers, commits full hashes) or when
+they disagree on the Chromium version, the helium-chromium tag or commit, or a platform tag that isn't a release of the
+pinned helium-chromium; its test runs it in every pull request (Checks, "repository, vouch and stale tests"). Bump
+them in one pull request.
+
+The Upstream pins workflow (`.github/workflows/upstream.yml`) runs every Monday and compares the pins with the latest
+published releases of helium-chromium, helium-macos, helium-linux and helium-windows and with `chromium_version.txt` at
+the newest helium-chromium release, with Chromium stable from chromiumdash as context. The published Windows engine
+gets its own line: the helium-windows that `helium-pins.ini` pins at `prebuilt.json`'s `source` commit, held to the
+newer of our pin and upstream's, so a Windows engine not yet rebuilt after a bump (as in
+[engine-build-windows.md](engine-build-windows.md#helium-for-windows)) reads as behind. While anything is behind it
+keeps one issue up to date: one github-actions[bot] opened, with a marker in its body, whatever its labels (opened
+labelled `todo`, reopened with a comment if closed). Once nothing is behind it comments once and closes it. Issues
+and comments by anyone else are never matched, even when they quote the marker. Pin files that disagree, a value it
+can't read, or a page of issues it can't reach exit 1 and change no issue; a GitHub rate limit stops it cleanly. Each
+step is checked against the bot's own comments, so a run that failed halfway is finished by the next one without a
+repeated comment. Run it locally with `GITHUB_TOKEN=$(gh auth token) node scripts/engine/upstream-pins.mjs` (add
+`--issue --dry-run` with `GITHUB_REPOSITORY` to see the issue plan; real writes come only from the workflow), or
+dispatch the workflow with `dry_run`. The script and the workflow sit outside every engine key.
+
 ### 0.21.1 → 0.21.2 (Chromium 157.0.8103.50, 2026-11-12)
 
 A Chromium patch release, through Helium 0.21.2 and helium-macos 0.21.2.1. What changed in Helium, and what we did:
