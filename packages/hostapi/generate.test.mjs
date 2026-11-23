@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -95,10 +95,77 @@ test("names, services and bindings outside the schema's forms are refused", () =
   assert.throws(() => validate("demo", { kind: "engine", imports: { "@ardia/core": ["Thing"] }, calls: {}, events: {} }), /relative/);
 });
 
-test("a domain the Mac serves straight from the engine gets its whole Swift module, and a mixed one gets none yet", () => {
-  const files = outputs({ demo: domain({ watch: call() }), mixed: domain({ watch: call(), open: call({ mac: "custom", service: "ac_mixed_open" }) }) });
+test("a domain the Mac serves straight from the engine gets its whole Swift module, and a mixed one a call table its module fills with its own handlers", () => {
+  const files = outputs({
+    demo: domain({ watch: call() }),
+    mixed: domain({ watch: call({ service: "ac_mixed_watch" }), open: call({ mac: "custom", service: "ac_mixed_open" }), import: call({ mac: "custom", service: undefined, desktop: "custom", windows: "custom" }), probe: call({ mac: "absent", service: "ac_mixed_probe" }) }),
+  });
   assert.equal(files.get("packages/ardiacore/ios/DemoModule.swift").includes('"watch": EngineCall.passing("ac_demo_watch"),'), true);
   assert.equal(files.get("packages/ardiacore/ios/DemoModule.swift").includes("Events("), false);
   assert.equal(files.has("packages/ardiacore/ios/MixedModule.swift"), false);
-  assert.equal(JSON.parse(files.get(MANIFEST)).domains.mixed.swift, null);
+  assert.equal(
+    files.get("packages/ardiacore/ios/MixedCalls.swift"),
+    [
+      "import ExpoModulesCore",
+      "",
+      "func mixedCallTable(open openHandler: @escaping CallHandler, import importHandler: @escaping CallHandler) -> CallTable {",
+      '  CallTable(domain: "mixed", handlers: [',
+      '    "watch": EngineCall.passing("ac_mixed_watch"),',
+      '    "open": openHandler,',
+      '    "import": importHandler,',
+      "  ])",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  const manifest = JSON.parse(files.get(MANIFEST)).domains;
+  assert.equal(manifest.demo.swift, "packages/ardiacore/ios/DemoModule.swift");
+  assert.equal(manifest.mixed.swift, "packages/ardiacore/ios/MixedCalls.swift");
+  assert.equal("service" in manifest.mixed.calls.import, false);
+});
+
+test("the generated Swift parses, with an empty table written as [:] and verbs Swift won't take as a bare label escaped", () => {
+  const files = outputs({
+    quiet: domain({ probe: call({ mac: "absent", service: "ac_quiet_probe" }), keep: call({ mac: "custom", service: "ac_quiet_keep" }) }),
+    hollow: domain({ probe: call({ mac: "absent", service: "ac_hollow_probe" }) }),
+    empty: domain({}),
+    words: domain({ inout: call({ mac: "custom", service: "ac_words_inout" }), var: call({ mac: "custom", service: "ac_words_var" }), let: call({ mac: "custom", service: "ac_words_let" }), import: call({ mac: "custom", service: "ac_words_import" }) }),
+  });
+  assert.match(files.get("packages/ardiacore/ios/HollowCalls.swift"), /func hollowCallTable\(\) -> CallTable \{\n {2}CallTable\(domain: "hollow", handlers: \[:\]\)\n\}/);
+  assert.match(files.get("packages/ardiacore/ios/EmptyModule.swift"), /static let calls = CallTable\(domain: "empty", handlers: \[:\]\)/);
+  assert.match(files.get("packages/ardiacore/ios/WordsCalls.swift"), /\(`inout` inoutHandler: @escaping CallHandler, `var` varHandler: @escaping CallHandler, `let` letHandler: @escaping CallHandler, import importHandler: @escaping CallHandler\)/);
+  const swiftc = spawnSync("swiftc", ["--version"], { encoding: "utf8" });
+  if (swiftc.status !== 0) return;
+  const dir = mkdtempSync(join(tmpdir(), "hostapi-swift-"));
+  try {
+    const stubs = join(dir, "Stubs.swift");
+    writeFileSync(stubs, [
+      "typealias CallHandler = (String, String) -> Void",
+      "enum EngineCall { static func passing(_ name: String) -> CallHandler { { _, _ in } } }",
+      "struct CallTable { let domain: String; let handlers: [String: CallHandler]; var function: Int { 0 } }",
+      "struct Module {}",
+      "",
+    ].join("\n"));
+    const sources = [...files].filter(([path]) => path.endsWith(".swift")).map(([path, text]) => {
+      const at = join(dir, path.split("/").at(-1));
+      writeFileSync(at, text.replace("import ExpoModulesCore\n", ""));
+      return at;
+    });
+    const parsed = spawnSync("swiftc", ["-parse", stubs, ...sources], { encoding: "utf8" });
+    assert.equal(parsed.status, 0, parsed.stderr);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a call may leave out its service only when every host serves it with its own code", () => {
+  const custom = { mac: "custom", desktop: "custom", windows: "custom", service: undefined };
+  assert.doesNotThrow(() => validate("demo", domain({ fetch: call(custom) })));
+  for (const passing of [{ mac: "service" }, { desktop: "route" }, { windows: "service" }]) {
+    assert.throws(() => validate("demo", domain({ fetch: call({ ...custom, ...passing }) })), /passes it straight/, JSON.stringify(passing));
+  }
+  const { mac, ...macDefault } = custom;
+  assert.equal(mac, "custom");
+  assert.throws(() => validate("demo", domain({ fetch: call(macDefault) })), /passes it straight/);
+  assert.doesNotThrow(() => validate("demo", domain({ fetch: call({ ...custom, mac: "absent" }) })));
 });
