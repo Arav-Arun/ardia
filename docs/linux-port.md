@@ -801,7 +801,8 @@ pnpm --filter @ardia/desktop acceptance -- <extracted>/ardia/bin/ardia
 ### The Rust sync core in the engine build
 
 `packages/core-rs` builds inside the Chromium tree too, with Chromium's own Rust toolchain, so Chromium links a single
-Rust standard library. Nothing in `ac_linux_*` calls it yet.
+Rust standard library. `//ardia/linux` depends on `//ardia/core_rs:ardia_core`, and `ac_linux_sync_keys.cc` is the only
+caller: sync keys, sealing and opening files and passwords, and the recovery phrase all go through `ardia_core.h`.
 
 - **How it gets in.** `engine/ardiacore-linux/copies.tsv` copies `packages/core-rs` into `//ardia/core_rs`, with the same
   layout. Those files count toward the Linux engine key only, never the Mac's. `packages/core-rs/BUILD.gn` is the
@@ -1656,8 +1657,23 @@ Linux reads calendars from Evolution Data Server, which GNOME Online Accounts, G
 
 ### Sync
 
-- **Format.** Folder sync uses the macOS format byte for byte (`ac_linux_sync_crypto`, `ac_linux_sync_vault`), so a
-  Linux and a Mac install can share a Syncthing, Dropbox or NAS folder.
+- **Format.** Folder sync uses the macOS format byte for byte, so a Linux and a Mac install can share a Syncthing,
+  Dropbox or NAS folder. The format is the shared Rust core (`packages/core-rs`, BoringSSL inside the engine), called
+  through `ac_linux_sync_keys`; `ac_linux_sync_vault` keeps the files.
+  - Linux splits a typed phrase into words as it always has (ASCII letters, a separator list), turns any word that
+    can't be a list word into `x`, and hands the core those 24 words, so the core checks words, prefixes and the
+    checksum and its unknown-word index points at the word the user typed.
+  - The host tests (`tests/test_sync.py`, `tests/test_live.py`) build the core with cargo (RustCrypto) and link it;
+    without cargo they skip, and in CI (`CI` set) they fail.
+  - Failed opens travel back with the call that hit them: `ArdiaSync.read` adds `openFailures` (counts by reason)
+    when a file in it didn't open, and a failed `openLocal` answers `{ openFailure: <reason> }`. `hostSync.ts` strips
+    both before the shared engine sees the result (it gets the listing, or `null`) and counts them under the consent
+    token taken when that call began, into `syncFileCounts.ts`, which the hourly usage counts drain. No count lives in
+    the engine, so nothing from before opting in can be claimed later.
+  - Every window asks `ArdiaSync.core` once at start, so whichever window leads telemetry sends `sync_core: "rust"`
+    on `sync_toggled` even when another window holds sync. Toggles that arrive while that answer is pending, on and
+    off alike, wait for it in order (`whenSyncCore`, `telemetry/syncToggles.ts`) and are sent under the consent token
+    taken at each toggle, so they are dropped if sharing ended meanwhile; an engine without the call answers `native`.
   - HKDF-SHA256 key derivation.
   - `NNS1` files with AES-256-GCM and 1 KiB padding.
   - A 24-word BIP-39 phrase.

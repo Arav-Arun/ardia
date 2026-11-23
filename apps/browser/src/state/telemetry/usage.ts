@@ -3,10 +3,11 @@ import { currentAppIcon, listComponents, onAppEvent } from "../../platform/app";
 import { useTranslate } from "../site/translate";
 import { useBrowser } from "../browser/store";
 import { keysOf } from "../browser/changes";
-import { syncCore, takeOpenTabSyncCounts, takeSnapshotWrites, useSync } from "../sync/engine";
+import { takeOpenTabSyncCounts, takeSnapshotWrites, useSync, whenSyncCore } from "../sync/engine";
 import { takeSyncCodeCounts } from "../sync/recoveryKit";
 import { capture, consentNow, consentToken, counted, consentOrNow, countFor, endSession, flush, isSharing, markSettingsSnapshot, settingsSnapshotDay, startClient, stillValid, watchConsentBoundary, withHourlyExtras, type ConsentToken } from "./usageClient";
 import { reportLocalStore, startLocalStore } from "./localStoreReport";
+import { watchSyncToggles } from "./syncToggles";
 import { watchExtensionInstalls } from "./extensionInstalls";
 import { nativeConsent } from "./nativeConsent";
 import { startWatchChecks } from "./watch";
@@ -275,14 +276,7 @@ function watchToolbarAutoHide() {
 }
 
 function watchSync() {
-  let last = useSync.getState().status;
-  useSync.subscribe(({ status }) => {
-    const was = last;
-    last = status;
-    if (was === status) return;
-    if (was === "off" && status !== "unavailable") capture("sync_toggled", { on: true, sync_core: syncCore() }, consentNow());
-    else if (status === "off" && was !== "unavailable") capture("sync_toggled", { on: false }, consentNow());
-  });
+  watchSyncToggles(useSync, whenSyncCore, consentNow, (toggle, consent) => capture("sync_toggled", toggle, consent));
 }
 
 function watchTranslate() {
