@@ -10,7 +10,7 @@ import { startKillSwitches } from "../../browser/src/platform/killSwitchesLaunch
 import { showToast } from "../../browser/src/state/app/toasts";
 import { openUrls } from "../../browser/src/state/browser/actions";
 import { openUrlFromSettings } from "../../browser/src/state/settings/settingsWindows";
-import { noteSwitchRefresh, noteUpdatePageOpened } from "../../browser/src/state/telemetry/updateCounts.ts";
+import { noteSwitchRefresh, noteUpdateNoticeDismissed, noteUpdatePageOpened } from "../../browser/src/state/telemetry/updateCounts.ts";
 
 const updaters = new WeakMap<ArdiaHost, LinuxUpdater>();
 const UPDATE_ICON = "arrow.down.circle";
@@ -54,6 +54,7 @@ export function linuxUpdaterFor(host: ArdiaHost): LinuxUpdater {
         icon: UPDATE_ICON,
         sticky: true,
         action: { title: "View", run: () => (noteUpdatePageOpened(), open(release.url)) },
+        secondary: { title: "Later", run: noteUpdateNoticeDismissed },
       }),
     offerInstall: (release, install) =>
       toast(windowId, `Ardia ${release.version} is available`, "Update now and restart when you're ready.", {
@@ -69,7 +70,11 @@ export function linuxUpdaterFor(host: ArdiaHost): LinuxUpdater {
       }),
     managed: async (release, current, asked) => {
       if (!asked) {
-        toast(windowId, `Ardia ${release.version} is available`, `Update it with your package manager, like ${AUR_UPDATE_COMMAND}.`, { icon: UPDATE_ICON, sticky: true });
+        toast(windowId, `Ardia ${release.version} is available`, `Update it with your package manager, like ${AUR_UPDATE_COMMAND}.`, {
+          icon: UPDATE_ICON,
+          sticky: true,
+          secondary: { title: "Later", run: noteUpdateNoticeDismissed },
+        });
         return;
       }
       const answer = await confirm({
