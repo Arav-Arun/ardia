@@ -12,7 +12,7 @@ import { openBarFromAddress } from "../../state/omnibox/barState";
 import { useIsBookmarked, useSettings, useTab, useTabLive, useTabsPlace, useTabsShown } from "../../state/browser/hooks";
 import type { Tab } from "../../state/browser/types";
 import { Button, ContextMenuArea, Divider, FadeLabel, ink, monoFace, sidebarFont, sidebarPoints, drawnSymbol, space, Text, useHover, WindowDragRegion } from "../ui";
-import { type ToolbarGeometry } from "../window/geometry";
+import { toolbarLeadingCorner, type ToolbarGeometry } from "../window/geometry";
 import { usePage, usePages, type PageState } from "../../state/tabs/pageState";
 import { togglePopover } from "../../state/tabs/popoverDismiss";
 import { useHistoryAvailability } from "../../state/tabs/navigation";
@@ -120,9 +120,24 @@ export const Toolbar = memo(function Toolbar({
   const at = useMemo(() => {
     const top = row.center - row.button / 2;
     const place = (center: number | null) => ({ position: "absolute" as const, top, left: (center ?? 0) - row.button / 2 });
-    const hit = { width: row.button, height: row.button, plateX: 0, plateY: 0, box: row.button, radius: row.buttonRadius };
-    const nav = (center: number | null) => ({ style: place(center), hit });
-    return { top, sidebarButton: place(geometry.sidebarButton), back: nav(geometry.back), forward: nav(geometry.forward), reload: nav(geometry.reload) };
+    const leading = toolbarLeadingCorner(geometry, row);
+    const hit = (topLeftRadius?: number) => ({
+      width: row.button,
+      height: row.button,
+      plateX: 0,
+      plateY: 0,
+      box: row.button,
+      radius: row.buttonRadius,
+      ...(topLeftRadius === undefined ? {} : { topLeftRadius }),
+    });
+    const nav = (center: number | null, topLeftRadius?: number) => ({ style: place(center), hit: hit(topLeftRadius) });
+    return {
+      top,
+      sidebarButton: nav(geometry.sidebarButton, leading.button === "sidebar" ? leading.radius : undefined),
+      back: nav(geometry.back, leading.button === "back" ? leading.radius : undefined),
+      forward: nav(geometry.forward),
+      reload: nav(geometry.reload),
+    };
   }, [geometry, row]);
   const trailing = useMemo(
     () => toolbarTrailing(row, { pinnedWidth: trailingWidth, split: inSplit, cardRadius: geometry.cardRadius }),
@@ -141,7 +156,8 @@ export const Toolbar = memo(function Toolbar({
       <Animated.View style={[StyleSheet.absoluteFill, { opacity: dim }]} pointerEvents="box-none">
         {geometry.sidebarButton !== null && (
           <Button variant="icon" toolbar
-            style={at.sidebarButton}
+            style={at.sidebarButton.style}
+            hit={at.sidebarButton.hit}
             palette={palette}
             icon={tabsIcon}
             look="row"
