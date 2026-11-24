@@ -36,7 +36,7 @@ export const AUR_UPDATE_COMMAND = "yay -Syu ardia-bin";
 type InstallKind = UpdateInstallKind | "managed" | "unsupported";
 type Phase = "idle" | "downloading" | "installing" | "ready" | "failed";
 type EngineStatus = { phase: Phase; version: string | null; reason: string | null; kind: InstallKind; run: number };
-type Preferences = { automaticChecks: boolean; automaticDownloads: boolean; lastCheck: number | null; channel: UpdateChannel | null; notified: string | null; failed: string | null };
+type Preferences = { automaticChecks: boolean; automaticDownloads: boolean; lastCheck: number | null; channel: UpdateChannel | null; notified: string | null; failed: string | null; readyNotified: string | null };
 type Fetched = { status: number; body: string };
 type SwitchCheck = NonNullable<Extract<UpdaterState, { available: true }>["switchCheck"]>;
 type StartedFrom = "asked" | "automatic" | "accepted";
@@ -63,7 +63,7 @@ type UpdateDeps = {
   now?: () => number;
 };
 
-const DEFAULTS: Preferences = { automaticChecks: true, automaticDownloads: true, lastCheck: null, channel: null, notified: null, failed: null };
+const DEFAULTS: Preferences = { automaticChecks: true, automaticDownloads: true, lastCheck: null, channel: null, notified: null, failed: null, readyNotified: null };
 const INSTALLABLE: ReadonlySet<string> = new Set<UpdateInstallKind>(["deb", "tarball", "appimage"]);
 const PHASES: ReadonlySet<string> = new Set<Phase>(["idle", "downloading", "installing", "ready", "failed"]);
 const ONLY_INSTALL_FAILURES: ReadonlySet<string> = new Set(UPDATE_INSTALL_FAILURES.filter((reason) => !(UPDATE_DOWNLOAD_FAILURES as readonly string[]).includes(reason)));
@@ -99,6 +99,7 @@ function readPreferences(read: UpdateDeps["read"]): Preferences {
       channel: saved.channel === "stable" || saved.channel === "nightly" ? saved.channel : null,
       notified: typeof saved.notified === "string" ? saved.notified : null,
       failed: isAppVersion(saved.failed) ? saved.failed : null,
+      readyNotified: isAppVersion(saved.readyNotified) ? saved.readyNotified : null,
     };
   } catch {
     return { ...DEFAULTS };
@@ -112,7 +113,6 @@ export function linuxUpdater(deps: UpdateDeps) {
   let switchCheck: SwitchCheck | null = null;
   let settledRun = 0;
   let sightedRun = 0;
-  let readyNoticeRun = 0;
   let shownReady = false;
   const installingRuns = new Set<number>();
   const preferences = async () => {
@@ -159,7 +159,7 @@ export function linuxUpdater(deps: UpdateDeps) {
   const restartToUpdate = () => void restart(consentToken());
   const noticeReady = async (status: EngineStatus, version: string, consent: ConsentToken | null) => {
     if (deps.showsToasts !== false && status.run > settledRun && (await claim(status.run))) countOutcome(status, consent);
-    readyNoticeRun = Math.max(readyNoticeRun, status.run);
+    await remember({ readyNotified: version }).catch(() => {});
     deps.ready(version, restartToUpdate);
   };
 
@@ -212,7 +212,7 @@ export function linuxUpdater(deps: UpdateDeps) {
     countOutcome(status, consent);
     const target = status.version ?? own?.release.version;
     if (!target) return;
-    if (status.phase === "ready") return status.run > readyNoticeRun ? deps.ready(target, restartToUpdate) : undefined;
+    if (status.phase === "ready") return (await preferences()).readyNotified === target ? undefined : deps.ready(target, restartToUpdate);
     console.info(`[ardia linux] the update to ${target} failed: ${status.reason ?? "unknown"}`);
     await fallBack(own?.release.version === target ? own.release : releasePage(target), own?.from ?? "automatic", consent);
   }

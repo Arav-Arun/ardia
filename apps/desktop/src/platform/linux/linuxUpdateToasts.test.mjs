@@ -185,7 +185,7 @@ test("a restart notice dismissed from Check for Updates stays closed when the wa
 test("a restart notice dismissed in one window does not come back in the window that watches for updates", async (t) => {
   const claimed = new Set();
   const watcher = harness({ kind: "deb", phase: "ready", claimed });
-  const asking = harness({ kind: "deb", phase: "ready", windowId: "other", claimed, fresh: false });
+  const asking = harness({ kind: "deb", phase: "ready", windowId: "other", claimed, docs: watcher.docs, fresh: false });
   await asking.updater.check(true);
   assert.equal(useToasts.getState().toasts.other.title, "Ardia 0.2.46 is ready");
   useToasts.getState().toasts.other.secondary.run();
@@ -209,6 +209,22 @@ test("a restart notice dismissed while the host could not claim its run stays cl
   await updater.watch();
   await updater.watch();
   assert.equal(useToasts.getState().toasts.main, null, "the watcher does not bring the dismissed notice back");
+  const counts = takeUpdateCounts();
+  assert.equal(counts.update_notices_dismissed, 1);
+  assert.equal(counts.update_downloads_finished, 1, "the watcher still counts the finished update");
+});
+
+test("a restart notice dismissed in one window while the host could not claim its run stays closed in the watching window", async (t) => {
+  const claimed = new Set();
+  const watcher = harness({ kind: "deb", phase: "ready", claimed });
+  const asking = harness({ kind: "deb", phase: "ready", windowId: "other", claimed, docs: watcher.docs, fresh: false, claimFailures: 1 });
+  await asking.updater.check(true);
+  assert.equal(useToasts.getState().toasts.other.title, "Ardia 0.2.46 is ready");
+  useToasts.getState().toasts.other.secondary.run();
+  useToasts.setState((s) => ({ toasts: { ...s.toasts, other: null } }));
+  await watcher.updater.watch();
+  await watcher.updater.watch();
+  assert.equal(useToasts.getState().toasts.main, undefined, "the watching window does not show the notice again");
   const counts = takeUpdateCounts();
   assert.equal(counts.update_notices_dismissed, 1);
   assert.equal(counts.update_downloads_finished, 1, "the watcher still counts the finished update");
