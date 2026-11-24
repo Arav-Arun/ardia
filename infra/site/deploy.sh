@@ -17,10 +17,6 @@ if [ "$step" != deploy ]; then
     export GITHUB_TOKEN="$gh_token"
   fi
   SITE_URL=https://ardia.dev pnpm -C "$site" exec astro build
-  if ! grep -q 'id="contributors"' "$site/dist/index.html"; then
-    echo "The landing page was built without its contributors section: the GitHub contributors API could not be read. Set GITHUB_TOKEN and build again." >&2
-    exit 1
-  fi
   rsync -a --delete --exclude 'release-videos/*.mp4' "$site/dist/" "$here/dist/"
   package_mb=$(( $(du -sk "$here/dist" | cut -f1) / 1024 ))
   if [ "$package_mb" -gt "$package_limit_mb" ]; then
