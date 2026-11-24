@@ -109,6 +109,21 @@ export function toolbarLeadingCorner(geometry: ToolbarGeometry, row: { button: n
   return { button, radius: Math.max(0, Math.min(pageCornerCenter - left, pageCornerCenter - top)) };
 }
 
+export function toolbarButtonPlacements(geometry: ToolbarGeometry, row: { button: number; center: number; buttonRadius: number }) {
+  const top = row.center - row.button / 2;
+  const place = (center: number | null) => ({ position: "absolute" as const, top, left: (center ?? 0) - row.button / 2 });
+  const leading = toolbarLeadingCorner(geometry, row);
+  const hit = (topLeftRadius?: number) => ({ width: row.button, height: row.button, plateX: 0, plateY: 0, box: row.button, radius: row.buttonRadius, ...(topLeftRadius === undefined ? {} : { topLeftRadius }) });
+  const nav = (center: number | null, topLeftRadius?: number) => ({ style: place(center), hit: hit(topLeftRadius) });
+  return {
+    top,
+    sidebarButton: nav(geometry.sidebarButton, leading.button === "sidebar" ? leading.radius : undefined),
+    back: nav(geometry.back, leading.button === "back" ? leading.radius : undefined),
+    forward: nav(geometry.forward),
+    reload: nav(geometry.reload),
+  };
+}
+
 function computeToolbarGeometry(o: GeometryOptions): ToolbarGeometry {
   const [c0, c1, c2, c3] = layout.toolbarIconCenters;
   const trailing = o.trailing ?? 0;

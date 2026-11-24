@@ -3,7 +3,7 @@ import { test } from "node:test";
 const { layout } = await import("../ui/theme.ts");
 const { HEADER_TOOLS, headerToggleXIn } = await import("./dockMotion.ts");
 const headerToggleX = (windowFullScreen) => headerToggleXIn({ windowFullScreen, pageFullScreen: false, controlsRow: false });
-const { NO_TOOLBAR, toolbarGeometry, toolbarLeadingCorner } = await import("./geometry.ts");
+const { NO_TOOLBAR, toolbarButtonPlacements, toolbarGeometry, toolbarLeadingCorner } = await import("./geometry.ts");
 
 test("the Mac keeps every place laid out around the traffic lights where it was", () => {
   assert.equal(layout.trafficLightsWidth, 78);
@@ -33,4 +33,7 @@ test("the first toolbar button follows the page-frame corner, whether it is Hide
   assert.deepEqual(toolbarLeadingCorner(otherPane, row), { button: null });
   assert.equal(toolbarLeadingCorner(toolbarGeometry({ sidebarButton: false, leadingAtCardCorner: true }), row).radius, 0);
   assert.equal(toolbarLeadingCorner(back, { button: 22, center: 14 }).radius, 9);
+  assert.equal(toolbarButtonPlacements(hideTabs, { ...row, buttonRadius: 8 }).sidebarButton.hit.topLeftRadius, 12.8);
+  assert.equal(toolbarButtonPlacements(back, { ...row, buttonRadius: 8 }).back.hit.topLeftRadius, 12.8);
+  assert.equal(toolbarButtonPlacements(otherPane, { ...row, buttonRadius: 8 }).back.hit.topLeftRadius, undefined);
 });
