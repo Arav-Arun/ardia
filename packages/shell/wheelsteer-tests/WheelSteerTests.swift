@@ -282,5 +282,20 @@ final class WheelSteerTests: XCTestCase {
     column.range.forward = false
     XCTAssertEqual(column.run([swipe(.changed, -10), swipe(.changed, -10)]), [.place(500), .none])
   }
+  func testATinyDeltaInsideATallSectionStaysPutInsteadOfPullingToTheEdge() {
+    let out = Column(range: tall, at: 650).run([swipe(.began, -0.004), swipe(.changed, -0.004)])
+    XCTAssertFalse(out.contains(.place(tall.hi)), "\(out)")
+    XCTAssertFalse(out.contains(where: { if case .place(let y) = $0 { return y > 650.01 } else { return false } }), "\(out)")
+  }
+
+  func testAPauseInsideOneHeldSwipeDoesNotMoveASecondTime() {
+    let out = Column().run([swipe(.began, -15), swipe(.changed, -15), swipe(.changed, -15, gap: 400), swipe(.changed, -15), swipe(.ended, 0)])
+    XCTAssertEqual(kinds(out), ["place", "move1", "none", "none", "none"])
+  }
+
+  func testAPauseInPhaselessInputStillStartsAFreshGesture() {
+    let out = Column().run([swipe(.none, -15), swipe(.none, -15), swipe(.none, -15, gap: 400), swipe(.none, -15)])
+    XCTAssertEqual(kinds(out), ["place", "move1", "place", "move1"])
+  }
 }
 

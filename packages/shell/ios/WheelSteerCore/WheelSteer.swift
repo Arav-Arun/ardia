@@ -81,9 +81,10 @@ struct WheelSteer {
   }
 
   private func inside(_ by: Double, at: Double, range: WheelRange) -> Double? {
+    guard range.tall else { return nil }
     let within = range.clamp(at)
-    let next = range.clamp(within + by)
-    return range.tall && abs(next - within) > 0.01 ? next : nil
+    let atEdge = by > 0 ? within >= range.hi - 0.01 : within <= range.lo + 0.01
+    return atEdge ? nil : range.clamp(within + by)
   }
 
   private mutating func notch(_ dy: Double, at: Double, range: WheelRange, now: Double) -> WheelAction {
@@ -111,7 +112,7 @@ struct WheelSteer {
     }
     if ending { return committed || scrolledInside ? .none : .settle }
     let phaseless = input.phase == .none
-    let paused = now - lastAt > tune.gestureGapMs
+    let paused = phaseless && now - lastAt > tune.gestureGapMs
     let spent = phaseless && committed && now >= holdUntil
     let rested = phaseless && scrolledInside && now - insideAt >= tune.edgeRestMs
     if !starting && (paused || spent || rested) { restart() }
