@@ -22,7 +22,9 @@ test("sidebar URL controls use concentric button metrics and keep both edge inse
     assert.match(toolbar, /value=\{sidebarFieldToolbarRow\(\)\}/);
     assert.match(toolbar, /paddingRight: SIDEBAR_FIELD_CONTROL\.inset/);
     assert.match(toolbar, /paddingRight: row\.fieldTrailingInset \?\? space\.xs/);
-    assert.match(readFileSync(new URL("./SidebarField.tsx", import.meta.url), "utf8"), /radius=\{SIDEBAR_FIELD_CONTROL\.radius\}/);
+    const field = readFileSync(new URL("./SidebarField.tsx", import.meta.url), "utf8");
+    assert.match(field, /box=\{SIDEBAR_FIELD_CONTROL\.box\}/);
+    assert.match(field, /radius=\{SIDEBAR_FIELD_CONTROL\.radius\}/);
   } finally {
     setActiveLook(DEFAULT_LOOK);
   }

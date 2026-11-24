@@ -52,7 +52,7 @@ export function FieldSiteButton({
 }) {
   const tokens = useSidebarTokens();
   return (
-    <View
+    <Button
       style={{
         marginLeft: SIDEBAR_FIELD_CONTROL.inset,
         width: SIDEBAR_FIELD_CONTROL.box,
@@ -60,19 +60,17 @@ export function FieldSiteButton({
         borderRadius: SIDEBAR_FIELD_CONTROL.radius,
         backgroundColor: tokens.fieldButtonPlate,
       }}
-    >
-      <Button
-        variant="icon"
-        toolbar
-        palette={palette}
-        icon={icon}
-        color={color}
-        look="field"
-        radius={SIDEBAR_FIELD_CONTROL.radius}
-        active={active}
-        onPress={onPress}
-        tooltip={tooltip}
-      />
-    </View>
+      variant="icon"
+      toolbar
+      palette={palette}
+      icon={icon}
+      color={color}
+      look="field"
+      box={SIDEBAR_FIELD_CONTROL.box}
+      radius={SIDEBAR_FIELD_CONTROL.radius}
+      active={active}
+      onPress={onPress}
+      tooltip={tooltip}
+    />
   );
 }
