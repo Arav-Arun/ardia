@@ -29,17 +29,24 @@ const { linuxUpdaterFor } = await import("./linuxUpdates.ts");
 hooks.deregister();
 const { SplitToast } = await import("../../../../browser/src/components/split/SplitChrome.tsx");
 
-function harness({ kind, phase = "idle", windowId = "main", docs = new Map(), version = "0.2.46" } = {}) {
+function harness({ kind, phase = "idle", windowId = "main", docs = new Map(), version = "0.2.46", claimed = new Set(), fresh = true } = {}) {
   const state = { docs, opened: [], copied: [], dialogs: [], version };
   globalThis.__linuxUpdateTest = state;
-  useToasts.setState({ toasts: {} });
-  setConsentPeriod(true, "linux-update-toast-test");
-  takeUpdateCounts();
+  if (fresh) {
+    useToasts.setState({ toasts: {} });
+    setConsentPeriod(true, "linux-update-toast-test");
+    takeUpdateCounts();
+  }
   const host = {
     bootstrap: { windowId, capabilities: ["ArdiaUpdates.releases", ...(kind ? SELF_UPDATE_METHODS : [])] },
-    invoke: async (method) => {
+    invoke: async (method, request) => {
       if (method === "ArdiaUpdates.status") return { kind, phase, version, reason: "network", run: phase === "idle" ? 0 : 1 };
-      if (method === "ArdiaUpdates.claimOutcome") return true;
+      if (method === "ArdiaUpdates.claimOutcome") {
+        const [run] = request.args;
+        if (claimed.has(run)) return false;
+        claimed.add(run);
+        return true;
+      }
       assert.equal(method, "ArdiaUpdates.releases");
       return { status: 200, body: JSON.stringify([{ tag_name: `v${state.version}`, html_url: `https://github.com/ardia-browser/ardia/releases/tag/v${state.version}`, assets: [{ name: `Ardia-${state.version}-linux-x64.tar.xz` }] }]) };
     },
@@ -135,7 +142,9 @@ test("an offer to install an update can be dismissed without installing it", asy
   assert.equal(shown.value, null);
   assert.equal(useToasts.getState().toasts.main, null);
   assert.deepEqual(state.opened, []);
-  assert.equal(takeUpdateCounts().update_downloads_started, 0);
+  const counts = takeUpdateCounts();
+  assert.equal(counts.update_notices_dismissed, 1);
+  assert.equal(counts.update_downloads_started, 0);
   await updater.check(false);
   assert.equal(useToasts.getState().toasts.main, null, "the same version stays dismissed");
 });
@@ -170,4 +179,20 @@ test("a restart notice dismissed from Check for Updates stays closed when the wa
   const counts = takeUpdateCounts();
   assert.equal(counts.update_notices_dismissed, 1);
   assert.equal(counts.update_downloads_finished, 1, "the watcher still counts the finished update");
+});
+
+test("a restart notice dismissed in one window does not come back in the window that watches for updates", async (t) => {
+  const claimed = new Set();
+  const watcher = harness({ kind: "deb", phase: "ready", claimed });
+  const asking = harness({ kind: "deb", phase: "ready", windowId: "other", claimed, fresh: false });
+  await asking.updater.check(true);
+  assert.equal(useToasts.getState().toasts.other.title, "Ardia 0.2.46 is ready");
+  useToasts.getState().toasts.other.secondary.run();
+  useToasts.setState((s) => ({ toasts: { ...s.toasts, other: null } }));
+  await watcher.updater.watch();
+  await watcher.updater.watch();
+  assert.equal(useToasts.getState().toasts.main, undefined, "the watching window does not show the notice again");
+  const counts = takeUpdateCounts();
+  assert.equal(counts.update_notices_dismissed, 1);
+  assert.equal(counts.update_downloads_finished, 1, "the finished update is counted once");
 });

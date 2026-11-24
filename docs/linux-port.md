@@ -866,7 +866,8 @@ caller: sync keys, sealing and opening files and passwords, and the recovery phr
   instance or a build without `lib/ardia/VERSION`. Where Ardia can update itself (below), a newer release is
   downloaded and installed in the background, with "Automatically update Ardia" on (the default), or on Check Now, the
   app menu's Check for Updates or the offer toast's Update when it's off. Then a sticky toast says the release is
-  ready, and Check Now and the app menu read Restart to Update. Where it can't (an engine without the methods, or
+  ready, and Check Now and the app menu read Restart to Update. Every update toast has Later, which only closes it:
+  the same version isn't offered again, and a dismissed Restart toast isn't shown again by another window. Where it can't (an engine without the methods, or
   `unsupported`), Check Now asks before opening the release page and an automatic check offers it once as a toast, and
   the toggle is hidden. An install pacman or rpm owns (`managed`, the AUR's `ardia-bin`) is told to update with its
   package manager. A failed download or install falls back to the release page once and isn't retried automatically.
@@ -904,7 +905,7 @@ caller: sync keys, sealing and opening files and passwords, and the recovery phr
 - **Kill switches.** `ArdiaShell.fetchKillSwitches` fetches `ardia.dev/switches.json` (at most 16 KiB) once per
   browser process for every window, and the shared refresh runs under the Mac's rule (automatic checks on).
 - **Telemetry.** `update_checks_asked`, `update_checks_automatic`, `update_check_failures`, `update_checks_found`,
-  `update_release_page_opens`, `kill_switch_refreshes`, `kill_switch_refresh_failures`, and for self-update
+  `update_release_page_opens`, `update_notices_dismissed`, `kill_switch_refreshes`, `kill_switch_refresh_failures`, and for self-update
   `update_downloads_started`, `update_downloads_finished`, `update_download_failures_<reason>`,
   `update_installs_<deb|tarball|appimage>`, `update_install_failures_<reason>` and `update_restarts`. Watch installs
   against found updates, and the `signature`, `polkit` and `network` failures.
