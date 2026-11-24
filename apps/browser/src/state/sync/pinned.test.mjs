@@ -179,6 +179,40 @@ test("a pinned group tab's home reaches the other Mac in the pull that brings th
   assert.deepEqual(fromB, [], "B never sends a home of its own over A's");
 });
 
+test("a pinned group tab takes a home from another Mac only when it's a web address or a listed Ardia page", async () => {
+  const folder = new Folder();
+  const a = new Device("devA", folder);
+  const b = new Device("devB", folder);
+  const m = seedGroup(a);
+  b.with(() => S().createWindow({ url: "https://b-home.example/" }));
+  await syncAll([a, b]);
+  assert.equal(memberOf(b, m)?.pinnedUrl, "https://start.example/");
+  const other = new Clock("devOther", null, () => Date.now() + 60_000);
+  let seq = 0;
+  const publish = (home) => {
+    seq += 1;
+    folder.files.set(`other${seq}`, { scope: "p", payload: JSON.stringify({ v: 1, kind: "log", device: "devOther", seq, at: Date.now(), ops: [{ k: `pgh:${m}`, h: other.tick(), v: home }] }) });
+  };
+  for (const home of ["javascript:alert(1)", "file:///etc/hosts", "data:text/html,x", "chrome://settings", "ardia://game", "https:///no-host"]) {
+    publish(home);
+    await b.sync();
+    assert.equal(b.scope.records[`pgh:${m}`]?.v, home, `B pulled ${home}`);
+    assert.equal(memberOf(b, m)?.pinnedUrl, "https://start.example/", `${home} is refused`);
+  }
+  const c = new Device("devC", folder);
+  c.with(() => S().createWindow({ url: "https://c-home.example/" }));
+  await syncAll([c]);
+  const onC = memberOf(c, m);
+  assert.ok(onC, "a Mac that joins later still gets the tab");
+  assert.match(onC.pinnedUrl, /^https:\/\/\w/, "with a web home, not the refused one");
+  publish("ardia://history");
+  await b.sync();
+  assert.equal(memberOf(b, m)?.pinnedUrl, "ardia://history", "a listed Ardia page is a home");
+  publish("https://next.example/");
+  await b.sync();
+  assert.equal(memberOf(b, m)?.pinnedUrl, "https://next.example/");
+});
+
 test("a Mac on the previous version keeps the homes it can't read, and its unpin deletes the home on the others", async () => {
   const folder = new Folder();
   const a = new Device("devA", folder);
