@@ -82,6 +82,8 @@ export const selectSettingsResult = (index: number) => useSettingsSearch.setStat
 
 export const clearSettingsReveal = () => useSettingsSearch.setState({ reveal: null });
 
+export const revealSettingRow = (id: string) => useSettingsSearch.setState({ reveal: { id, at: Date.now() } });
+
 export function revealSetting(target: Target, via: "keyboard" | "click", rank: number, unshown = false) {
   noteSettingsSearchReveal(via, rank, unshown);
   jumpToSetting(target);

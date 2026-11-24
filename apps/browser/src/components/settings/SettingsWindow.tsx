@@ -36,6 +36,8 @@ import { WindowControls } from "../window/WindowControls";
 import { LeadingWindowControls } from "../window/LeadingWindowControls";
 import { useWindowChrome } from "../../state/windows/windowButtons";
 import { noteSettingsScroll } from "../../state/settings/growingRows";
+import { noteSettingsRevealMiss } from "../../state/telemetry/usage";
+import { consentToken } from "../../state/telemetry/choice";
 
 const SIDEBAR = settingsLayout.sidebarWidth;
 const TOOLBAR = pageToolbar.window.height;
@@ -122,10 +124,14 @@ export function SettingsWindow() {
     if (nav.pane !== revealPane) return void clearSettingsReveal();
     if (shown?.pane !== revealPane) return;
     const animated = switched.current === key;
+    const consent = consentToken();
     const frame = requestAnimationFrame(() => {
       const target = anchorView(resolveSettingId(reveal.id));
       const container = content.current;
-      if (!target || !container) return flashSetting("");
+      if (!target || !container) {
+        noteSettingsRevealMiss(consent);
+        return flashSetting("");
+      }
       target.measureLayout(
         container,
         (_x, y, _w, h) => {
