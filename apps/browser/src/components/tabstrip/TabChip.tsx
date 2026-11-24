@@ -13,11 +13,11 @@ import { pressStripClose } from "../../state/tabs/stripPress";
 import { workspaceSnapshot } from "../../state/browser/current";
 import { TabBadges } from "../media/TabBadges";
 import { TabIcon } from "../sidebar/TabIcon";
-import { Button, FadeLabel, HoverFill, Symbol, useTooltip } from "../ui";
+import { Button, continuousCorners, FadeLabel, HoverFill, Symbol, useTooltip } from "../ui";
 import { surfaceTheme, useTheme } from "../ui/theme";
 import { ThemeOverride } from "../ui/ThemeOverride";
 import { toolbarPalette, useEasedColor } from "../ui/toolbarColors";
-import { font, ink, radius, withAlpha } from "../ui/tokens";
+import { font, ink, withAlpha } from "../ui/tokens";
 import { over } from "../../lib/color";
 import type { GroupColor } from "../../state/browser/types";
 import { groupTint, useSidebarTokens, type SidebarTokens } from "../sidebar/tokens";
@@ -196,7 +196,7 @@ export const TabChip = memo(function TabChip({ tabId, width, drawn, tuck, dragge
       <Animated.View {...chipHover.hoverProps} style={{ width: drawn ?? width, height: TOP_STRIP_HEIGHT }}>
         {active && <SelectedTab width={drawn ?? width} band={band} opaque={dragged} />}
         {dragged && !active && (
-          <View pointerEvents="none" style={{ position: "absolute", left: 0, width, top: ITEM_TOP, height: ITEM_HEIGHT, borderRadius: tabRadius(), backgroundColor: theme.windowTint[0] }} />
+          <View pointerEvents="none" style={[{ position: "absolute", left: 0, width, top: ITEM_TOP, height: ITEM_HEIGHT, backgroundColor: theme.windowTint[0] }, continuousCorners(tabRadius())]} />
         )}
         <TabPressArea windowId={windowId} tab={tab} onSwitch={pick} style={StyleSheet.absoluteFill} pressStyle={{ flex: 1 }}>
           {({ pressed }) => (
@@ -211,6 +211,7 @@ export const TabChip = memo(function TabChip({ tabId, width, drawn, tuck, dragge
                 <Button variant="icon"
                   icon={tuck ? "minus" : closeControl.icon}
                   size="xs"
+                  radius={tabRadius()}
                   weight="semibold"
                   color={onBand ? palette.icon : undefined}
                   onPress={tuck ?? ((press: GestureResponderEvent) => pressStripTabClose(windowId, tab.id, press))}
@@ -290,7 +291,7 @@ function ChipRow({
       {inset === undefined && !closing ? badge : null}
       {closing ? (
         <View pointerEvents="box-none" style={CLOSE_OVERLAY}>
-          <View style={{ borderRadius: radius.control, backgroundColor: plate }}>{action}</View>
+          <View style={[continuousCorners(tabRadius()), { backgroundColor: plate }]}>{action}</View>
         </View>
       ) : null}
     </ItemRow>

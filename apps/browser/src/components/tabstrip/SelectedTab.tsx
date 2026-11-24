@@ -5,6 +5,7 @@ import { useTheme } from "../ui/theme";
 import type { useEasedColor } from "../ui/toolbarColors";
 import { FloatingStrip } from "./context";
 import { CHIP_HAIRLINE, FLARE, ITEM_HEIGHT, ITEM_TOP, RIM_HEIGHT, RIM_WIDTH, STRIP_COLORS, tabRadius, TAB_TOP, TOP_STRIP_HEIGHT } from "./tokens";
+import { continuousCorners } from "../ui";
 
 type Fill = string | ReturnType<typeof useEasedColor>;
 
@@ -21,7 +22,7 @@ export function SelectedTab({ width, band, opaque = false }: { width: Size; band
       top: ITEM_TOP,
       width,
       height: ITEM_HEIGHT,
-      borderRadius: tabRadius(),
+      ...continuousCorners(tabRadius()),
     };
     return (
       <>
@@ -54,6 +55,7 @@ export function SelectedTab({ width, band, opaque = false }: { width: Size; band
               height: TOP_STRIP_HEIGHT - TAB_TOP,
               borderTopLeftRadius: tabRadius(),
               borderTopRightRadius: tabRadius(),
+              borderCurve: "continuous" as const,
               backgroundColor: fill,
             }}
           />
