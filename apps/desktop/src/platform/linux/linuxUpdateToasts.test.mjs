@@ -229,3 +229,15 @@ test("a restart notice dismissed in one window while the host could not claim it
   assert.equal(counts.update_notices_dismissed, 1);
   assert.equal(counts.update_downloads_finished, 1, "the watcher still counts the finished update");
 });
+
+test("Check Now in Settings, which shows no toasts, leaves the restart notice to the watching browser window", async () => {
+  const claimed = new Set();
+  const watcher = harness({ kind: "deb", phase: "ready", claimed });
+  const settings = harness({ kind: "deb", phase: "ready", windowId: "settings", claimed, docs: watcher.docs, fresh: false });
+  await settings.updater.check(true);
+  assert.equal(useToasts.getState().toasts.settings, undefined);
+  await watcher.updater.watch();
+  await watcher.updater.watch();
+  assert.equal(useToasts.getState().toasts.main.title, "Ardia 0.2.46 is ready");
+  assert.equal(takeUpdateCounts().update_downloads_finished, 1);
+});

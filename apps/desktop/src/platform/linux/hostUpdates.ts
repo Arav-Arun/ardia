@@ -158,8 +158,10 @@ export function linuxUpdater(deps: UpdateDeps) {
   }
   const restartToUpdate = () => void restart(consentToken());
   const noticeReady = async (status: EngineStatus, version: string, consent: ConsentToken | null) => {
-    if (deps.showsToasts !== false && status.run > settledRun && (await claim(status.run))) countOutcome(status, consent);
-    await remember({ readyNotified: version }).catch(() => {});
+    if (deps.showsToasts !== false) {
+      if (status.run > settledRun && (await claim(status.run))) countOutcome(status, consent);
+      await remember({ readyNotified: version }).catch(() => {});
+    }
     deps.ready(version, restartToUpdate);
   };
 
