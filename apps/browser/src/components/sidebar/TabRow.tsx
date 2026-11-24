@@ -9,7 +9,7 @@ import { useTabHasBadges } from "../../state/media/tabBadges";
 import { muteTitle } from "../../state/tabs/mute";
 import { usePictureInPicture } from "../../state/media/media";
 import { HoverSlot } from "../ui/HoverSlot";
-import { ActivitySpinner, FadeLabel, HoverSwap, ink, OutsidePressArea, radius, sidebarFont, sidebarLineHeight, space, Symbol, typeFace, useHover, withAlpha } from "../ui";
+import { ActivitySpinner, continuousCorners, FadeLabel, HoverSwap, ink, OutsidePressArea, radius, sidebarFont, sidebarLineHeight, space, Symbol, typeFace, useHover, withAlpha } from "../ui";
 import { isPinnedRow, tabTitle } from "../../state/browser/model";
 import { awayFromPin, rowAwayTitle } from "../../state/pins/organize";
 import { hidesRowIcon } from "../../state/pins/rowIcons";
@@ -358,7 +358,7 @@ function SplitPane({ tabId, windowId, rowActive }: { tabId: string; windowId: st
           <View
             style={{
               height: shape.height,
-              borderRadius: shape.corner,
+              ...continuousCorners(shape.corner),
               flexDirection: "row",
               alignItems: "center",
               paddingLeft: space.s,

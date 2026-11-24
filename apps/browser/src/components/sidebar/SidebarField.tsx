@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { StyleSheet, View } from "react-native";
 import { Button, concentric, type IconPalette } from "../ui";
+import { continuousCorners } from "../ui";
 import { useTheme } from "../ui/theme";
 import { GlassFill, useGlass } from "../ui/Glass";
 import { SIDEBAR_FIELD } from "./geometry";
@@ -35,7 +36,7 @@ export const SidebarFieldFill = memo(function SidebarFieldFill({
       style={[
         StyleSheet.absoluteFill,
         {
-          borderRadius: SIDEBAR_FIELD.radius,
+          ...continuousCorners(SIDEBAR_FIELD.radius),
           borderWidth: FIELD_BORDER,
           borderColor: theme.pinnedRestingStroke,
           backgroundColor: hovered ? theme.tabHover : theme.pinnedResting,
@@ -68,6 +69,7 @@ export function FieldSiteButton({
         width: FIELD_BUTTON.box,
         height: FIELD_BUTTON.box,
         borderRadius: FIELD_BUTTON.radius,
+        borderCurve: "continuous",
         backgroundColor: tokens.fieldButtonPlate,
       }}
     >

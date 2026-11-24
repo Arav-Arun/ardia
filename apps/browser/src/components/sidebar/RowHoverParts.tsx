@@ -1,5 +1,6 @@
 import { memo, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
+import { continuousCorners } from "../ui";
 import { iconButton } from "../ui/tokens";
 import { pressTabClose } from "../../state/sidebar/closeControl";
 import { useCellHovered, type RowHoverCell } from "./hoverController";
@@ -8,7 +9,7 @@ import { RowCloseButton } from "./RowCloseButton";
 export const RowHoverFill = memo(function RowHoverFill({ cell, pressed, color, radius }: { cell: RowHoverCell; pressed: boolean; color: string; radius: number }) {
   const hovered = useCellHovered(cell);
   if (!cell.plain || !(hovered || pressed)) return null;
-  return <View pointerEvents="none" style={[StyleSheet.absoluteFill, { borderRadius: radius, backgroundColor: color }]} />;
+  return <View pointerEvents="none" style={[StyleSheet.absoluteFill, continuousCorners(radius), { backgroundColor: color }]} />;
 });
 
 export const RowCloseSlot = memo(function RowCloseSlot({ cell, tabId, renaming, children }: { cell: RowHoverCell; tabId: string; renaming: boolean; children?: ReactNode }) {
