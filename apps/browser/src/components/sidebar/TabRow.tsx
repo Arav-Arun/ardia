@@ -185,7 +185,7 @@ export const TabRow = memo(function TabRow({
             ) : (
               <SidebarRowLabel text={title} color={titleColor} compact={quiet} struck={struck && !resetting} />
             )}
-            <RowCloseSlot cell={cell} tabId={tab.id} renaming={renaming}>
+            <RowCloseSlot cell={cell} tabId={tab.id} renaming={renaming} radius={radius.chrome}>
               {loading || showsUnread ? (
                 <>
                   {loading && <ActivitySpinner style={{ width: 12, height: 12, marginRight: space.xxs }} />}

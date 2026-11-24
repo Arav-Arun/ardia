@@ -12,7 +12,7 @@ export const RowHoverFill = memo(function RowHoverFill({ cell, pressed, color, r
   return <View pointerEvents="none" style={[StyleSheet.absoluteFill, continuousCorners(radius), { backgroundColor: color }]} />;
 });
 
-export const RowCloseSlot = memo(function RowCloseSlot({ cell, tabId, renaming, children }: { cell: RowHoverCell; tabId: string; renaming: boolean; children?: ReactNode }) {
+export const RowCloseSlot = memo(function RowCloseSlot({ cell, tabId, renaming, radius, children }: { cell: RowHoverCell; tabId: string; renaming: boolean; radius: number; children?: ReactNode }) {
   const hovered = useCellHovered(cell) && !renaming;
   const status = children != null && children !== false;
   return (
@@ -24,7 +24,7 @@ export const RowCloseSlot = memo(function RowCloseSlot({ cell, tabId, renaming, 
           </View>
         </View>
       ) : null}
-      {hovered ? <RowCloseButton tabId={tabId} style={status ? OVER_STATUS : undefined} onPress={() => pressTabClose(tabId)} /> : null}
+      {hovered ? <RowCloseButton tabId={tabId} radius={radius} style={status ? OVER_STATUS : undefined} onPress={() => pressTabClose(tabId)} /> : null}
     </>
   );
 });
