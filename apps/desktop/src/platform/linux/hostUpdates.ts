@@ -112,6 +112,7 @@ export function linuxUpdater(deps: UpdateDeps) {
   let switchCheck: SwitchCheck | null = null;
   let settledRun = 0;
   let sightedRun = 0;
+  let readyNoticeRun = 0;
   let shownReady = false;
   const installingRuns = new Set<number>();
   const preferences = async () => {
@@ -158,6 +159,7 @@ export function linuxUpdater(deps: UpdateDeps) {
   const restartToUpdate = () => void restart(consentToken());
   const noticeReady = async (status: EngineStatus, version: string, consent: ConsentToken | null) => {
     if (deps.showsToasts !== false && status.run > settledRun && (await claim(status.run))) countOutcome(status, consent);
+    readyNoticeRun = Math.max(readyNoticeRun, status.run);
     deps.ready(version, restartToUpdate);
   };
 
@@ -210,7 +212,7 @@ export function linuxUpdater(deps: UpdateDeps) {
     countOutcome(status, consent);
     const target = status.version ?? own?.release.version;
     if (!target) return;
-    if (status.phase === "ready") return deps.ready(target, restartToUpdate);
+    if (status.phase === "ready") return status.run > readyNoticeRun ? deps.ready(target, restartToUpdate) : undefined;
     console.info(`[ardia linux] the update to ${target} failed: ${status.reason ?? "unknown"}`);
     await fallBack(own?.release.version === target ? own.release : releasePage(target), own?.from ?? "automatic", consent);
   }

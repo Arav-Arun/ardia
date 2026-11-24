@@ -29,7 +29,7 @@ const { linuxUpdaterFor } = await import("./linuxUpdates.ts");
 hooks.deregister();
 const { SplitToast } = await import("../../../../browser/src/components/split/SplitChrome.tsx");
 
-function harness({ kind, phase = "idle", windowId = "main", docs = new Map(), version = "0.2.46", claimed = new Set(), fresh = true } = {}) {
+function harness({ kind, phase = "idle", windowId = "main", docs = new Map(), version = "0.2.46", claimed = new Set(), fresh = true, claimFailures = 0 } = {}) {
   const state = { docs, opened: [], copied: [], dialogs: [], version };
   globalThis.__linuxUpdateTest = state;
   if (fresh) {
@@ -42,6 +42,7 @@ function harness({ kind, phase = "idle", windowId = "main", docs = new Map(), ve
     invoke: async (method, request) => {
       if (method === "ArdiaUpdates.status") return { kind, phase, version, reason: "network", run: phase === "idle" ? 0 : 1 };
       if (method === "ArdiaUpdates.claimOutcome") {
+        if (claimFailures-- > 0) throw new Error("claimOutcome failed");
         const [run] = request.args;
         if (claimed.has(run)) return false;
         claimed.add(run);
@@ -195,4 +196,20 @@ test("a restart notice dismissed in one window does not come back in the window 
   const counts = takeUpdateCounts();
   assert.equal(counts.update_notices_dismissed, 1);
   assert.equal(counts.update_downloads_finished, 1, "the finished update is counted once");
+});
+
+test("a restart notice dismissed while the host could not claim its run stays closed when the watcher claims it", async (t) => {
+  const { updater } = harness({ kind: "deb", phase: "ready", claimFailures: 1 });
+  await updater.check(true);
+  const shown = toast(t);
+  assert.equal(shown.value.props.action, "Restart");
+  shown.value.props.onSecondary();
+  shown.rerender();
+  assert.equal(shown.value, null);
+  await updater.watch();
+  await updater.watch();
+  assert.equal(useToasts.getState().toasts.main, null, "the watcher does not bring the dismissed notice back");
+  const counts = takeUpdateCounts();
+  assert.equal(counts.update_notices_dismissed, 1);
+  assert.equal(counts.update_downloads_finished, 1, "the watcher still counts the finished update");
 });
