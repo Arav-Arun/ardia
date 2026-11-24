@@ -6,9 +6,12 @@ import { PageOverlayRegion } from "./PageOverlayRegion";
 export * from "../../browser/src/components/split/SplitChrome";
 
 export function SplitToast(props: ComponentProps<typeof BrowserSplitToast>) {
-  const shown = useToasts((s) => !!s.toasts[props.windowId]);
+  const clickable = useToasts((s) => {
+    const toast = s.toasts[props.windowId];
+    return !!(toast?.action || toast?.secondary);
+  });
   return (
-    <PageOverlayRegion testID="ardia-toast" capturing={shown}>
+    <PageOverlayRegion testID="ardia-toast" capturing={clickable}>
       <BrowserSplitToast {...props} />
     </PageOverlayRegion>
   );

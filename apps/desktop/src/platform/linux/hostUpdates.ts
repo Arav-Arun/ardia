@@ -276,7 +276,7 @@ export function linuxUpdater(deps: UpdateDeps) {
       if (!asked && !saved.automaticChecks) return;
       wanted = channel(saved, current);
       const engine = asked ? await engineStatus() : null;
-      if (engine?.phase === "ready" && engine.version && installs(engine.kind)) return noticeReady(engine, engine.version, consent);
+      if (engine?.phase === "ready" && engine.version && installs(engine.kind)) return await noticeReady(engine, engine.version, consent);
       switchCheck = { phase: "checking", channel: wanted };
       let release: Release | null;
       try {

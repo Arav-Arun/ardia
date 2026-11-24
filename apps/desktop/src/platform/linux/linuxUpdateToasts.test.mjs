@@ -179,7 +179,7 @@ test("a restart notice dismissed from Check for Updates stays closed when the wa
   assert.equal(useToasts.getState().toasts.main, null, "the watcher does not bring the dismissed notice back");
   const counts = takeUpdateCounts();
   assert.equal(counts.update_notices_dismissed, 1);
-  assert.equal(counts.update_downloads_finished, 1, "the watcher still counts the finished update");
+  assert.equal(counts.update_downloads_finished, 1, "the finished update is counted once");
 });
 
 test("a restart notice dismissed in one window does not come back in the window that watches for updates", async (t) => {
