@@ -4,7 +4,7 @@ import { DEFAULT_SIDEBAR_WIDTH } from "./windowLayout";
 
 export const TYPE_SIZES = { badge: 9, tiny: 10, caption: 11, small: 12, body: 13, title: 15, large: 17 } as const;
 export const WEIGHTS = { regular: "400", medium: "500", semibold: "600", bold: "700" } as const;
-export const RADII = { none: 0, hair: 2, control: 4, tile: 8, panel: 12, sheet: 16, hero: 20, chrome: 10, toolbar: 7, pinned: 10 } as const;
+export const RADII = { none: 0, hair: 2, control: 4, tile: 8, panel: 12, sheet: 16, hero: 20, chrome: 12, toolbar: 7, pinned: 10 } as const;
 export const ROW_METRICS = { rowHeight: 34, rowGap: 3, pinnedHeight: 41 } as const;
 export const MONO_FAMILY = "Menlo";
 export const SIDEBAR_TEXT_SIZES = ["default", "large", "larger"] as const;

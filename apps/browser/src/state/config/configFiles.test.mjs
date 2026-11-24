@@ -265,7 +265,7 @@ test("a theme's look applies live through the tokens, keeps the last good versio
   writeConfig({ theme: "roomy" });
   files.set("themes/roomy.json", JSON.stringify({ type: { family: "Avenir Next", sizes: { body: 15 }, weights: { medium: "600" } }, metrics: { rowHeight: 40, radius: { row: 14 } }, icons: { plus: "plus.circle" } }));
   const defaults = { font: font.body, radius: radius.chrome, row: layout.rowHeight, line: lineHeight.body, weight: weight.medium };
-  assert.deepEqual(defaults, { font: { fontSize: 13 }, radius: 10, row: 34, line: 16, weight: "500" });
+  assert.deepEqual(defaults, { font: { fontSize: 13 }, radius: 12, row: 34, line: 16, weight: "500" });
   startConfigFiles(colorRoles);
   const first = useBasePalette.getState();
   assert.notEqual(first.palette, null, "a look-only theme still gives a new palette, so every themed view re-renders");
@@ -349,6 +349,6 @@ test("Tab corners rounds the rows over a theme's radius, follows the theme while
   reconcileConfig();
   assert.equal(radius.chrome, 3, "the setting holds without a theme");
   S().updateSettings({ tabCornerRadius: null });
-  assert.equal(radius.chrome, 10);
+  assert.equal(radius.chrome, 12);
   assert.equal(activeLook(), DEFAULT_LOOK);
 });
