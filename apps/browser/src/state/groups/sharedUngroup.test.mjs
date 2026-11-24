@@ -165,6 +165,50 @@ test("creating a split after a shared ungroup doesn't recreate a pane as a regul
   oneCopyInSplitWindows(all);
 });
 
+const site = (name) => `https://${name}.example/`;
+const listed = (w, name) => S().windows[w].tabIds.filter((id) => S().tabs[id].url === site(name) && S().tabs[id].profileId === "default");
+const tabIn = (w, name) => listed(w, name)[0];
+const folderOf = (w, group) => Object.values(S().groups).find((g) => g.windowId === w && g.pinned && pinKeyOf(g) === pinKeyOf(S().groups[group]));
+
+test("ungrouping a folder's mirror while another window is focused leaves one copy beside a split already open", () => {
+  S().hydrate({});
+  const a = S().createWindow({ url: site("x") });
+  S().updateSettings({ shareTabsAcrossWindows: true });
+  const b = S().createWindow({ url: site("y") });
+  S().newTab(b, { url: site("z") });
+  S().setFocusedWindow(b);
+  S().createSplit([tabIn(a, "y"), tabIn(a, "x")]);
+  assert.equal(listed(a, "x").length, 1, "the split pane is A's only X");
+  assert.equal(listed(b, "x").length, 0, "a regular split stays in its window");
+  const group = S().groupTabs([tabIn(b, "x"), tabIn(b, "z")].filter(Boolean), { pinned: true });
+  S().ungroup(folderOf(a, group).id);
+  assert.equal(listed(a, "x").length, 1, "one X in A, the split pane");
+  assert.ok(splitsIn(a).some((v) => splitTabIds(v).includes(tabIn(a, "x"))));
+  oneCopyInSplitWindows([a, b]);
+});
+
+test("a split made after ungrouping, while another window is focused, doesn't recreate a pane as a regular tab", () => {
+  S().hydrate({});
+  const a = S().createWindow({ url: site("t1") });
+  S().updateSettings({ shareTabsAcrossWindows: true });
+  const b = S().createWindow({ url: site("t2") });
+  const c = S().createWindow({ url: site("t3") });
+  for (const n of [4, 5, 6, 7]) S().newTab(a, { url: site(`t${n}`), background: true });
+  const d = S().createWindow({ url: site("t8") });
+  S().setFocusedWindow(c);
+  const group = S().groupTabs([tabIn(b, "t1"), tabIn(b, "t3")], { pinned: true });
+  S().activate(tabIn(d, "t3"));
+  S().activate(tabIn(d, "t1"));
+  S().groupTabs([tabIn(a, "t1"), tabIn(a, "t8")]);
+  S().ungroup(folderOf(a, group).id);
+  S().setFocusedWindow(a);
+  S().setFocusedWindow(d);
+  assert.ok(S().createSplit([tabIn(a, "t7"), tabIn(a, "t3")]));
+  assert.equal(listed(a, "t7").length, 1, "one t7 in A, the split pane");
+  assert.equal(listed(a, "t3").length, 1);
+  oneCopyInSplitWindows([a, b, c, d]);
+});
+
 test("without shared tabs, ungrouping a pinned folder keeps its tabs in the invoking window", () => {
   const { b, one, two, group } = windows(false);
   const key = pinKeyOf(S().groups[group]);

@@ -247,6 +247,42 @@ function linkCopies(s: BrowserState, byProfile: Map<string, string[]>): BrowserS
   return tabs === s.tabs ? s : { ...s, tabs };
 }
 
+function regularSplitPanes(s: BrowserState, windowIds: string[]): Map<string, string> {
+  const panes = new Map<string, string>();
+  for (const v of Object.values(s.splits)) {
+    if (!windowIds.includes(v.windowId)) continue;
+    for (const id of splitTabIds(v)) {
+      const t = s.tabs[id];
+      if (t && !t.pin && !inPinnedContainer(s, id)) panes.set(familyKeyOf(t), id);
+    }
+  }
+  return panes;
+}
+
+function withoutSplitPaneCopies(s: BrowserState, windowIds: string[], byProfile: Map<string, string[]>): BrowserState {
+  const panes = regularSplitPanes(s, windowIds);
+  if (!panes.size) return s;
+  const member = listMember(s);
+  const groups = listGroupsOf(s);
+  const copies: Tab[] = [];
+  for (const [profileId, ids] of byProfile) {
+    for (const id of ids) for (const { tab } of listSection(s, id, profileId, member, groups).items) if (panes.has(familyKeyOf(tab))) copies.push(tab);
+  }
+  if (!copies.length) return s;
+  let next = s;
+  const gone: string[] = [];
+  for (const copy of copies) {
+    const pane = next.tabs[panes.get(familyKeyOf(copy))!]!;
+    if (hasPage(copy) && !hasPage(pane)) {
+      next = swapPlaces(next, copy.id, pane.id);
+      panes.set(familyKeyOf(copy), copy.id);
+      gone.push(pane.id);
+    } else gone.push(copy.id);
+  }
+  for (const id of new Set(gone.map((x) => next.tabs[x]!.windowId))) next = keepShownProfile(next, id, gone);
+  return removeTabs(next, gone, false);
+}
+
 export function mirrorTabs(s: BrowserState, prev: BrowserState): BrowserState | null {
   if (!sharesTabs(s)) return null;
   const turnedOn = !sharesTabs(prev);
@@ -254,7 +290,7 @@ export function mirrorTabs(s: BrowserState, prev: BrowserState): BrowserState | 
   const order = [...new Set([...s.ui.focusOrder, ...s.windowOrder])].filter((id) => isRegularWindow(s.windows[id]));
   const byProfile = new Map<string, string[]>();
   for (const id of order) for (const p of profilesOf(s, s.windows[id]!)) byProfile.set(p, [...(byProfile.get(p) ?? []), id]);
-  let next = s;
+  let next = withoutSplitPaneCopies(s, order, byProfile);
   for (const [profileId, ids] of byProfile) {
     for (const id of ids) {
       const x = listSection(next, id, profileId);
