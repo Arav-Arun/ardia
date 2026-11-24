@@ -43,13 +43,13 @@ function closeButtonAt(tree) {
   return found;
 }
 
-test("the close button follows the tab radius", (t) => {
+test("the close button stays concentric with the tab radius", (t) => {
   const { tabId, cell } = hoveredRow();
   const slot = mount((props) => RowCloseSlot.type(props), { props: { cell, tabId, renaming: false, children: null, radius: 10 } });
   t.after(() => slot.unmount());
 
-  assert.equal(closeButtonAt(slot.value).button.props.radius, 10);
-  assert.equal(closeButtonAt(slot.rerender({ cell, tabId, renaming: false, children: null, radius: 14 })).button.props.radius, 14);
+  assert.equal(closeButtonAt(slot.value).button.props.radius, 4);
+  assert.equal(closeButtonAt(slot.rerender({ cell, tabId, renaming: false, children: null, radius: 14 })).button.props.radius, 8);
 });
 
 test("a spinner or unread count coming or going under the pointer keeps the same close button mounted, and its press still closes the tab", (t) => {

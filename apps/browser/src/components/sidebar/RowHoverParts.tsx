@@ -1,6 +1,7 @@
 import { memo, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
-import { continuousCorners } from "../ui";
+import { concentric, continuousCorners } from "../ui";
+import { layout } from "../ui/theme";
 import { iconButton } from "../ui/tokens";
 import { pressTabClose } from "../../state/sidebar/closeControl";
 import { useCellHovered, type RowHoverCell } from "./hoverController";
@@ -15,6 +16,7 @@ export const RowHoverFill = memo(function RowHoverFill({ cell, pressed, color, r
 export const RowCloseSlot = memo(function RowCloseSlot({ cell, tabId, renaming, radius, children }: { cell: RowHoverCell; tabId: string; renaming: boolean; radius: number; children?: ReactNode }) {
   const hovered = useCellHovered(cell) && !renaming;
   const status = children != null && children !== false;
+  const closeRadius = concentric(radius, (layout.rowHeight - iconButton.s.box) / 2);
   return (
     <>
       {status ? (
@@ -24,7 +26,7 @@ export const RowCloseSlot = memo(function RowCloseSlot({ cell, tabId, renaming, 
           </View>
         </View>
       ) : null}
-      {hovered ? <RowCloseButton tabId={tabId} radius={radius} style={status ? OVER_STATUS : undefined} onPress={() => pressTabClose(tabId)} /> : null}
+      {hovered ? <RowCloseButton tabId={tabId} radius={closeRadius} style={status ? OVER_STATUS : undefined} onPress={() => pressTabClose(tabId)} /> : null}
     </>
   );
 });

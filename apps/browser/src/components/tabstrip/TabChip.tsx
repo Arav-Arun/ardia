@@ -29,7 +29,7 @@ import { dropAt, type GroupOut, type StripDrag } from "./model";
 import { PinnedFace } from "./PinnedFace";
 import { SelectedTab } from "./SelectedTab";
 import { CELL_STEP, dragRange, leaveIndex, type DragGeometry } from "./stripGroups";
-import { AUDIO_BADGE, CHIP_LABEL_GAP, CHIP_PAD, CLOSE_AFTER_SELECT_MS, CLOSE_MIN_CHIP, FAVICON, GAP, ITEM_HEIGHT, ITEM_TOP, PINNED_CELL, tabRadius, TITLE_FADE_MAX, TITLE_FADE_MIN, TITLE_MIN_CHIP, TOP_STRIP_HEIGHT } from "./tokens";
+import { AUDIO_BADGE, CHIP_LABEL_GAP, CHIP_PAD, CLOSE_AFTER_SELECT_MS, CLOSE_MIN_CHIP, FAVICON, GAP, ITEM_HEIGHT, ITEM_TOP, PINNED_CELL, tabCloseRadius, tabRadius, TITLE_FADE_MAX, TITLE_FADE_MIN, TITLE_MIN_CHIP, TOP_STRIP_HEIGHT } from "./tokens";
 import { useStripDrag } from "./useStripDrag";
 import { useStripPick } from "./stripPick";
 import { StripScrollContext } from "./stripScroll";
@@ -211,7 +211,7 @@ export const TabChip = memo(function TabChip({ tabId, width, drawn, tuck, dragge
                 <Button variant="icon"
                   icon={tuck ? "minus" : closeControl.icon}
                   size="xs"
-                  radius={tabRadius()}
+                  radius={tabCloseRadius()}
                   weight="semibold"
                   color={onBand ? palette.icon : undefined}
                   onPress={tuck ?? ((press: GestureResponderEvent) => pressStripTabClose(windowId, tab.id, press))}
