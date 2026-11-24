@@ -1,9 +1,9 @@
 import { GROUP_MEMBERS_PAD_BOTTOM, SIDEBAR_GROUP } from "../../lib/sidebarMetrics";
 import { LIGHTS_CENTER } from "../../state/windows/dockMotion";
 import { layout } from "../ui/theme";
-import { radius } from "../ui/tokens";
+import { concentric, radius } from "../ui/tokens";
 import { profileSwitcher } from "../profiles/tokens";
-import type { ToolbarRow } from "../../lib/toolbarRow";
+import { TOOLBAR_ROWS, type ToolbarRow } from "../../lib/toolbarRow";
 import { SCROLL_EDGE } from "./ScrollEdge";
 
 export const LIVE_FOLDER_PAD = 2;
@@ -23,6 +23,18 @@ export const SIDEBAR_FIELD = {
   },
   get radius() {
     return radius.chrome;
+  },
+};
+
+export const SIDEBAR_FIELD_CONTROL = {
+  get box() {
+    return TOOLBAR_ROWS.regular.fieldButton;
+  },
+  get inset() {
+    return (SIDEBAR_FIELD.height - this.box) / 2;
+  },
+  get radius() {
+    return concentric(SIDEBAR_FIELD.radius, this.inset);
   },
 };
 
