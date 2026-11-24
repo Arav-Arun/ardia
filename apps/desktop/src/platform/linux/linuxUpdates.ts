@@ -60,12 +60,14 @@ export function linuxUpdaterFor(host: ArdiaHost): LinuxUpdater {
         icon: UPDATE_ICON,
         sticky: true,
         action: { title: "Update", run: install },
+        secondary: { title: "Later", run: noteUpdateNoticeDismissed },
       }),
     ready: (version, restart) =>
       toast(windowId, `Ardia ${version} is ready`, "Restart to finish updating.", {
         icon: UPDATE_ICON,
         sticky: true,
         action: { title: "Restart", run: restart },
+        secondary: { title: "Later", run: noteUpdateNoticeDismissed },
       }),
     managed: async (release, current, asked) => {
       if (!asked) {

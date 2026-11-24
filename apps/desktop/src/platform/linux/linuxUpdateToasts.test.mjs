@@ -122,3 +122,36 @@ test("utility windows do not create update notices", async () => {
   await updater.check(false);
   assert.deepEqual(useToasts.getState().toasts, {});
 });
+
+test("an offer to install an update can be dismissed without installing it", async (t) => {
+  const docs = new Map([[UPDATE_PREFERENCES, JSON.stringify({ automaticDownloads: false })]]);
+  const { updater, state } = harness({ kind: "deb", docs });
+  await updater.check(false);
+  const shown = toast(t);
+  assert.equal(shown.value.props.action, "Update");
+  assert.equal(shown.value.props.secondary, "Later");
+  shown.value.props.onSecondary();
+  shown.rerender();
+  assert.equal(shown.value, null);
+  assert.equal(useToasts.getState().toasts.main, null);
+  assert.deepEqual(state.opened, []);
+  assert.equal(takeUpdateCounts().update_downloads_started, 0);
+  await updater.check(false);
+  assert.equal(useToasts.getState().toasts.main, null, "the same version stays dismissed");
+});
+
+test("a finished update's restart notice can be dismissed without restarting", async (t) => {
+  const { updater } = harness({ kind: "deb", phase: "ready" });
+  await updater.watch();
+  await updater.watch();
+  const shown = toast(t);
+  assert.equal(shown.value.props.action, "Restart");
+  assert.equal(shown.value.props.secondary, "Later");
+  shown.value.props.onSecondary();
+  shown.rerender();
+  assert.equal(shown.value, null);
+  const counts = takeUpdateCounts();
+  assert.equal(counts.update_notices_dismissed, 1);
+  assert.equal(counts.update_restarts, 0);
+  assert.equal(await updater.menuItem(), "restart", "the app menu still offers the restart");
+});
