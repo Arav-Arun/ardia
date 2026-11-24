@@ -112,6 +112,7 @@ export function linuxUpdater(deps: UpdateDeps) {
   let switchCheck: SwitchCheck | null = null;
   let settledRun = 0;
   let sightedRun = 0;
+  let readyNoticeRun = 0;
   let shownReady = false;
   const installingRuns = new Set<number>();
   const preferences = async () => {
@@ -156,6 +157,10 @@ export function linuxUpdater(deps: UpdateDeps) {
     await invokeHost(RESTART_METHOD, { args: [] }, deps.host).catch((error: unknown) => console.info(`[ardia linux] Ardia couldn't restart: ${String(error)}`));
   }
   const restartToUpdate = () => void restart(consentToken());
+  const noticeReady = (run: number, version: string) => {
+    readyNoticeRun = Math.max(readyNoticeRun, run);
+    deps.ready(version, restartToUpdate);
+  };
 
   async function newest(wanted: UpdateChannel): Promise<Release | null> {
     const fetched = await invokeHost<Fetched>(RELEASES_METHOD, { args: [] }, deps.host);
@@ -206,7 +211,7 @@ export function linuxUpdater(deps: UpdateDeps) {
     countOutcome(status, consent);
     const target = status.version ?? own?.release.version;
     if (!target) return;
-    if (status.phase === "ready") return deps.ready(target, restartToUpdate);
+    if (status.phase === "ready") return status.run > readyNoticeRun ? noticeReady(status.run, target) : undefined;
     console.info(`[ardia linux] the update to ${target} failed: ${status.reason ?? "unknown"}`);
     await fallBack(own?.release.version === target ? own.release : releasePage(target), own?.from ?? "automatic", consent);
   }
@@ -241,7 +246,7 @@ export function linuxUpdater(deps: UpdateDeps) {
     }
     if (status && installs(status.kind)) {
       if (status.phase === "ready") {
-        if (asked && status.version) deps.ready(status.version, restartToUpdate);
+        if (asked && status.version) noticeReady(status.run, status.version);
         return;
       }
       if (!asked && saved.failed === release.version) return;
@@ -270,7 +275,7 @@ export function linuxUpdater(deps: UpdateDeps) {
       if (!asked && !saved.automaticChecks) return;
       wanted = channel(saved, current);
       const engine = asked ? await engineStatus() : null;
-      if (engine?.phase === "ready" && engine.version && installs(engine.kind)) return deps.ready(engine.version, restartToUpdate);
+      if (engine?.phase === "ready" && engine.version && installs(engine.kind)) return noticeReady(engine.run, engine.version);
       switchCheck = { phase: "checking", channel: wanted };
       let release: Release | null;
       try {

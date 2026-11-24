@@ -155,3 +155,19 @@ test("a finished update's restart notice can be dismissed without restarting", a
   assert.equal(counts.update_restarts, 0);
   assert.equal(await updater.menuItem(), "restart", "the app menu still offers the restart");
 });
+
+test("a restart notice dismissed from Check for Updates stays closed when the watcher settles the run", async (t) => {
+  const { updater } = harness({ kind: "deb", phase: "ready" });
+  await updater.check(true);
+  const shown = toast(t);
+  assert.equal(shown.value.props.action, "Restart");
+  shown.value.props.onSecondary();
+  shown.rerender();
+  assert.equal(shown.value, null);
+  await updater.watch();
+  await updater.watch();
+  assert.equal(useToasts.getState().toasts.main, null, "the watcher does not bring the dismissed notice back");
+  const counts = takeUpdateCounts();
+  assert.equal(counts.update_notices_dismissed, 1);
+  assert.equal(counts.update_downloads_finished, 1, "the watcher still counts the finished update");
+});
