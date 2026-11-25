@@ -6,7 +6,7 @@ import { focusedWindowOf } from "../windows/ui";
 import { notePasswordAppPairing } from "../telemetry/usage";
 import { consentToken, type ConsentToken } from "../telemetry/client";
 import { passwordAppPairing } from "./passwordAppPairing";
-import { useExtensions } from "./store";
+import { extensionProfile, useExtensions } from "./store";
 
 export const ONE_PASSWORD_EXTENSION_IDS: ReadonlySet<string> = new Set([
   "aeblfdkhhhdcdjpifhhbdiojplfjncoa",
@@ -24,17 +24,23 @@ export function openPasswordApp(appPath: string) {
 }
 
 const PENDING_MS = 10 * 60_000;
-const asked = new Map<string, { consent: ConsentToken | null; at: number }>();
+const asked = new Map<string, { consent: ConsentToken | null; at: number; windowId: string | null }>();
 let watching = false;
 
 const installKey = (profile: string, id: string) => `${profile}\n${id}`;
+
+function windowShowing(profile: string, preferred: string | null): string | null {
+  const s = useBrowser.getState();
+  const shows = (w: string | null | undefined): w is string => !!w && !!s.windows[w] && extensionProfile(s, w) === profile;
+  return [preferred, focusedWindowOf(s), ...s.ui.focusOrder, ...s.windowOrder].find(shows) ?? null;
+}
 
 function showPairing(key: string) {
   const pending = asked.get(key);
   asked.delete(key);
   if (!pending || Date.now() - pending.at > PENDING_MS) return;
   const pairing = passwordAppPairing();
-  const windowId = focusedWindowOf(useBrowser.getState());
+  const windowId = windowShowing(key.split("\n")[0]!, pending.windowId);
   if (!pairing || !windowId) return;
   notePasswordAppPairing("shown", pending.consent);
   const { appPath } = pairing;
@@ -64,7 +70,7 @@ export function watchPasswordAppPairing() {
   onExtensionInstallPrompt((prompt) => {
     if (prompt.type !== "install" || !pairsWithPasswordApp(prompt.id)) return;
     if (useExtensions.getState().lists[prompt.profile]?.some((x) => x.id === prompt.id)) return;
-    asked.set(installKey(prompt.profile, prompt.id), { consent: consentToken(), at: Date.now() });
+    asked.set(installKey(prompt.profile, prompt.id), { consent: consentToken(), at: Date.now(), windowId: windowShowing(prompt.profile, null) });
   });
   onExtensionsChanged((e) => {
     if (e.event === "installed") showPairing(installKey(e.profile, e.id));

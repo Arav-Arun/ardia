@@ -8,7 +8,9 @@
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "base/memory/weak_ptr.h"
 #include "chrome/browser/profiles/profile.h"
+#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/permissions/permissions_updater.h"
 #include "extensions/browser/permissions_manager.h"
 #include "extensions/common/extension.h"
@@ -38,6 +40,33 @@ extensions::PermissionSet HostPermissions(const URLPattern& pattern) {
   return extensions::PermissionSet(extensions::APIPermissionSet(),
                                    extensions::ManifestPermissionSet(),
                                    std::move(hosts), std::move(scriptable));
+}
+
+void RestoreRemainingGrants(base::WeakPtr<Profile> profile,
+                            const std::string& id,
+                            Reply reply) {
+  const extensions::Extension* extension =
+      profile ? extensions::ExtensionRegistry::Get(profile.get())
+                    ->GetExtensionById(id,
+                                       extensions::ExtensionRegistry::EVERYTHING)
+              : nullptr;
+  if (!extension) {
+    return reply.Ok();
+  }
+  std::unique_ptr<const extensions::PermissionSet> remaining =
+      extensions::PermissionsManager::Get(profile.get())
+          ->GetRuntimePermissionsFromPrefs(*extension);
+  if (!remaining || remaining->effective_hosts().is_empty()) {
+    return reply.Ok();
+  }
+  extensions::PermissionsUpdater(profile.get())
+      .GrantRuntimePermissions(
+          *extension,
+          extensions::PermissionSet(extensions::APIPermissionSet(),
+                                    extensions::ManifestPermissionSet(),
+                                    remaining->explicit_hosts().Clone(),
+                                    remaining->scriptable_hosts().Clone()),
+          base::BindOnce([](Reply done) { done.Ok(); }, std::move(reply)));
 }
 
 }
@@ -86,11 +115,10 @@ void ChangeSite(Profile* profile,
   if (!pattern) {
     return reply.Error("That isn't a site an extension can be given");
   }
-  auto replied =
-      base::BindOnce([](Reply done) { done.Ok(); }, std::move(reply));
   if (grant) {
     extensions::PermissionsUpdater(profile).GrantRuntimePermissions(
-        extension, HostPermissions(*pattern), std::move(replied));
+        extension, HostPermissions(*pattern),
+        base::BindOnce([](Reply done) { done.Ok(); }, std::move(reply)));
     return;
   }
   std::unique_ptr<const extensions::PermissionSet> granted =
@@ -98,10 +126,12 @@ void ChangeSite(Profile* profile,
           HostPermissions(*pattern), *manager->GetRevokablePermissions(extension),
           extensions::URLPatternSet::IntersectionBehavior::kDetailed);
   if (granted->IsEmpty()) {
-    return std::move(replied).Run();
+    return reply.Ok();
   }
   extensions::PermissionsUpdater(profile).RevokeRuntimePermissions(
-      extension, *granted, std::move(replied));
+      extension, *granted,
+      base::BindOnce(&RestoreRemainingGrants, profile->GetWeakPtr(),
+                     extension.id(), std::move(reply)));
 }
 
 }

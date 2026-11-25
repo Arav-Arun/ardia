@@ -83,6 +83,7 @@ struct DictValue {
   auto end() const { return values.end(); }
   size_t size() const { return values.size(); }
   bool empty() const { return values.empty(); }
+  bool contains(const char* key) const { return values.count(key) > 0; }
 };
 Value::Value(DictValue value) : kind(kDict), dict(std::make_shared<DictValue>(std::move(value))) {}
 }
@@ -213,6 +214,12 @@ int main() {
   ok = false;
   Backend();
   assert(!ok && !error.empty() && site_changes == 2);
+  args = base::DictValue().Set("id", std::string(32, 'a')).Set("options", base::DictValue().Set("siteAccess", "specificSites").Set("grantSite", true));
+  ok = false;
+  withheld = false;
+  error.clear();
+  Backend();
+  assert(!ok && !error.empty() && !withheld && site_changes == 2);
   invalid.Set("id", std::string(32, 'a')).Set("options", base::DictValue().Set("grantSite", ""));
   assert(!ExtensionConfiguration(invalid));
 }

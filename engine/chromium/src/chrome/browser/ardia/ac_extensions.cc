@@ -507,6 +507,10 @@ AC_PROFILE_CALL(ac_extensions_configure) {
   const base::DictValue& options = nested ? *nested : call.args();
   const std::string* grant = options.FindString("grantSite");
   const std::string* revoke = options.FindString("revokeSite");
+  if ((options.contains("grantSite") && !grant) ||
+      (options.contains("revokeSite") && !revoke)) {
+    return call.TakeReply().Error("A site must be text");
+  }
   if (grant && revoke) {
     return call.TakeReply().Error("Grant or revoke one site at a time");
   }
