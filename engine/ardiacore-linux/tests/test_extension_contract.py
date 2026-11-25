@@ -152,9 +152,10 @@ struct ToolbarActionsModel {
 };
 int site_changes = 0;
 std::string site_problem;
+std::string last_site;
 namespace ardia::extension_sites_internal {
 std::string SiteProblem(Profile*, const extensions::Extension&, const std::string&, bool) { return site_problem; }
-void ChangeSite(Profile*, const extensions::Extension&, const std::string&, bool, Reply reply) { ++site_changes; reply.Ok(); }
+void ChangeSite(Profile*, const extensions::Extension&, const std::string& site, bool, Reply reply) { ++site_changes; last_site = site; reply.Ok(); }
 }
 ARDIA_BACKEND
 int main() {
@@ -220,6 +221,26 @@ int main() {
   error.clear();
   Backend();
   assert(!ok && !error.empty() && !withheld && site_changes == 2);
+  for (const std::string& hostile : ARDIA_HOSTILE) {
+    for (const char* key : {"grantSite", "revokeSite"}) {
+      base::DictValue request;
+      request.Set("id", std::string(32, 'a')).Set("options", base::DictValue().Set("siteAccess", "specificSites").Set(key, hostile));
+      const auto accepted = ExtensionConfiguration(request);
+      assert(static_cast<bool>(accepted) == (!hostile.empty() && hostile.size() <= kMaxSitePatternLength));
+      if (!accepted) continue;
+      args = *accepted;
+      const int before = site_changes;
+      site_problem = "That isn't a site an extension can be given";
+      ok = false;
+      withheld = false;
+      error.clear();
+      Backend();
+      assert(!ok && error == site_problem && !withheld && site_changes == before);
+      site_problem.clear();
+      Backend();
+      assert(ok && site_changes == before + 1 && last_site == hostile);
+    }
+  }
   invalid.Set("id", std::string(32, 'a')).Set("options", base::DictValue().Set("grantSite", ""));
   assert(!ExtensionConfiguration(invalid));
 }
@@ -228,10 +249,17 @@ int main() {
             if isinstance(item, dict):
                 return 'base::DictValue()' + ''.join('.Set(' + json.dumps(key) + ', ' + value(val) + ')' for key, val in item.items())
             return json.dumps(item)
+        hostile_source = ("const { HOSTILE_STRINGS } = await import(process.argv[1]); "
+                          "console.log(JSON.stringify(HOSTILE_STRINGS.map((h) => h.value)))")
+        hostile_list = json.loads(subprocess.run(['node', '--input-type=module', '-e', hostile_source,
+                                                  str(ROOT / 'scripts/security/hostile-inputs.mjs')],
+                                                 capture_output=True, text=True, check=True).stdout)
+        literal = lambda text: 'std::string("' + ''.join('\\%03o' % byte for byte in text.encode('utf-8', 'surrogatepass')) + '", ' + str(len(text.encode('utf-8', 'surrogatepass'))) + ')'
+        hostile = 'std::vector<std::string>{' + ', '.join(literal(text) for text in hostile_list) + ', std::string(4096, \'a\')}'
         with tempfile.TemporaryDirectory(prefix='ardia-extension-contract-') as scratch:
             cpp = Path(scratch) / 'extension.cc'
             binary = Path(scratch) / 'extension'
-            cpp.write_text(code.replace('ARDIA_TRANSFORM', transform).replace('ARDIA_BACKEND', backend).replace('ARDIA_INPUT', value(payload)))
+            cpp.write_text(code.replace('ARDIA_TRANSFORM', transform).replace('ARDIA_BACKEND', backend).replace('ARDIA_INPUT', value(payload)).replace('ARDIA_HOSTILE', hostile))
             result = subprocess.run([compiler, '-std=c++20', '-Wall', '-Wextra', '-Werror', str(cpp), '-o', str(binary)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             result = subprocess.run([str(binary)], capture_output=True, text=True)

@@ -2236,6 +2236,23 @@
     "apps/desktop/src/pagerMotion.test.mjs#native pager frames refuse every hostile input and still pass a valid control"
    ],
    "detected": false
+  },
+  {
+   "id": "desktop-shell:extensions.configure#sites",
+   "source": "frame",
+   "guard": "Site access changes from the Linux and Windows shell (extensions.configure grantSite and revokeSite): Linux's Configuration takes them only as non-empty strings of at most 2,048 bytes beside known option keys (Windows forwards the shell's JSON as is); the engine refuses a site key that isn't text and checks the site before changing anything (SiteProblem: the extension must be one the user may change, the site must parse as an http(s) or file URLPattern whose path is /*, must not cover every site, and must overlap a host the extension requires or an optional host the user already approved), so a refused request leaves site access as it was; a grant keeps the pattern's own HTTP(S) scheme mask (RuntimeSitePattern) and a remove goes through Chromium's ScriptingPermissionsModifier::RemoveHostPermissions. The shell's own Add Site sheet sends only what extensionSitePattern returns: an http(s) host pattern or nothing",
+   "checks": [
+    "engine/ardiacore-linux/src/ardia/linux/ac_linux_extensions.cc#Configuration",
+    "engine/ardiacore-linux/src/ardia/linux/ac_linux_extensions.cc#kMaxSitePatternLength",
+    "engine/chromium/src/chrome/browser/ardia/ac_extensions.cc#ac_extensions_configure",
+    "engine/chromium/src/chrome/browser/ardia/ac_extension_sites.cc#SiteProblem",
+    "engine/chromium/src/chrome/browser/ardia/ac_extension_sites.cc#RuntimeSitePattern",
+    "engine/chromium/src/chrome/browser/ardia/ac_extension_sites.cc#ChangeSite",
+    "apps/browser/src/state/extensions/sitePatterns.ts#extensionSitePattern",
+    "engine/ardiacore-linux/tests/test_extension_contract.py#ARDIA_HOSTILE",
+    "apps/browser/src/hostileInputs.test.mjs#extensionSitePattern"
+   ],
+   "detected": false
   }
  ]
 }
