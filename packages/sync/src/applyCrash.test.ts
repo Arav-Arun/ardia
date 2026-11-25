@@ -36,7 +36,7 @@ class Folder {
 }
 
 type Saved = { kind: "state"; json: string; clock: string | null } | { kind: "batch"; json: string } | { kind: "journal"; json: string };
-type Mode = { replaces?: boolean; throttled?: boolean; failsAfter?: string; ignores?: (key: string) => boolean; slowApplyMs?: number; quitting?: boolean; onePerCycle?: boolean; republishes?: string; journalFails?: boolean; killedBeforeCycleRecord?: boolean; landsBeforeFailing?: boolean };
+type Mode = { replaces?: boolean; throttled?: boolean; failsAfter?: string; ignores?: (key: string) => boolean; slowApplyMs?: number; quitting?: boolean; onePerCycle?: boolean; republishes?: string; journalFails?: boolean; killedBeforeCycleRecord?: boolean; landsBeforeFailing?: boolean; whole?: boolean; writesThenFails?: boolean; retireFails?: boolean };
 
 class Mac {
   memory = new Map<string, unknown>();
@@ -68,6 +68,7 @@ class Mac {
   adapter(): Adapter {
     return {
       prefix: "b:",
+      savesWhole: !!this.mode.whole,
       extract: () => {
         if (this.mode.throttled || (this.mode.onePerCycle && this.extracts++ > 0)) return null;
         const ignores = this.mode.ignores;
@@ -86,6 +87,7 @@ class Mac {
           visible.has(key) ? this.memory.set(key, visible.get(key)) : this.memory.delete(key);
           if (this.mode.landsBeforeFailing) records.landed(key);
         }
+        if (this.mode.writesThenFails) return false;
       },
     };
   }
@@ -95,7 +97,7 @@ class Mac {
   async sync() {
     const persistApplying = this.writeAhead
       ? async (batch: ApplyBatch) => {
-          if (this.mode.journalFails) throw new Error("disk full");
+          if (this.mode.journalFails || (this.mode.retireFails && !Object.keys(batch.k).length)) throw new Error("disk full");
           this.saved.push({ kind: "batch", json: JSON.stringify(batch) });
           await new Promise((resolve) => setImmediate(resolve));
           this.duringWriteAhead?.();
@@ -496,6 +498,7 @@ test("an offline edit back to the value a saved batch replaced is published, not
   await remoteChange(a, b, () => (a.memory.set("b:a", "A1"), a.memory.set("b:b", "B1"), a.memory.set("b:c", "C1")));
   b.chromeSaves();
   b.killed();
+  b.mode = { whole: true };
   b.memory.set("b:a", "A0");
   b.tick(60_000);
   await settle([b, a], 3);
@@ -515,4 +518,63 @@ test("a recovered key that lands before a later key fails is counted once", asyn
   b.tick(1_000);
   const second = await b.sync();
   assert.equal(first.reapplied + second.reapplied, 2);
+});
+
+test("a store that saves key by key keeps a deletion it saved from a batch whose additions it lost, and a newer visit elsewhere survives", async () => {
+  const { a, b } = await pairWith({ "b:x": "visited" });
+  await remoteChange(a, b, () => (a.memory.delete("b:x"), a.memory.set("b:y", "Y"), a.memory.set("b:z", "Z")));
+  b.disk = new Map();
+  b.killed();
+  a.memory.set("b:x", "visited again");
+  a.tick(1_000);
+  await a.sync();
+  b.tick(60_000);
+  const { published } = await b.sync();
+  assert.equal(published, 0, "no fresh tombstone for the deletion Chrome already saved");
+  await settle([b, a], 3);
+  assert.deepEqual(view(a), { "b:x": "visited again", "b:y": "Y", "b:z": "Z" });
+  assert.deepEqual(view(b), view(a));
+});
+
+test("an apply that wrote the store but reported failure isn't published as this Mac's edit over a newer deletion", async () => {
+  const { a, b } = await pairWith({ "b:t1": "A" });
+  b.mode = { writesThenFails: true };
+  await remoteChange(a, b, () => a.memory.set("b:t1", "B"));
+  assert.equal(b.memory.get("b:t1"), "B");
+  b.mode = {};
+  a.memory.delete("b:t1");
+  a.tick(1_000);
+  await a.sync();
+  b.tick(1_000);
+  const { published } = await b.sync();
+  assert.equal(published, 0);
+  await settle([a, b], 2);
+  assert.deepEqual(view(a), {});
+  assert.deepEqual(view(b), {});
+});
+
+test("a cancelled apply whose retirement can't be written stops the cycle, so the edit that cancelled it never outruns the batch on disk", async () => {
+  const { a, b } = await pairWith({ "b:t1": "A" });
+  b.duringWriteAhead = () => b.memory.set("b:t1", "C");
+  b.mode = { retireFails: true, killedBeforeCycleRecord: true };
+  await remoteChange(a, b, () => a.memory.set("b:t1", "B")).catch(() => {});
+  b.memory.set("b:t1", "B");
+  b.chromeSaves();
+  b.killed();
+  await settle([b, a], 3);
+  assert.equal(b.memory.get("b:t1"), "B");
+  assert.equal(a.memory.get("b:t1"), "B");
+});
+
+test("a recovered key the other Mac already put back to what Chrome holds isn't counted as applied again", async () => {
+  const { a, b } = await pairWith({ "b:t1": "A" });
+  await remoteChange(a, b, () => a.memory.set("b:t1", "B"));
+  b.killed();
+  a.memory.set("b:t1", "A");
+  a.tick(1_000);
+  await a.sync();
+  b.tick(60_000);
+  const { reapplied } = await b.sync();
+  assert.equal(reapplied, 0);
+  assert.equal(b.memory.get("b:t1"), "A");
 });

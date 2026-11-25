@@ -179,10 +179,10 @@ __define("packages/sync/src/scope.ts", function (exports, __require) {
   __export(exports, "restoreJournal", () => restoreJournal);
   __export(exports, "writtenSeq", () => writtenSeq);
   __export(exports, "pull", () => pull);
-  __export(exports, "compactionDue", () => compactionDue);
   __export(exports, "compact", () => compact);
   __export(exports, "syncScope", () => syncScope);
   __exportAll(exports, __require("packages/sync/src/scopeKeys.ts"));
+  __export(exports, "compactionDue", () => __require("packages/sync/src/compaction.ts")["compactionDue"]);
   __export(exports, "parseSyncFile", () => __require("packages/sync/src/syncFile.ts")["parseSyncFile"]);
 const { canonical } = __require("packages/sync/src/canon.ts");
 const { hlcWall } = __require("packages/sync/src/hlc.ts");
@@ -190,22 +190,14 @@ const { holdsBack, noteFileHealth } = __require("packages/sync/src/fileHealth.ts
 const { baseKeysWith, baseWritesUnder, dropBase, dropRecord, putBase, putRecord, visible } = __require("packages/sync/src/scopeKeys.ts");
 
 const { covered, isApplied, markApplied, raiseApplied } = __require("packages/sync/src/applied.ts");
-const { awaitsRecovery, cancelIfRaced, countReapplied, finishBatch, startApplying, takeReapplied, writeAhead } = __require("packages/sync/src/applyBatches.ts");
+const { awaitsRecovery, cancelIfRaced, countReapplied, failedTargets, finishBatch, startApplying, takeReapplied, writeAhead } = __require("packages/sync/src/applyBatches.ts");
 const { recoverBatches } = __require("packages/sync/src/applyRecovery.ts");
 const { parseSyncFile } = __require("packages/sync/src/syncFile.ts");
+const { DEFAULTS, newestSnapshot, prune, retiredBy, compactionDue } = __require("packages/sync/src/compaction.ts");
+
 
                                                                                                                                  
 
-const DEFAULTS                                                                                                                      = {
-  expired: () => false,
-  tombstoneTTL: 45 * 86_400_000,
-  compactAfterFiles: 40,
-  compactAfterLogs: 400,
-  compactLogShare: 0.25,
-  compactInterval: 10 * 60_000,
-  pruneGrace: 60 * 60_000,
-  damagedGiveUp: 86_400_000,
-};
 
 function see(state            , device        , at        ) {
   if (!(device in state.seen) || at > state.seen[device] ) state.seen[device] = at;
@@ -288,20 +280,22 @@ async function changesOf(state            , adapter         , now        , optio
   const extractWith = (baseJson                                     ) =>
     Promise.resolve(adapter.extract((key) => parseBase(baseJson(key)), queued, now, (key) => key in state.records, (key) => state.records[key]?.v, (key) => state.records[key]?.h, baseJson));
   const first = await extractWith((key) => state.base[key]);
-  const extraction = first && state.applying ? await recoverBatches(state, adapter.prefix, first, adapter.extractUsesBase ? extractWith : null, options) : first;
+  const extraction = first && state.applying ? await recoverBatches(state, adapter.prefix, first, adapter.extractUsesBase ? extractWith : null, !!adapter.savesWhole, options) : first;
   if (!extraction) return null;
   const changes           = [];
   const { values, json: knownJson, republish, ignore } = extraction;
+  const unsettled = failedTargets(state, adapter.prefix, options);
   values.forEach((value, key) => {
     if (value === null || value === undefined) throw new Error(`[sync] ${key}: a live value can't be null`);
     const json = knownJson?.(key, value) ?? canonical(value);
+    if (unsettled?.get(key)?.has(json)) return;
     if (state.base[key] === json && (!republish?.(key) || awaitsRecovery(state, key))) return;
     changes.push({ key, value, json });
   });
   const keys = baseKeysWith(state, adapter.prefix);
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i] ;
-    if (!(key in state.base) || values.has(key) || ignore?.(key)) continue;
+    if (!(key in state.base) || values.has(key) || ignore?.(key) || unsettled?.get(key)?.has("null")) continue;
     changes.push({ key, value: null, json: "null" });
   }
   return { changes, settle: extraction.published, source };
@@ -420,6 +414,7 @@ async function applyAdapter(state            , adapter         , keys           
     else dropBase(state, key);
   };
   const landed = new Set        ();
+  const changing = new Set([...mine].filter((key) => (state.base[key] ?? "null") !== (view.has(key) ? canonical(view.get(key)) : "null")));
   let ok                 = false;
   try {
     const records = {
@@ -441,57 +436,13 @@ async function applyAdapter(state            , adapter         , keys           
       settle(key);
       keys.delete(key);
     }
-    countReapplied(state, [...landed].filter((key) => mine.has(key)), deferred);
+    countReapplied(state, [...landed].filter((key) => mine.has(key)), deferred, changing);
     return false;
   }
   applyAs[adapter.prefix] = "joined";
   for (const key of mine) if (!deferred.has(key)) settle(key);
-  countReapplied(state, mine, deferred);
+  countReapplied(state, mine, deferred, changing);
   return true;
-}
-
-                                                       
-
-const dominates = (vv                        , other                        ) => Object.entries(other).every(([d, s]) => (vv[d] ?? 0) >= s);
-
-function newestSnapshot(entries             , device         ) {
-  let newest                       ;
-  for (const entry of entries) if (entry[1].k === "snapshot" && (!device || entry[1].d === device) && (!newest || entry[1].at > newest[1].at)) newest = entry;
-  return newest;
-}
-
-function retiredBy(entries             , snapshotId        , vv                        , now        , pruneGrace        , kinds                             ) {
-  return entries
-    .filter(([fileId, f]) => {
-      if (fileId === snapshotId || now - f.at < pruneGrace) return false;
-      if (f.k === "log") return covered(vv, [f.d, f.s ?? Infinity]);
-      if (f.k === "snapshot") return kinds === "logsAndSnapshots" && dominates(vv, f.vv ?? {});
-      return false;
-    })
-    .map(([fileId]) => fileId);
-}
-
-async function prune(state            , transport           , scope        , ids          ) {
-  if (!ids.length) return;
-  await transport.remove(scope, ids);
-  for (const fileId of ids) delete state.files[fileId];
-}
-
-function compactionDue(state            , now        , options               = {}) {
-  const o = { ...DEFAULTS, ...options };
-  const entries = Object.entries(state.files);
-  const latest = newestSnapshot(entries);
-  if (now - Math.max(state.snapshotAt, latest?.[1].at ?? 0) < o.compactInterval) return false;
-  const base = latest?.[1].vv ?? {};
-  let logs = 0;
-  let logBytes = 0;
-  for (const [, f] of entries) {
-    if (f.k !== "log" || covered(base, [f.d, f.s ?? Infinity]) || !covered(state.vv, [f.d, f.s ?? Infinity])) continue;
-    logs++;
-    logBytes += f.b ?? 0;
-  }
-  if (logs <= o.compactAfterFiles) return false;
-  return logs >= o.compactAfterLogs || logBytes >= o.compactLogShare * (latest?.[1].b ?? 0);
 }
 
 async function compact(state            , transport           , scope        , device        , now        , options               = {}, force = false) {
@@ -702,6 +653,124 @@ function dropBase(state            , key        ) {
 }
 
 });
+__define("packages/sync/src/compaction.ts", function (exports, __require) {
+  __export(exports, "DEFAULTS", () => DEFAULTS);
+  __export(exports, "newestSnapshot", () => newestSnapshot);
+  __export(exports, "retiredBy", () => retiredBy);
+  __export(exports, "prune", () => prune);
+  __export(exports, "compactionDue", () => compactionDue);
+const { covered } = __require("packages/sync/src/applied.ts");
+                                                                           
+
+const DEFAULTS                                                                                                                      = {
+  expired: () => false,
+  tombstoneTTL: 45 * 86_400_000,
+  compactAfterFiles: 40,
+  compactAfterLogs: 400,
+  compactLogShare: 0.25,
+  compactInterval: 10 * 60_000,
+  pruneGrace: 60 * 60_000,
+  damagedGiveUp: 86_400_000,
+};
+
+                                                       
+
+const dominates = (vv                        , other                        ) => Object.entries(other).every(([d, s]) => (vv[d] ?? 0) >= s);
+
+function newestSnapshot(entries             , device         ) {
+  let newest                       ;
+  for (const entry of entries) if (entry[1].k === "snapshot" && (!device || entry[1].d === device) && (!newest || entry[1].at > newest[1].at)) newest = entry;
+  return newest;
+}
+
+function retiredBy(entries             , snapshotId        , vv                        , now        , pruneGrace        , kinds                             ) {
+  return entries
+    .filter(([fileId, f]) => {
+      if (fileId === snapshotId || now - f.at < pruneGrace) return false;
+      if (f.k === "log") return covered(vv, [f.d, f.s ?? Infinity]);
+      if (f.k === "snapshot") return kinds === "logsAndSnapshots" && dominates(vv, f.vv ?? {});
+      return false;
+    })
+    .map(([fileId]) => fileId);
+}
+
+async function prune(state            , transport           , scope        , ids          ) {
+  if (!ids.length) return;
+  await transport.remove(scope, ids);
+  for (const fileId of ids) delete state.files[fileId];
+}
+
+function compactionDue(state            , now        , options               = {}) {
+  const o = { ...DEFAULTS, ...options };
+  const entries = Object.entries(state.files);
+  const latest = newestSnapshot(entries);
+  if (now - Math.max(state.snapshotAt, latest?.[1].at ?? 0) < o.compactInterval) return false;
+  const base = latest?.[1].vv ?? {};
+  let logs = 0;
+  let logBytes = 0;
+  for (const [, f] of entries) {
+    if (f.k !== "log" || covered(base, [f.d, f.s ?? Infinity]) || !covered(state.vv, [f.d, f.s ?? Infinity])) continue;
+    logs++;
+    logBytes += f.b ?? 0;
+  }
+  if (logs <= o.compactAfterFiles) return false;
+  return logs >= o.compactAfterLogs || logBytes >= o.compactLogShare * (latest?.[1].b ?? 0);
+}
+
+
+});
+__define("packages/sync/src/applied.ts", function (exports, __require) {
+  __export(exports, "covered", () => covered);
+  __export(exports, "markApplied", () => markApplied);
+  __export(exports, "isApplied", () => isApplied);
+  __export(exports, "raiseApplied", () => raiseApplied);
+                                                          
+
+const covered = (vv                        , [device, seq]        ) => (vv[device] ?? 0) >= seq;
+
+function sortedIndex(list          , seq        ) {
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (list[mid]  < seq) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function markApplied(state            , device        , seq        ) {
+  if (covered(state.vv, [device, seq])) return;
+  const extra = state.extra[device] ?? [];
+  const at = sortedIndex(extra, seq);
+  if (extra[at] !== seq) extra.splice(at, 0, seq);
+  let top = state.vv[device] ?? 0;
+  let taken = 0;
+  while (extra[taken] === top + 1) top = extra[taken++] ;
+  state.vv[device] = top;
+  const left = taken ? extra.slice(taken) : extra;
+  if (left.length) state.extra[device] = left;
+  else delete state.extra[device];
+}
+
+const isApplied = (state            , [device, seq]        ) => {
+  if (covered(state.vv, [device, seq])) return true;
+  const extra = state.extra[device];
+  return !!extra && extra[sortedIndex(extra, seq)] === seq;
+};
+
+function raiseApplied(state            , device        , seq        ) {
+  if (seq <= (state.vv[device] ?? 0)) return;
+  state.vv[device] = seq;
+  const extra = (state.extra[device] ?? []).filter((s) => s > seq);
+  let taken = 0;
+  for (let top = seq; extra[taken] === top + 1; top++) state.vv[device] = extra[taken++] ;
+  const left = extra.slice(taken);
+  if (left.length) state.extra[device] = left;
+  else delete state.extra[device];
+}
+
+});
 __define("packages/sync/src/syncFile.ts", function (exports, __require) {
   __export(exports, "parseSyncFile", () => parseSyncFile);
                                                                        
@@ -766,58 +835,6 @@ const pullSettled = (state            ) =>
   state.pending === 0 && Object.keys(state.damaged).length === 0 && !Object.values(state.files).some((f) => f.k === "bad");
 
 });
-__define("packages/sync/src/applied.ts", function (exports, __require) {
-  __export(exports, "covered", () => covered);
-  __export(exports, "markApplied", () => markApplied);
-  __export(exports, "isApplied", () => isApplied);
-  __export(exports, "raiseApplied", () => raiseApplied);
-                                                          
-
-const covered = (vv                        , [device, seq]        ) => (vv[device] ?? 0) >= seq;
-
-function sortedIndex(list          , seq        ) {
-  let lo = 0;
-  let hi = list.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (list[mid]  < seq) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo;
-}
-
-function markApplied(state            , device        , seq        ) {
-  if (covered(state.vv, [device, seq])) return;
-  const extra = state.extra[device] ?? [];
-  const at = sortedIndex(extra, seq);
-  if (extra[at] !== seq) extra.splice(at, 0, seq);
-  let top = state.vv[device] ?? 0;
-  let taken = 0;
-  while (extra[taken] === top + 1) top = extra[taken++] ;
-  state.vv[device] = top;
-  const left = taken ? extra.slice(taken) : extra;
-  if (left.length) state.extra[device] = left;
-  else delete state.extra[device];
-}
-
-const isApplied = (state            , [device, seq]        ) => {
-  if (covered(state.vv, [device, seq])) return true;
-  const extra = state.extra[device];
-  return !!extra && extra[sortedIndex(extra, seq)] === seq;
-};
-
-function raiseApplied(state            , device        , seq        ) {
-  if (seq <= (state.vv[device] ?? 0)) return;
-  state.vv[device] = seq;
-  const extra = (state.extra[device] ?? []).filter((s) => s > seq);
-  let taken = 0;
-  for (let top = seq; extra[taken] === top + 1; top++) state.vv[device] = extra[taken++] ;
-  const left = extra.slice(taken);
-  if (left.length) state.extra[device] = left;
-  else delete state.extra[device];
-}
-
-});
 __define("packages/sync/src/applyBatches.ts", function (exports, __require) {
   __export(exports, "ABSENT", () => ABSENT);
   __export(exports, "UNSEEN_KEPT_MS", () => UNSEEN_KEPT_MS);
@@ -831,6 +848,7 @@ __define("packages/sync/src/applyBatches.ts", function (exports, __require) {
   __export(exports, "queueRecovered", () => queueRecovered);
   __export(exports, "awaitsRecovery", () => awaitsRecovery);
   __export(exports, "countReapplied", () => countReapplied);
+  __export(exports, "failedTargets", () => failedTargets);
   __export(exports, "takeReapplied", () => takeReapplied);
 const { canonical } = __require("packages/sync/src/canon.ts");
 const { visible } = __require("packages/sync/src/scopeKeys.ts");
@@ -915,11 +933,7 @@ async function writeAhead(state            , prefix        , keys               
 async function cancelIfRaced(state            , batch                   , raced             , options               = {})                   {
   if (!batch || !Object.keys(batch.k).some((key) => raced.has(key))) return false;
   dropBatch(state, batch);
-  try {
-    await options.persistApplying?.({ ...batch, k: {} });
-  } catch (error) {
-    console.warn(`[sync] couldn't journal that ${batch.p} won't apply after a local edit`, error);
-  }
+  await options.persistApplying?.({ ...batch, k: {} });
   return true;
 }
 
@@ -943,18 +957,17 @@ function startApplying(state            , now        , options               = {
   if (!state.applying.length) delete state.applying;
 }
 
-                                                                 
+                                           
 const recovering = new WeakMap                        ();
 const reapplied = new WeakMap                    ();
 
-function queueRecovered(state            , keys          , counted             ) {
+function queueRecovered(state            , keys          ) {
   if (!keys.length) return;
   const queued = new Set(state.unapplied);
   let marks = recovering.get(state);
-  if (!marks) recovering.set(state, (marks = { pending: new Set(), counted: new Set() }));
+  if (!marks) recovering.set(state, (marks = { pending: new Set() }));
   for (const key of keys) {
     marks.pending.add(key);
-    if (counted.has(key)) marks.counted.add(key);
     if (queued.has(key)) continue;
     queued.add(key);
     state.unapplied.push(key);
@@ -963,15 +976,30 @@ function queueRecovered(state            , keys          , counted             )
 
 const awaitsRecovery = (state            , key        ) => !!recovering.get(state)?.pending.has(key);
 
-function countReapplied(state            , applied                  , deferred             ) {
+function countReapplied(state            , applied                  , deferred             , changed             ) {
   const marks = recovering.get(state);
   if (!marks?.pending.size) return;
   let count = 0;
   for (const key of applied) {
     if (deferred.has(key) || !marks.pending.delete(key)) continue;
-    if (marks.counted.delete(key)) count++;
+    if (changed.has(key)) count++;
   }
   if (count) reapplied.set(state, (reapplied.get(state) ?? 0) + count);
+}
+
+function failedTargets(state            , prefix        , options               = {})                                  {
+  const launch = launchOf(options);
+  let targets                                  = null;
+  for (const batch of state.applying ?? []) {
+    if (!batch.f || batch.l !== launch || batch.p !== prefix) continue;
+    targets ??= new Map();
+    for (const [key, [, to]] of Object.entries(batch.k)) {
+      let held = targets.get(key);
+      if (!held) targets.set(key, (held = new Set()));
+      held.add(to ?? ABSENT);
+    }
+  }
+  return targets;
 }
 
 function takeReapplied(state            )         {
@@ -1022,7 +1050,7 @@ function valueAt(chain        , hypothesis        )         {
 }
 
 const holds = (chain                    , json        ) => !!chain?.some((s) => s.to === json || s.from === json);
-const leftByPartialApply = (chain        , json        ) => chain.some((s) => s.partial) && holds(chain, json);
+const leftOver = (chain        , json        , savesWhole         ) => (!savesWhole || chain.some((s) => s.partial)) && holds(chain, json);
 
                                                                                                                             
 
@@ -1059,7 +1087,7 @@ function keepUnresolved(state            , batches              , resolved      
   else delete state.applying;
 }
 
-async function recoverBatches(state            , prefix        , first            , extractWith                    , options               = {})                             {
+async function recoverBatches(state            , prefix        , first            , extractWith                    , savesWhole         , options               = {})                             {
   const launch = launchOf(options);
   const batches = (state.applying ?? []).filter((b) => b.p === prefix && b.l !== launch).sort((a, z) => a.id - z.id);
   if (!batches.length) return first;
@@ -1079,12 +1107,11 @@ async function recoverBatches(state            , prefix        , first          
   const sinceRestart = chainsOf((state.applying ?? []).filter((b) => b.p === prefix && b.l === launch), (key) => !chains.has(key));
   const resolved = new Set        ();
   const queue           = [];
-  const changedHere = new Set        ();
   for (const [key, chain] of chains) {
     if (extraction.ignore?.(key)) continue;
     resolved.add(key);
     const actual = nativeJson(extraction, key);
-    if (actual !== valueAt(chain, hypothesis) && !leftByPartialApply(chain, actual) && !holds(sinceRestart.get(key), actual)) {
+    if (actual !== valueAt(chain, hypothesis) && !leftOver(chain, actual, savesWhole) && !holds(sinceRestart.get(key), actual)) {
       setBase(state, key, baseJson(key) ?? ABSENT);
       continue;
     }
@@ -1093,10 +1120,9 @@ async function recoverBatches(state            , prefix        , first          
     const recordBehind = target !== actual && chain.some((s) => s.from === target) && !chain.some((s) => s.to === target);
     if (recordBehind) continue;
     queue.push(key);
-    if (actual !== target) changedHere.add(key);
   }
   keepUnresolved(state, batches, resolved);
-  queueRecovered(state, queue, changedHere);
+  queueRecovered(state, queue);
   return extraction;
 }
 
@@ -1210,6 +1236,7 @@ const emptyScope = ()             => ({
                               
                              
                             
+                       
  
 
                             

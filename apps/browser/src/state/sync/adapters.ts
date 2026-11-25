@@ -78,6 +78,7 @@ export function bookmarksAdapter(profileId: string): Adapter {
   return withSyncWorkCounts("bookmark", {
     prefix: BOOKMARK,
     extractUsesBase: true,
+    savesWhole: true,
     extractsOnlyFrom: () => bookmarksToken(profileId),
     extract: (base) => {
       if (!ready()) return null;

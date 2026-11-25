@@ -4,22 +4,14 @@ import { holdsBack, noteFileHealth } from "./fileHealth.ts";
 import { baseKeysWith, baseWritesUnder, dropBase, dropRecord, putBase, putRecord, visible } from "./scopeKeys.ts";
 export * from "./scopeKeys.ts";
 import { covered, isApplied, markApplied, raiseApplied } from "./applied.ts";
-import { awaitsRecovery, cancelIfRaced, countReapplied, finishBatch, startApplying, takeReapplied, writeAhead, type WriteAhead } from "./applyBatches.ts";
+import { awaitsRecovery, cancelIfRaced, countReapplied, failedTargets, finishBatch, startApplying, takeReapplied, writeAhead, type WriteAhead } from "./applyBatches.ts";
 import { recoverBatches } from "./applyRecovery.ts";
 import { parseSyncFile } from "./syncFile.ts";
+import { DEFAULTS, newestSnapshot, prune, retiredBy, compactionDue } from "./compaction.ts";
+export { compactionDue } from "./compaction.ts";
 export { parseSyncFile } from "./syncFile.ts";
 import type { Adapter, LogFile, ScopeOptions, ScopeState, SnapshotFile, SyncFile, SyncRecord, Transport } from "./scopeState.ts";
 
-const DEFAULTS: Required<Omit<ScopeOptions, "persist" | "holdApply" | "persistApplying" | "launch" | "nativeSaveMs" | "monotonic">> = {
-  expired: () => false,
-  tombstoneTTL: 45 * 86_400_000,
-  compactAfterFiles: 40,
-  compactAfterLogs: 400,
-  compactLogShare: 0.25,
-  compactInterval: 10 * 60_000,
-  pruneGrace: 60 * 60_000,
-  damagedGiveUp: 86_400_000,
-};
 
 function see(state: ScopeState, device: string, at: number) {
   if (!(device in state.seen) || at > state.seen[device]!) state.seen[device] = at;
@@ -102,20 +94,22 @@ async function changesOf(state: ScopeState, adapter: Adapter, now: number, optio
   const extractWith = (baseJson: (key: string) => string | undefined) =>
     Promise.resolve(adapter.extract((key) => parseBase(baseJson(key)), queued, now, (key) => key in state.records, (key) => state.records[key]?.v, (key) => state.records[key]?.h, baseJson));
   const first = await extractWith((key) => state.base[key]);
-  const extraction = first && state.applying ? await recoverBatches(state, adapter.prefix, first, adapter.extractUsesBase ? extractWith : null, options) : first;
+  const extraction = first && state.applying ? await recoverBatches(state, adapter.prefix, first, adapter.extractUsesBase ? extractWith : null, !!adapter.savesWhole, options) : first;
   if (!extraction) return null;
   const changes: Change[] = [];
   const { values, json: knownJson, republish, ignore } = extraction;
+  const unsettled = failedTargets(state, adapter.prefix, options);
   values.forEach((value, key) => {
     if (value === null || value === undefined) throw new Error(`[sync] ${key}: a live value can't be null`);
     const json = knownJson?.(key, value) ?? canonical(value);
+    if (unsettled?.get(key)?.has(json)) return;
     if (state.base[key] === json && (!republish?.(key) || awaitsRecovery(state, key))) return;
     changes.push({ key, value, json });
   });
   const keys = baseKeysWith(state, adapter.prefix);
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i]!;
-    if (!(key in state.base) || values.has(key) || ignore?.(key)) continue;
+    if (!(key in state.base) || values.has(key) || ignore?.(key) || unsettled?.get(key)?.has("null")) continue;
     changes.push({ key, value: null, json: "null" });
   }
   return { changes, settle: extraction.published, source };
@@ -234,6 +228,7 @@ async function applyAdapter(state: ScopeState, adapter: Adapter, keys: Set<strin
     else dropBase(state, key);
   };
   const landed = new Set<string>();
+  const changing = new Set([...mine].filter((key) => (state.base[key] ?? "null") !== (view.has(key) ? canonical(view.get(key)) : "null")));
   let ok: boolean | void = false;
   try {
     const records = {
@@ -255,57 +250,13 @@ async function applyAdapter(state: ScopeState, adapter: Adapter, keys: Set<strin
       settle(key);
       keys.delete(key);
     }
-    countReapplied(state, [...landed].filter((key) => mine.has(key)), deferred);
+    countReapplied(state, [...landed].filter((key) => mine.has(key)), deferred, changing);
     return false;
   }
   applyAs[adapter.prefix] = "joined";
   for (const key of mine) if (!deferred.has(key)) settle(key);
-  countReapplied(state, mine, deferred);
+  countReapplied(state, mine, deferred, changing);
   return true;
-}
-
-type FileEntry = [string, ScopeState["files"][string]];
-
-const dominates = (vv: Record<string, number>, other: Record<string, number>) => Object.entries(other).every(([d, s]) => (vv[d] ?? 0) >= s);
-
-function newestSnapshot(entries: FileEntry[], device?: string) {
-  let newest: FileEntry | undefined;
-  for (const entry of entries) if (entry[1].k === "snapshot" && (!device || entry[1].d === device) && (!newest || entry[1].at > newest[1].at)) newest = entry;
-  return newest;
-}
-
-function retiredBy(entries: FileEntry[], snapshotId: string, vv: Record<string, number>, now: number, pruneGrace: number, kinds: "logs" | "logsAndSnapshots") {
-  return entries
-    .filter(([fileId, f]) => {
-      if (fileId === snapshotId || now - f.at < pruneGrace) return false;
-      if (f.k === "log") return covered(vv, [f.d, f.s ?? Infinity]);
-      if (f.k === "snapshot") return kinds === "logsAndSnapshots" && dominates(vv, f.vv ?? {});
-      return false;
-    })
-    .map(([fileId]) => fileId);
-}
-
-async function prune(state: ScopeState, transport: Transport, scope: string, ids: string[]) {
-  if (!ids.length) return;
-  await transport.remove(scope, ids);
-  for (const fileId of ids) delete state.files[fileId];
-}
-
-export function compactionDue(state: ScopeState, now: number, options: ScopeOptions = {}) {
-  const o = { ...DEFAULTS, ...options };
-  const entries = Object.entries(state.files);
-  const latest = newestSnapshot(entries);
-  if (now - Math.max(state.snapshotAt, latest?.[1].at ?? 0) < o.compactInterval) return false;
-  const base = latest?.[1].vv ?? {};
-  let logs = 0;
-  let logBytes = 0;
-  for (const [, f] of entries) {
-    if (f.k !== "log" || covered(base, [f.d, f.s ?? Infinity]) || !covered(state.vv, [f.d, f.s ?? Infinity])) continue;
-    logs++;
-    logBytes += f.b ?? 0;
-  }
-  if (logs <= o.compactAfterFiles) return false;
-  return logs >= o.compactAfterLogs || logBytes >= o.compactLogShare * (latest?.[1].b ?? 0);
 }
 
 export async function compact(state: ScopeState, transport: Transport, scope: string, device: string, now: number, options: ScopeOptions = {}, force = false) {

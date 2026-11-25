@@ -37,7 +37,7 @@ function valueAt(chain: Step[], hypothesis: number): string {
 }
 
 const holds = (chain: Step[] | undefined, json: string) => !!chain?.some((s) => s.to === json || s.from === json);
-const leftByPartialApply = (chain: Step[], json: string) => chain.some((s) => s.partial) && holds(chain, json);
+const leftOver = (chain: Step[], json: string, savesWhole: boolean) => (!savesWhole || chain.some((s) => s.partial)) && holds(chain, json);
 
 type Trial = { hypothesis: number; extraction: Extraction; matches: number; baseJson: (key: string) => string | undefined };
 
@@ -74,7 +74,7 @@ function keepUnresolved(state: ScopeState, batches: ApplyBatch[], resolved: Set<
   else delete state.applying;
 }
 
-export async function recoverBatches(state: ScopeState, prefix: string, first: Extraction, extractWith: ExtractWith | null, options: ScopeOptions = {}): Promise<Extraction | null> {
+export async function recoverBatches(state: ScopeState, prefix: string, first: Extraction, extractWith: ExtractWith | null, savesWhole: boolean, options: ScopeOptions = {}): Promise<Extraction | null> {
   const launch = launchOf(options);
   const batches = (state.applying ?? []).filter((b) => b.p === prefix && b.l !== launch).sort((a, z) => a.id - z.id);
   if (!batches.length) return first;
@@ -94,12 +94,11 @@ export async function recoverBatches(state: ScopeState, prefix: string, first: E
   const sinceRestart = chainsOf((state.applying ?? []).filter((b) => b.p === prefix && b.l === launch), (key) => !chains.has(key));
   const resolved = new Set<string>();
   const queue: string[] = [];
-  const changedHere = new Set<string>();
   for (const [key, chain] of chains) {
     if (extraction.ignore?.(key)) continue;
     resolved.add(key);
     const actual = nativeJson(extraction, key);
-    if (actual !== valueAt(chain, hypothesis) && !leftByPartialApply(chain, actual) && !holds(sinceRestart.get(key), actual)) {
+    if (actual !== valueAt(chain, hypothesis) && !leftOver(chain, actual, savesWhole) && !holds(sinceRestart.get(key), actual)) {
       setBase(state, key, baseJson(key) ?? ABSENT);
       continue;
     }
@@ -108,9 +107,8 @@ export async function recoverBatches(state: ScopeState, prefix: string, first: E
     const recordBehind = target !== actual && chain.some((s) => s.from === target) && !chain.some((s) => s.to === target);
     if (recordBehind) continue;
     queue.push(key);
-    if (actual !== target) changedHere.add(key);
   }
   keepUnresolved(state, batches, resolved);
-  queueRecovered(state, queue, changedHere);
+  queueRecovered(state, queue);
   return extraction;
 }

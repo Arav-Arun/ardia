@@ -407,6 +407,20 @@ test("a batch retired with an empty write is gone after a restart, and steps tha
   assert.deepEqual(after.scopes["p:s1"].applying, [kept]);
 });
 
+test("a trim whose kept or cut list isn't a list of keys is ignored, and the state still loads", async () => {
+  const doc = newDoc({ profiles: { default: { syncId: "s1", enabled: true } } });
+  const good = batchOf(30, { "bm:t1": ['{"t":"T1"}', '"fp1"'] });
+  const checkpoint = { covers: 0, scopes: { "p:s1": { ...emptyScope(), applying: [good] } }, version: 1 };
+  await opening({ doc, docs: { "sync-state.nns": sealed(checkpoint) } });
+  for (const trim of [{ k: 1, e: [] }, { k: [], e: 1 }, { e: [2] }, {}]) {
+    const next = parts().length + 1;
+    shell.docs.set(`sync-journal-${next}.nns`, sealed({ id: Date.now() + next, device: "devA", changes: { "p:s1": { records: {}, base: {}, rest: { applyingIds: [30], applyingTrimmed: { 30: trim } } } }, version: 1 }));
+    const { doc: after } = await restart(doc);
+    assert.deepEqual(after.scopes["p:s1"].applying, [good], JSON.stringify(trim));
+    shell.docs.delete(`sync-journal-${next}.nns`);
+  }
+});
+
 test("damaged batches in a part, a checkpoint or a cycle's part are dropped instead of stalling sync", async () => {
   const doc = newDoc({ profiles: { default: { syncId: "s1", enabled: true } } });
   const good = batchOf(30, { "bm:t1": ['{"t":"T1"}', '"fp1"'] });

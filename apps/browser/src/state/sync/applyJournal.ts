@@ -11,7 +11,8 @@ export const APPLYING_PART_CHARS = 1_000_000;
 
 const isIdList = (v: unknown): v is number[] => Array.isArray(v) && v.every((id) => typeof id === "number" && Number.isFinite(id));
 const isKeyList = (v: unknown): v is string[] => Array.isArray(v) && v.every((key) => typeof key === "string");
-const isTrimmed = (v: unknown): v is Trimmed => isFields(v) && (isKeyList(v.k) || isKeyList(v.e)) && (v.r === undefined || v.r === 1) && (v.f === undefined || v.f === 1);
+const isTrimmed = (v: unknown): v is Trimmed =>
+  isFields(v) && (v.k !== undefined || v.e !== undefined) && (v.k === undefined || isKeyList(v.k)) && (v.e === undefined || isKeyList(v.e)) && (v.r === undefined || v.r === 1) && (v.f === undefined || v.f === 1);
 const isCount = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v > 0;
 
 function batchOnly(batch: ApplyBatch): ApplyBatch {

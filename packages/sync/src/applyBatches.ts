@@ -81,11 +81,7 @@ export async function writeAhead(state: ScopeState, prefix: string, keys: Iterab
 export async function cancelIfRaced(state: ScopeState, batch: ApplyBatch | null, raced: Set<string>, options: ScopeOptions = {}): Promise<boolean> {
   if (!batch || !Object.keys(batch.k).some((key) => raced.has(key))) return false;
   dropBatch(state, batch);
-  try {
-    await options.persistApplying?.({ ...batch, k: {} });
-  } catch (error) {
-    console.warn(`[sync] couldn't journal that ${batch.p} won't apply after a local edit`, error);
-  }
+  await options.persistApplying?.({ ...batch, k: {} });
   return true;
 }
 
@@ -109,18 +105,17 @@ export function startApplying(state: ScopeState, now: number, options: ScopeOpti
   if (!state.applying.length) delete state.applying;
 }
 
-type Recovering = { pending: Set<string>; counted: Set<string> };
+type Recovering = { pending: Set<string> };
 const recovering = new WeakMap<ScopeState, Recovering>();
 const reapplied = new WeakMap<ScopeState, number>();
 
-export function queueRecovered(state: ScopeState, keys: string[], counted: Set<string>) {
+export function queueRecovered(state: ScopeState, keys: string[]) {
   if (!keys.length) return;
   const queued = new Set(state.unapplied);
   let marks = recovering.get(state);
-  if (!marks) recovering.set(state, (marks = { pending: new Set(), counted: new Set() }));
+  if (!marks) recovering.set(state, (marks = { pending: new Set() }));
   for (const key of keys) {
     marks.pending.add(key);
-    if (counted.has(key)) marks.counted.add(key);
     if (queued.has(key)) continue;
     queued.add(key);
     state.unapplied.push(key);
@@ -129,15 +124,30 @@ export function queueRecovered(state: ScopeState, keys: string[], counted: Set<s
 
 export const awaitsRecovery = (state: ScopeState, key: string) => !!recovering.get(state)?.pending.has(key);
 
-export function countReapplied(state: ScopeState, applied: Iterable<string>, deferred: Set<string>) {
+export function countReapplied(state: ScopeState, applied: Iterable<string>, deferred: Set<string>, changed: Set<string>) {
   const marks = recovering.get(state);
   if (!marks?.pending.size) return;
   let count = 0;
   for (const key of applied) {
     if (deferred.has(key) || !marks.pending.delete(key)) continue;
-    if (marks.counted.delete(key)) count++;
+    if (changed.has(key)) count++;
   }
   if (count) reapplied.set(state, (reapplied.get(state) ?? 0) + count);
+}
+
+export function failedTargets(state: ScopeState, prefix: string, options: ScopeOptions = {}): Map<string, Set<string>> | null {
+  const launch = launchOf(options);
+  let targets: Map<string, Set<string>> | null = null;
+  for (const batch of state.applying ?? []) {
+    if (!batch.f || batch.l !== launch || batch.p !== prefix) continue;
+    targets ??= new Map();
+    for (const [key, [, to]] of Object.entries(batch.k)) {
+      let held = targets.get(key);
+      if (!held) targets.set(key, (held = new Set()));
+      held.add(to ?? ABSENT);
+    }
+  }
+  return targets;
 }
 
 export function takeReapplied(state: ScopeState): number {

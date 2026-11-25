@@ -105,6 +105,7 @@ export interface Adapter {
   adoptRemoteOnJoin?: boolean;
   publishAfterPull?: boolean;
   extractUsesBase?: boolean;
+  savesWhole?: boolean;
 }
 
 export type ScopeOptions = {
