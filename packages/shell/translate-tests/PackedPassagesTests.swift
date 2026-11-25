@@ -124,6 +124,23 @@ final class PackedPassagesTests: XCTestCase {
     XCTAssertEqual(parts[1], ["Help"])
   }
 
+  func testALeadingGapThatNamesAnotherPassageDoesNotHandItsTextToTheFirstPassageSeen() {
+    let parts = PackedPassages.parts(
+      of: answer([.gap(" · ", 1), .plain("Links "), .piece("Help", 2, 0)]),
+      over: [["Einstellungen"], ["Links"], ["Hilfe"]])
+    XCTAssertNil(parts[0])
+    XCTAssertNil(parts[1])
+    XCTAssertNil(parts[2])
+  }
+
+  func testAnAnswerThatStartsPastTheFirstPassageWithoutAGapIsAskedAgain() {
+    let parts = PackedPassages.parts(
+      of: answer([.plain("Settings "), .piece("Help", 1, 0)]),
+      over: [["Einstellungen"], ["Hilfe"]])
+    XCTAssertNil(parts[0])
+    XCTAssertNil(parts[1])
+  }
+
   func testPacksCountTheSeparatorsBetweenPassages() {
     let passages = (0..<4).map { _ in [String(repeating: "x", count: 150)] }
     let packs = PackedPassages.packs(passages, limit: 600, count: 24)

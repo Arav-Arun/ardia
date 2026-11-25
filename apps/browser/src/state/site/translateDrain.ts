@@ -84,7 +84,10 @@ export async function drainPassages(port: DrainPort): Promise<boolean> {
   const settle = async () => {
     await Promise.race([Promise.allSettled(running), port.released]);
     if (!live()) return false;
-    if (failure) throw failure.error;
+    if (failure) {
+      port.onAbandoned?.(failedInARowPassages);
+      throw failure.error;
+    }
     if (!succeeded && lastError) throw lastError.error;
     return true;
   };
@@ -95,11 +98,11 @@ export async function drainPassages(port: DrainPort): Promise<boolean> {
         async (results) => {
           if (!live()) return;
           const translated = translatedIn(pack, results);
-          if (translated) {
+          if (translated && !failure) {
             failedInARow = 0;
             failedInARowPassages = 0;
-            succeeded++;
           }
+          if (translated) succeeded++;
           port.onStage?.("apply");
           await port.apply(results);
           if (live()) port.onApplied?.(translated, total);
@@ -110,10 +113,7 @@ export async function drainPassages(port: DrainPort): Promise<boolean> {
           port.onFailed?.(pack.length);
           const fresh = pack.filter(([, , attempt]) => !attempt).length;
           failedInARowPassages += fresh;
-          if (fresh && ++failedInARow >= FAILED_PACKS_IN_A_ROW && !failure) {
-            failure = { error };
-            port.onAbandoned?.(failedInARowPassages);
-          }
+          if (fresh && ++failedInARow >= FAILED_PACKS_IN_A_ROW) failure ??= { error };
           await port.apply(pack.flatMap(untranslated)).catch(() => {});
         },
       )

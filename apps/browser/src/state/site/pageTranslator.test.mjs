@@ -126,12 +126,12 @@ test("a page that turns an element preformatted between two translations gets it
   assert.equal(page.call("next", "two", 24, 600).passages[0][1][0][1], "Erste Zeile\n    Zweite Zeile");
 });
 
-test("three paragraphs the model can't answer in a row end the translation and count as three failed passages", async () => {
+test("paragraphs the model can't answer end the translation, and every one left untranslated counts, the one still in flight too", async () => {
   const texts = ["eins", "zwei", "drei", "vier"].map((n) => new FakeText(`Absatz ${n} ist lang genug, um ganz allein zum Modell zu gehen. `.repeat(4)));
   const page = fakePage(new FakeElement("body", texts.map((t) => new FakeElement("p", [t]))));
   page.call("start", "t");
   const progress = { unlinked: 0, failed: 0 };
   const model = { translateBlocks: async () => Promise.reject(new Error("the model went away")) };
   await assert.rejects(drainPage(page, model, progress), /went away/);
-  assert.equal(progress.failed, 3);
+  assert.equal(progress.failed, 4);
 });

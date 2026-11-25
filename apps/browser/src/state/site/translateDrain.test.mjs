@@ -240,3 +240,28 @@ test("a model outage that ends the drain reports every fresh passage it left unt
   await assert.rejects(drainPassages(page.port), /went away/);
   assert.deepEqual(abandoned, [3]);
 });
+
+test("an outage counts the packs still in flight when it ends the drain", async () => {
+  const batches = [1, 2, 3, 4].map((id) => ({ passages: [passage(id)], more: id < 4, gone: false, done: id, total: 4 }));
+  const page = fakePage(batches);
+  const answers = new Map();
+  page.port.translate = (pack) => {
+    const answer = deferred();
+    answers.set(pack[0][0], answer);
+    return answer.promise;
+  };
+  const abandoned = [];
+  page.port.onAbandoned = (n) => abandoned.push(n);
+  const drained = drainPassages(page.port).then(() => "done", (e) => e.message);
+  const fail = async (id) => {
+    for (let i = 0; i < 20 && !answers.has(id); i++) await tick();
+    answers.get(id).reject(new Error("the model went away"));
+    for (let i = 0; i < 5; i++) await tick();
+  };
+  await fail(1);
+  await fail(2);
+  await fail(3);
+  await fail(4);
+  assert.equal(await drained, "the model went away");
+  assert.deepEqual(abandoned, [4]);
+});

@@ -144,7 +144,10 @@ export async function translatePack(model: BlockTranslator, source: string, targ
     progress.unlinked += unlinked.length;
     const pieces = unlinked.flatMap(([, p]) => p);
     const single = await model.translateBlocks(source, target, pieces.map(([, text]) => [text]), token).catch((error: unknown) => {
-      if (!out.some(([, text]) => text !== null)) throw error;
+      if (!out.some(([, text]) => text !== null)) {
+        if (live()) progress.failed += onLastTry(pack);
+        throw error;
+      }
       return pieces.map(() => null);
     });
     out.push(...pieces.map(([id], i): Translated => {

@@ -75,6 +75,8 @@ enum PackedPassages {
         if left.contains(p) { broken[p] = true }
       } else if let current, gapBefore != nil {
         broken[current] = true
+      } else if current == nil, gapBefore ?? 0 != p {
+        broken[p] = true
       }
       current = p
       gapBefore = nil

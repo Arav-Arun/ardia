@@ -113,3 +113,16 @@ test("a piece-by-piece follow-up that rejects with nothing else translated fails
   };
   await assert.rejects(translatePack(model, "en", "fr", [[2, [[20, "Read the "], [21, "notes"]]]], "tok", progress(), () => true), /went away/);
 });
+
+test("a passage on its last try whose piece-by-piece follow-up rejects counts as failed once", async () => {
+  let calls = 0;
+  const model = {
+    translateBlocks: async (_s, _t, blocks) => {
+      if (calls++) throw new Error("the model went away");
+      return blocks.map(() => null);
+    },
+  };
+  const counts = progress();
+  await assert.rejects(translatePack(model, "en", "fr", [[2, [[20, "Read the "], [21, "notes"]], 2]], "tok", counts, () => true), /went away/);
+  assert.equal(counts.failed, 1);
+});
