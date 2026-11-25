@@ -272,7 +272,7 @@ test("a port written with leading zeros is the scheme's default port, or the sam
   assert.equal(importBookmarks(P, dia([link("Port", "https://port.example:0443/"), link("Other", "https://port.example:08443/")]), "Dia"), 0);
 });
 
-test("a folder someone named Imported from Dia by hand takes the import but isn't counted as one an import made, and an added empty folder counts", () => {
+test("a folder someone named Imported from Dia by hand takes the import but never counts as one an import made, and an empty folder added to one an import made counts", () => {
   start();
   S().addBookmarkFolder({ profileId: P, title: "Imported from Dia" });
   takeImportRuns();
@@ -281,5 +281,60 @@ test("a folder someone named Imported from Dia by hand takes the import but isn'
   assert.equal(takeImportRuns().import_bookmark_folders_reused, 0);
   importBookmarks(P, dia([link("A", "https://a.example/"), folder("Ideas", [])]), "Dia");
   assert.deepEqual(bar(), [["Imported from Dia", ["https://a.example/", ["Ideas", []]]]]);
-  assert.equal(takeImportRuns().import_bookmark_folders_reused, 1, "an import made into the folder it now owns");
+  assert.equal(takeImportRuns().import_bookmark_folders_reused, 0, "still the folder made by hand");
+  start(["Mine", "https://mine.example/"]);
+  importBookmarks(P, dia([link("A", "https://a.example/")]), "Dia");
+  takeImportRuns();
+  importBookmarks(P, dia([link("A", "https://a.example/"), folder("Ideas", [])]), "Dia");
+  assert.deepEqual(bar()[1], ["Imported from Dia", ["https://a.example/", ["Ideas", []]]]);
+  assert.equal(takeImportRuns().import_bookmark_folders_reused, 1, "an empty folder added to the folder an import made");
+});
+
+const wrapperFolders = () => {
+  const nodes = S().bookmarks.nodes;
+  const wrapper = childNamed(barId(), "Imported from Dia");
+  return nodes[wrapper].children.filter((id) => nodes[id].kind === "folder").map((id) => nodes[id].children.map((c) => nodes[c].url));
+};
+
+test("18 folders of the same name that share most of their links each take their own new link, whatever order they come in", () => {
+  start(["Mine", "https://mine.example/"]);
+  const pages = Array.from({ length: 18 }, (_, i) => `https://common${i}.example/`);
+  const without = (i) => pages.filter((_, j) => j !== i).map((url) => link("c", url));
+  importBookmarks(P, dia(pages.map((_, i) => folder("Same", without(i)))), "Dia");
+  const reversed = pages.map((_, i) => 17 - i).map((i) => folder("Same", [...without(i), link("new", `https://new${i}.example/`)]));
+  assert.equal(importBookmarks(P, dia(reversed), "Dia"), 18);
+  wrapperFolders().forEach((urls, i) => assert.deepEqual(urls, [...pages.filter((_, j) => j !== i), `https://new${i}.example/`], `folder ${i}`));
+});
+
+test("65 folders of the same name linked in a ring of shared pages are all paired by their links, not by position", () => {
+  start(["Mine", "https://mine.example/"]);
+  const u = (j) => `https://u${j}.example/`;
+  const v = (j) => `https://v${j}.example/`;
+  importBookmarks(P, dia(Array.from({ length: 65 }, (_, j) => folder("Same", [link("u", u(j)), link("v", v(j))]))), "Dia");
+  const incoming = Array.from({ length: 65 }, (_, i) =>
+    folder("Same", i === 64 ? [link("u", u(0)), link("new", `https://new${i}.example/`)] : [link("v", v(i)), link("u", u(i + 1)), link("new", `https://new${i}.example/`)]),
+  );
+  assert.equal(importBookmarks(P, dia(incoming), "Dia"), 65);
+  wrapperFolders().forEach((urls, j) => assert.deepEqual(urls, [u(j), v(j), `https://new${(j + 64) % 65}.example/`], `folder ${j}`));
+});
+
+test("another browser's folder moved into Imported from Dia doesn't take a Dia import", () => {
+  start();
+  importBookmarks(P, dia([folder("Work", [link("A", "https://a.example/")])]), "Chrome");
+  importBookmarks(P, dia([link("Mail", "https://mail.example/")]), "Dia");
+  const chromeWork = childNamed(barId(), "Work");
+  S().moveBookmark(chromeWork, childNamed(barId(), "Imported from Dia"));
+  assert.equal(importBookmarks(P, dia([link("Mail", "https://mail.example/"), folder("Work", [link("A", "https://a.example/"), link("B", "https://b.example/")])]), "Dia"), 1);
+  assert.deepEqual(bar(), [["Imported from Dia", ["https://mail.example/", ["Work", ["https://a.example/"]], ["Work", ["https://b.example/"]]]]]);
+});
+
+test("3,000 folders of the same name that all hold one common page still pair by their own pages, quickly", () => {
+  start(["Mine", "https://mine.example/"]);
+  const siblings = (extra) =>
+    Array.from({ length: 3000 }, (_, i) => folder("Folder", [link("common", "https://common.example/"), link("a", `https://s${i}.example/a`), ...(extra ? [link("b", `https://s${i}.example/b`)] : [])]));
+  importBookmarks(P, dia(siblings(false)), "Dia");
+  const began = performance.now();
+  assert.equal(importBookmarks(P, dia(siblings(true).reverse()), "Dia"), 3000);
+  assert.ok(performance.now() - began < 3000, `took ${performance.now() - began} ms`);
+  wrapperFolders().forEach((urls, i) => assert.deepEqual(urls, ["https://common.example/", `https://s${i}.example/a`, `https://s${i}.example/b`]));
 });

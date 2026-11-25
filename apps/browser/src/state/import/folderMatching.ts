@@ -1,61 +1,68 @@
 export type FolderEdge = { source: number; candidate: number; shared: number };
 
 const CARDINALITY_FIRST = 1_000_000;
-const EXACT_LIMIT = 4096;
+const EXACT_WORK_LIMIT = 4_000_000;
 
-function exactPairs(rows: number[], cols: number[], weight: (row: number, col: number) => number): [number, number][] {
-  const transposed = rows.length > cols.length;
-  const r = transposed ? cols : rows;
-  const c = transposed ? rows : cols;
-  const at = (i: number, j: number) => (transposed ? weight(c[j]!, r[i]!) : weight(r[i]!, c[j]!));
-  const n = r.length;
-  const m = c.length;
-  const u = new Array<number>(n + 1).fill(0);
-  const v = new Array<number>(m + 1).fill(0);
-  const owner = new Array<number>(m + 1).fill(0);
-  const way = new Array<number>(m + 1).fill(0);
-  for (let i = 1; i <= n; i++) {
-    owner[0] = i;
-    let j0 = 0;
-    const least = new Array<number>(m + 1).fill(Infinity);
-    const used = new Array<boolean>(m + 1).fill(false);
-    do {
-      used[j0] = true;
-      const i0 = owner[j0]!;
-      let delta = Infinity;
-      let j1 = 0;
-      for (let j = 1; j <= m; j++) {
-        if (used[j]) continue;
-        const cost = -at(i0 - 1, j - 1) - u[i0]! - v[j]!;
-        if (cost < least[j]!) {
-          least[j] = cost;
-          way[j] = j0;
-        }
-        if (least[j]! < delta) {
-          delta = least[j]!;
-          j1 = j;
+function bestPairs(rows: number[], cols: number[], edges: FolderEdge[]): [number, number][] {
+  const rowAt = new Map(rows.map((r, i) => [r, i + 1]));
+  const colAt = new Map(cols.map((c, i) => [c, rows.length + i + 1]));
+  const sink = rows.length + cols.length + 1;
+  const head = new Array<number>(sink + 1).fill(-1);
+  const to: number[] = [];
+  const cap: number[] = [];
+  const cost: number[] = [];
+  const next: number[] = [];
+  const link = (a: number, b: number, c: number) => {
+    for (const [x, y, k, w] of [
+      [a, b, 1, c],
+      [b, a, 0, -c],
+    ] as const) {
+      to.push(y);
+      cap.push(k);
+      cost.push(w);
+      next.push(head[x]!);
+      head[x] = to.length - 1;
+    }
+  };
+  for (const r of rows) link(0, rowAt.get(r)!, 0);
+  for (const e of edges) link(rowAt.get(e.source)!, colAt.get(e.candidate)!, -(CARDINALITY_FIRST + e.shared));
+  for (const c of cols) link(colAt.get(c)!, sink, 0);
+  const distance = new Array<number>(sink + 1);
+  const via = new Array<number>(sink + 1);
+  const queued = new Array<boolean>(sink + 1);
+  for (;;) {
+    distance.fill(Infinity);
+    via.fill(-1);
+    queued.fill(false);
+    distance[0] = 0;
+    const queue = [0];
+    queued[0] = true;
+    for (let at = 0; at < queue.length; at++) {
+      const x = queue[at]!;
+      queued[x] = false;
+      for (let e = head[x]!; e !== -1; e = next[e]!) {
+        const y = to[e]!;
+        if (!cap[e] || distance[x]! + cost[e]! >= distance[y]!) continue;
+        distance[y] = distance[x]! + cost[e]!;
+        via[y] = e;
+        if (!queued[y]) {
+          queued[y] = true;
+          queue.push(y);
         }
       }
-      for (let j = 0; j <= m; j++) {
-        if (used[j]) {
-          u[owner[j]!] = u[owner[j]!]! + delta;
-          v[j] = v[j]! - delta;
-        } else least[j] = least[j]! - delta;
-      }
-      j0 = j1;
-    } while (owner[j0] !== 0);
-    do {
-      const j1 = way[j0]!;
-      owner[j0] = owner[j1]!;
-      j0 = j1;
-    } while (j0);
+    }
+    if (distance[sink] === Infinity || distance[sink]! >= 0) break;
+    for (let y = sink; y !== 0; y = to[via[y]! ^ 1]!) {
+      cap[via[y]!] = cap[via[y]!]! - 1;
+      cap[via[y]! ^ 1] = cap[via[y]! ^ 1]! + 1;
+    }
   }
   const out: [number, number][] = [];
-  for (let j = 1; j <= m; j++) {
-    const i = owner[j]!;
-    if (!i || at(i - 1, j - 1) <= 0) continue;
-    out.push(transposed ? [c[j - 1]!, r[i - 1]!] : [r[i - 1]!, c[j - 1]!]);
-  }
+  for (const r of rows)
+    for (let e = head[rowAt.get(r)!]!; e !== -1; e = next[e]!) {
+      const y = to[e]!;
+      if (y > rows.length && y < sink && !cap[e] && e % 2 === 0) out.push([r, cols[y - rows.length - 1]!]);
+    }
   return out;
 }
 
@@ -91,9 +98,8 @@ export function pairFolders(sourceCount: number, candidateCount: number, edges: 
   for (const group of groups.values()) {
     const rows = [...new Set(group.map((e) => e.source))].sort((a, z) => a - z);
     const cols = [...new Set(group.map((e) => e.candidate))].sort((a, z) => a - z);
-    const weights = new Map(group.map((e) => [`${e.source}:${e.candidate}`, CARDINALITY_FIRST + e.shared]));
-    const pairs = rows.length * cols.length <= EXACT_LIMIT ? exactPairs(rows, cols, (s, c) => weights.get(`${s}:${c}`) ?? 0) : greedyPairs(group);
-    for (const [source, candidate] of pairs) paired[source] = candidate;
+    const exact = Math.min(rows.length, cols.length) * (rows.length + cols.length + group.length) <= EXACT_WORK_LIMIT;
+    for (const [source, candidate] of exact ? bestPairs(rows, cols, group) : greedyPairs(group)) paired[source] = candidate;
   }
   const taken = new Set(paired.filter((c) => c >= 0));
   let next = 0;

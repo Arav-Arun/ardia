@@ -12,7 +12,12 @@ const MIGRATIONS: Migrations = { 0: unchanged };
 
 const folderFrom = (saved: unknown): ImportedFolder | null => {
   if (!isFields(saved) || !isString(saved.source) || !isString(saved.engine)) return null;
-  return { source: saved.source, engine: saved.engine, ...(saved.wrapper === true ? { wrapper: true as const } : {}) };
+  return {
+    source: saved.source,
+    engine: saved.engine,
+    ...(saved.wrapper === true ? { wrapper: true as const } : {}),
+    ...(saved.adopted === true ? { adopted: true as const } : {}),
+  };
 };
 
 export function readImportedFolders(): ImportedFolders {
