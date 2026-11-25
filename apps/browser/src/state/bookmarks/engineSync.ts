@@ -35,6 +35,26 @@ type EngineState = {
 };
 const engines = new Map<string, EngineState>();
 const isCurrent = (engine: string, state: EngineState) => engines.get(engine) === state;
+const BOOKMARK_WRITE_WAIT_MS = 10_000;
+const idleWaiters = new Map<string, (() => void)[]>();
+const idle = (state: EngineState | undefined) => !state?.shadow || (!state.busy && !state.needPush && !state.needRead);
+
+function wakeIdle(engine: string) {
+  const waiting = idleWaiters.get(engine);
+  if (!waiting || !idle(engines.get(engine))) return;
+  idleWaiters.delete(engine);
+  for (const wake of waiting) wake();
+}
+
+export function bookmarksWritten(engine: string, deadlineMs = BOOKMARK_WRITE_WAIT_MS): Promise<boolean> {
+  if (idle(engines.get(engine))) return Promise.resolve(true);
+  const written = new Promise<boolean>((resolve) => {
+    const waiting = idleWaiters.get(engine) ?? [];
+    waiting.push(() => resolve(true));
+    idleWaiters.set(engine, waiting);
+  });
+  return withDeadline(written, deadlineMs, false);
+}
 
 const stateOf = (engine: string) => {
   let state = engines.get(engine);
@@ -144,6 +164,7 @@ function work(engine: string) {
       warnFor(consent, `[bookmarks] couldn't read ${engine || "the default profile"}'s bookmarks`, error);
     } finally {
       state.busy = false;
+      wakeIdle(engine);
     }
   })();
 }
@@ -295,6 +316,7 @@ export function startBookmarks() {
       state.shadow = null;
       state.needRead = false;
       state.needPush = false;
+      wakeIdle(engine);
     }
   });
   const stop = useBrowser.subscribeTo(["profiles", "bookmarks"], (s, prev) => {
@@ -319,6 +341,7 @@ export function startBookmarks() {
     unloaded();
     stop();
     engines.clear();
+    for (const engine of [...idleWaiters.keys()]) wakeIdle(engine);
     legacyMoved = false;
   };
 }
