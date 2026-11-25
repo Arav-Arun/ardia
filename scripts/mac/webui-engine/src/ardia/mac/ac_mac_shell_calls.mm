@@ -76,6 +76,7 @@ constexpr std::string_view kCapabilities[] = {
     "shell.glassRegions",
     "shell.glassBehindWindow",
     "shell.backdropRegions",
+    "shell.backdropRegions.windowTreatment",
     "shell.showContextMenu",
     "shell.trafficLights",
     "ArdiaShell.setMainMenu",
@@ -87,6 +88,7 @@ constexpr std::string_view kCapabilities[] = {
     "ArdiaShell.quit",
     "ArdiaShell.startWindowMove",
     "ArdiaShell.captionDoubleClick",
+    "ArdiaShell.startDictation",
     ardia::desktop_commands::kEditCapability,
     "ArdiaShell.openWindow",
     "ArdiaShell.focusWindow",
@@ -598,6 +600,16 @@ void ShellHostView::Invoke(const std::string& method,
             },
             std::move(done)));
     return;
+  }
+  if (method == "ArdiaShell.startDictation") {
+    if (BackgroundInstance()) {
+      Trace("dictation (background run, not started)");
+    } else {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        [NSApp sendAction:@selector(startDictation:) to:nil from:nil];
+      });
+    }
+    return Reply(std::move(done), base::Value(true));
   }
   if (method == "ArdiaShell.focusWindow") {
     ShellHostView* target =

@@ -312,3 +312,59 @@ test("a bordered view that clips its content draws its border as a ring above th
     assert.deepEqual(borderBoxClip({ ...card, ...uneven }), { style: { overflow: "clip", overflowClipMargin: "border-box" }, ring: null }, JSON.stringify(uneven));
   }
 });
+
+test("web glass keeps the plain backdrop-filter fallback the demo draws, under Wave D's native handoff, with no painted rims", () => {
+  const desktop = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+  const demo = (path) => readFileSync(new URL(`../../../packages/demo/src/${path}`, import.meta.url), "utf8");
+  assert.equal(desktop("./shims/web/glassRim.ts"), demo("shims/web/glassRim.ts"));
+  const glassOf = (source) => source.slice(source.indexOf("export function GlassEffect("), source.indexOf("\n}\n", source.indexOf("export function GlassEffect(")));
+  const shown = glassOf(desktop("./shims/web/chrome.tsx"));
+  const web = glassOf(demo("shims/web/chrome.tsx"));
+  const layersOf = (body) => body.split("\n").map((line) => line.trim()).filter((line) => /^(<div style=\{|\{tint \? <div style=\{\{ \.\.\.layer, \.\.\.shaped)/.test(line)).map((line) => line.replace(/\{\{ \.\.\.(backdrop\(.*\)), \.\.\.fade \}\}/, "{$1}").replace(/, \.\.\.fade/g, ""));
+  assert.equal(layersOf(shown).length, 3);
+  assert.deepEqual(layersOf(shown), layersOf(web), "the desktop fallback draws the demo's backdrop, tint and brightened edge");
+  for (const body of [shown, web]) assert.doesNotMatch(body, /boxShadow|rgba\(255, ?255, ?255|data-ardia-glass-rim|data-ardia-glass-ring/, "no painted white rim or ring");
+  assert.match(shown, /useGlassLook\(frame, \{ material: clear \? "clear" : "regular", tint: glassTint\(tint\), group: group \?\? undefined, appearance: theme \}, !scrolled && nativeGlassFor\(shellOverPages\(\)\)\);/, "native Liquid Glass still takes over on macOS 26");
+  assert.match(shown, /<View ref=\{frame\} pointerEvents="none" style=\{glassLayer\}>\n\s+<div ref=\{host\} data-ardia-glass-layers="" style=\{\{ \.\.\.layer, \.\.\.clip \}\}>/, "the CSS fallback is what the native handoff hides");
+  assert.equal(shown.match(/\{children\}/g)?.length, 2, "hosted content renders in the scrolled and the shaped glass");
+  assert.match(desktop("./base.css"), /\[data-ardia-glass-effect\]\[data-ardia-glass="on"\] > \[data-ardia-glass-layers\] \{\n\s+visibility: hidden;/);
+});
+
+test("a faded GlassEffect fades only its measured glass layer, and the content it hosts stays opaque", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { GlassEffect, glassFrameStyles } = await import("./shims/web/chrome.tsx");
+  const { outer, glassLayer } = glassFrameStyles([{ position: "absolute", top: -1, alignItems: "center" }, { opacity: 0.25 }], 8);
+  assert.deepEqual(outer, { position: "absolute", top: -1, alignItems: "center" }, "the hosting frame keeps layout and drops the fade");
+  assert.deepEqual(glassLayer, { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, borderRadius: 8, opacity: 0.25 }, "the measured glass layer carries the fade and the radius");
+  assert.equal(glassFrameStyles(undefined, 4).glassLayer.opacity, undefined);
+  const html = renderToStaticMarkup(createElement(GlassEffect, { cornerRadius: 8, style: { opacity: 0.25 } }, createElement("span", { id: "hosted" }, "Go")));
+  const layers = html.indexOf("data-ardia-glass-layers");
+  const hosted = html.indexOf('<span id="hosted">');
+  assert.ok(html.startsWith("<div data-ardia-glass-layers") && hosted > layers, html);
+  let depth = 0;
+  let closed = -1;
+  for (const tag of html.matchAll(/<(\/?)div\b[^>]*>/g)) {
+    depth += tag[1] ? -1 : 1;
+    if (depth === 0) {
+      closed = tag.index;
+      break;
+    }
+  }
+  assert.ok(closed > 0 && closed < hosted, "the hosted content sits after the CSS fallback, outside anything the fade or the native handoff hides");
+  const source = readFileSync(new URL("./shims/web/chrome.tsx", import.meta.url), "utf8");
+  assert.match(source, /<View pointerEvents="none" \{\.\.\.props\} style=\{outer\}>\n\s+<View ref=\{frame\} pointerEvents="none" style=\{glassLayer\}>/);
+  assert.match(source, /<\/div>\n\s+<\/View>\n\s+\{children\}\n\s+<\/View>/, "children are the glass layer's sibling");
+});
+
+test("scrolled glass keeps main's frosted surface, fades only its glass layer and renders hosted content beside it", () => {
+  const source = readFileSync(new URL("./shims/web/chrome.tsx", import.meta.url), "utf8");
+  const body = source.slice(source.indexOf("export function GlassEffect("), source.indexOf("\n}\n", source.indexOf("export function GlassEffect(")));
+  const scrolled = body.slice(body.indexOf("  if (scrolled) {"), body.indexOf("\n  }\n", body.indexOf("  if (scrolled) {")));
+  assert.match(scrolled, /<View pointerEvents="none" \{\.\.\.props\} style=\{outer\}>\n\s+<View ref=\{frame\} pointerEvents="none" style=\{glassLayer\}>\n\s+<div ref=\{host\} data-ardia-glass-layers="" style=\{scrolledGlassSurface\(theme, clear, cornerRadius\)\}>/);
+  assert.match(scrolled, /<\/div>\n\s+<\/View>\n\s+\{children\}\n\s+<\/View>/, "hosted content sits beside the faded scrolled glass");
+  assert.doesNotMatch(scrolled, /boxShadow|rgba\(255/, "the scrolled branch paints nothing of its own");
+  const surface = source.slice(source.indexOf("function scrolledGlassSurface("), source.indexOf("\n}\n", source.indexOf("function scrolledGlassSurface(")));
+  assert.match(surface, /inset 0 1px 0\.5px rgba\(255,255,255,0\.2\), inset 0 0 0 0\.5px rgba\(255,255,255,0\.1\), 0 1px 3px rgba\(0,0,0,0\.26\)/, "dark scrolled glass keeps main's hairline edge");
+  assert.match(surface, /inset 0 1px 0\.5px rgba\(255,255,255,0\.82\), inset 0 0 0 0\.5px rgba\(255,255,255,0\.48\), 0 1px 3px rgba\(0,0,0,0\.07\)/, "light scrolled glass keeps main's hairline edge");
+});
