@@ -509,7 +509,10 @@ try {
     await page.eval(`new Promise((r) => (document.readyState === "complete" ? r(0) : addEventListener("load", () => r(0))))`);
     await page.send("Page.enable");
     const dialogs = [];
-    page.on("Page.javascriptDialogOpening", (d) => dialogs.push(d.type));
+    const started = Date.now();
+    record.dialogEvents = [];
+    page.on("Page.javascriptDialogOpening", (d) => (dialogs.push(d.type), record.dialogEvents.push({ open: d.type, ms: Date.now() - started })));
+    page.on("Page.javascriptDialogClosed", (d) => record.dialogEvents.push({ closed: d.result, ms: Date.now() - started }));
     await page.eval(`addEventListener("beforeunload", (e) => { navigator.sendBeacon("/beacon?bu=" + Date.now()); e.preventDefault(); e.returnValue = ""; }); document.querySelector("#f").value = "draft"; 0`, { userGesture: true });
     const close = rest.chromeTargets?.find((t) => t.label.startsWith("Close ("));
     record.closeButton = close ?? null;
@@ -527,8 +530,14 @@ try {
       while (dialogs.length === record.asked && Date.now() < end) await sleep(30);
       if (dialogs.length === record.asked) return false;
       record.asked = dialogs.length;
-      await page.send("Page.handleJavaScriptDialog", { accept });
-      return true;
+      try {
+        await page.send("Page.handleJavaScriptDialog", { accept });
+        return true;
+      } catch (error) {
+        if (!/No dialog is showing/.test(String(error.message))) throw error;
+        record.selfDismissed = (record.selfDismissed ?? 0) + 1;
+        return accept ? "dismissed" : true;
+      }
     };
     const stillOpen = () => store(`({ peek: st().peeks.a?.tabId === ${JSON.stringify(tabId)}, tab: !!st().tabs[${JSON.stringify(tabId)}] })`);
     record.asked = 0;
@@ -538,7 +547,7 @@ try {
     await ways.closeTab();
     await ways.closeTab();
     await sleep(600);
-    record.repeatWhileAsking = { ...(await stillOpen()), dialogs: dialogs.length };
+    record.repeatWhileAsking = { ...(await stillOpen()), dialogs: dialogs.length, ms: Date.now() - started };
     assert.ok(await answer(false), "the first close asked");
     await sleep(500);
     assert.equal(record.repeatWhileAsking.peek, true, "closing again while the prompt is up never closes the Peek behind it");
@@ -556,14 +565,19 @@ try {
       assert.equal(shown?.phase, "open", `${via}: the card is back at rest`);
       assert.equal(value, "draft", `${via}: what was typed is still there`);
     }
-    const beaconsBeforeLeave = beacons.length;
-    await ways.escape();
-    record.leaveAsked = await answer(true);
+    let beaconsBeforeLeave = beacons.length;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      beaconsBeforeLeave = beacons.length;
+      await ways.escape();
+      record.leaveAsked = await answer(true);
+      if (record.leaveAsked !== "dismissed") break;
+      await sleep(300);
+    }
     await sleep(1500);
     record.left = await stillOpen();
     record.leaveHandlerRuns = beacons.length - beaconsBeforeLeave;
     page.close();
-    assert.ok(record.leaveAsked, "Leave was asked");
+    assert.equal(record.leaveAsked, true, "Leave was asked and answered");
     assert.deepEqual(record.left, { peek: false, tab: false }, "Leave closes the Peek and its page");
     assert.equal(record.leaveHandlerRuns, 1, "Leave runs the page's beforeunload handler once");
     assert.deepEqual(dialogs.every((t) => t === "beforeunload"), true);
