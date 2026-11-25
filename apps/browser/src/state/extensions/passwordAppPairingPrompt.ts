@@ -6,6 +6,7 @@ import { focusedWindowOf } from "../windows/ui";
 import { notePasswordAppPairing } from "../telemetry/usage";
 import { consentToken, type ConsentToken } from "../telemetry/client";
 import { passwordAppPairing } from "./passwordAppPairing";
+import { pairingToastActions } from "./pairingToast";
 import { extensionProfile, useExtensions } from "./store";
 
 export const ONE_PASSWORD_EXTENSION_IDS: ReadonlySet<string> = new Set([
@@ -43,13 +44,12 @@ function showPairing(key: string) {
   const windowId = windowShowing(key.split("\n")[0]!, pending.windowId);
   if (!pairing || !windowId) return;
   notePasswordAppPairing("shown", pending.consent);
-  const { appPath } = pairing;
   showToast(windowId, pairing.title, pairing.steps, {
     icon: "key.fill",
     key: "passwordAppPairing",
     sticky: true,
     titleLines: 1,
-    ...(appPath ? { action: { title: "Open 1Password", run: () => openPasswordApp(appPath) } } : {}),
+    ...pairingToastActions(pairing.appPath, openPasswordApp),
   });
 }
 

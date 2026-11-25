@@ -1,8 +1,26 @@
+import { punycodeEncode } from "@ardia/core";
 import { urlParts } from "../../lib/urlParts";
 
 const MAX_SITE_LENGTH = 2048;
 const SCHEME = /^([a-z][a-z0-9+.-]*):\/\//i;
 const DOTTED = /^\d{1,3}(\.\d{1,3}){3}$/;
+
+const LABEL = /^[\p{L}\p{M}\p{N}-]{1,63}$/u;
+
+function asciiAuthority(authority: string): string | null {
+  if (/^[\x00-\x7f]*$/.test(authority) || authority.startsWith("[")) return authority;
+  const colon = authority.lastIndexOf(":");
+  const host = (colon < 0 ? authority : authority.slice(0, colon)).normalize("NFC").toLowerCase().replace(/[\u3002\uff0e\uff61]/g, ".");
+  if (/[\u200c\u200d]/.test(host) || host.normalize("NFKC") !== host) return null;
+  const labels = host.split(".").map((label) => {
+    if (/^[\x00-\x7f]*$/.test(label)) return label;
+    if (!LABEL.test(label) || label.startsWith("-") || label.endsWith("-")) return null;
+    const encoded = `xn--${punycodeEncode(label)}`;
+    return encoded.length <= 63 ? encoded : null;
+  });
+  if (labels.some((label) => label === null)) return null;
+  return `${labels.join(".")}${colon < 0 ? "" : authority.slice(colon)}`;
+}
 
 function portOf(authority: string): string | null {
   const after = authority.startsWith("[") ? authority.slice(authority.indexOf("]") + 1) : authority;
@@ -19,7 +37,8 @@ export function extensionSitePattern(typed: string): string | null {
   let rest = given ? trimmed.slice(given[0].length) : trimmed;
   const wildcard = rest.startsWith("*.");
   if (wildcard) rest = rest.slice(2);
-  const authority = rest.split(/[/?#]/)[0] ?? "";
+  const authority = asciiAuthority(rest.split(/[/?#]/)[0] ?? "");
+  if (authority === null) return null;
   const port = portOf(authority);
   if (port !== null && (scheme === "*" || !/^[1-9]\d{0,4}$/.test(port) || Number(port) > 65535)) return null;
   const parts = urlParts(`${scheme === "*" ? "https" : scheme}://${authority}/`);
