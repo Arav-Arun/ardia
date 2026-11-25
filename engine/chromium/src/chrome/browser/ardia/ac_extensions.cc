@@ -134,8 +134,8 @@ std::optional<URLPattern> RuntimeSitePattern(const std::string& site) {
 }
 
 extensions::PermissionSet HostPermissions(const URLPattern& pattern) {
-  URLPatternSet hosts({pattern});
-  URLPatternSet scriptable = hosts.Clone();
+  extensions::URLPatternSet hosts({pattern});
+  extensions::URLPatternSet scriptable = hosts.Clone();
   return extensions::PermissionSet(extensions::APIPermissionSet(),
                                    extensions::ManifestPermissionSet(),
                                    std::move(hosts), std::move(scriptable));
@@ -603,7 +603,8 @@ AC_PROFILE_CALL(ac_extensions_configure) {
   if (!extension || !manager->CanAffectExtension(*extension)) {
     return call.TakeReply().Error("Can't change this extension's site access");
   }
-  std::optional<URLPattern> pattern = RuntimeSitePattern(grant ? *grant : *revoke);
+  std::optional<URLPattern> pattern =
+      ardia::RuntimeSitePattern(grant ? *grant : *revoke);
   if (!pattern) {
     return call.TakeReply().Error("That isn't a site an extension can be given");
   }
@@ -611,14 +612,14 @@ AC_PROFILE_CALL(ac_extensions_configure) {
                                 call.TakeReply());
   if (grant) {
     extensions::PermissionsUpdater(profile).GrantRuntimePermissions(
-        *extension, HostPermissions(*pattern), std::move(replied));
+        *extension, ardia::HostPermissions(*pattern), std::move(replied));
     return;
   }
   std::unique_ptr<const extensions::PermissionSet> granted =
       extensions::PermissionSet::CreateIntersection(
-          HostPermissions(*pattern),
+          ardia::HostPermissions(*pattern),
           *manager->GetRevokablePermissions(*extension),
-          URLPatternSet::IntersectionBehavior::kDetailed);
+          extensions::URLPatternSet::IntersectionBehavior::kDetailed);
   if (granted->IsEmpty()) {
     return std::move(replied).Run();
   }
