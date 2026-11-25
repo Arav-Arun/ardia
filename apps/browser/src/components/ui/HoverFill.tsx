@@ -1,11 +1,19 @@
 import { memo, useMemo } from "react";
-import { Animated, StyleSheet } from "react-native";
+import { Animated, StyleSheet, View } from "react-native";
 import { useHoverFill } from "./motion";
+import { ink } from "./tokens";
 
 export const HoverFill = memo(function HoverFill({ shown, color, radius, topLeftRadius, instant = false }: { shown: boolean; color: string; radius: number; topLeftRadius?: number; instant?: boolean }) {
   const opacity = useHoverFill(shown, instant);
   if (!opacity) return null;
-  return <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { borderRadius: radius, ...(topLeftRadius === undefined ? {} : { borderTopLeftRadius: topLeftRadius }), backgroundColor: color, opacity }]} />;
+  if (topLeftRadius !== undefined && topLeftRadius !== radius) {
+    return (
+      <View pointerEvents="none" style={[StyleSheet.absoluteFill, { overflow: "hidden", borderColor: ink.clear, borderTopLeftRadius: topLeftRadius, borderTopRightRadius: radius, borderBottomLeftRadius: radius, borderBottomRightRadius: radius }]}>
+        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: color, opacity }]} />
+      </View>
+    );
+  }
+  return <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { borderRadius: radius, backgroundColor: color, opacity }]} />;
 });
 
 export function HoverSwap({ shown, rest, color, radius, instant = false, underBorder = 0 }: { shown: boolean; rest: string | undefined; color: string; radius: number; instant?: boolean; underBorder?: number }) {
