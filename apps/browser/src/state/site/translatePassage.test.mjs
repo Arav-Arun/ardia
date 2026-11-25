@@ -86,3 +86,30 @@ test("a model call that rejects counts the passages on their last try as failed,
   await assert.rejects(translatePack(model, "en", "fr", [[1, [[10, "a"]]], [2, [[20, "b"]], 2]], "tok", counts, () => true), /went away/);
   assert.equal(counts.failed, 1);
 });
+
+test("a piece-by-piece follow-up that rejects keeps the passages the pack already translated", async () => {
+  let calls = 0;
+  const model = {
+    translateBlocks: async (_s, _t, blocks) => {
+      if (calls++) throw new Error("the model went away");
+      return blocks.map((pieces) => (pieces.length === 1 ? [pieces[0].toUpperCase()] : null));
+    },
+  };
+  const out = await translatePack(model, "en", "fr", [[1, [[10, "Home"]]], [2, [[20, "Read the "], [21, "notes"]]]], "tok", progress(), () => true);
+  assert.deepEqual(out, [
+    [10, "HOME"],
+    [20, null],
+    [21, null],
+  ]);
+});
+
+test("a piece-by-piece follow-up that rejects with nothing else translated fails the pack", async () => {
+  let calls = 0;
+  const model = {
+    translateBlocks: async (_s, _t, blocks) => {
+      if (calls++) throw new Error("the model went away");
+      return blocks.map(() => null);
+    },
+  };
+  await assert.rejects(translatePack(model, "en", "fr", [[2, [[20, "Read the "], [21, "notes"]]]], "tok", progress(), () => true), /went away/);
+});

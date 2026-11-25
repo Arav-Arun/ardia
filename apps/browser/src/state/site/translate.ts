@@ -143,7 +143,10 @@ export async function translatePack(model: BlockTranslator, source: string, targ
   if (unlinked.length) {
     progress.unlinked += unlinked.length;
     const pieces = unlinked.flatMap(([, p]) => p);
-    const single = await model.translateBlocks(source, target, pieces.map(([, text]) => [text]), token);
+    const single = await model.translateBlocks(source, target, pieces.map(([, text]) => [text]), token).catch((error: unknown) => {
+      if (!out.some(([, text]) => text !== null)) throw error;
+      return pieces.map(() => null);
+    });
     out.push(...pieces.map(([id], i): Translated => {
       const text = Array.isArray(single[i]) ? single[i]![0] : null;
       return [id, typeof text === "string" ? text : null];
@@ -192,6 +195,7 @@ async function drain(tabId: string, token: string, onProgress?: (done: number, t
       },
       apply: (results) => page().evaluate(translatorCall("apply", token, results)),
       onStage: (stage) => atStage(tabId, stage),
+      onAbandoned: (passages) => void (progress.failed += passages),
       onApplied: (passages, total) => {
         progress.firstAppliedAt ??= Date.now();
         progress.applied += passages;

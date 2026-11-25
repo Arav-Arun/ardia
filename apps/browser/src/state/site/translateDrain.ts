@@ -8,6 +8,7 @@ export const PACK_PASSAGES = 24;
 export const FAILED_PACKS_IN_A_ROW = 3;
 export const LONG_PASSAGE = 200;
 export const PASSAGE_RETRIES = 2;
+export const PACK_SEPARATOR = " · ";
 
 type DrainPort = {
   inFlight: number;
@@ -19,6 +20,7 @@ type DrainPort = {
   onStage?(stage: "collect" | "model" | "apply"): void;
   onApplied?(passages: number, total: number): void;
   onFailed?(passages: number): void;
+  onAbandoned?(passages: number): void;
 };
 
 const MAX_PIECES = 40;
@@ -38,13 +40,15 @@ export function packsOf(passages: Passage[]): Passage[][] {
   for (const passage of passages) {
     const size = sizeOf(passage);
     if (size < LONG_PASSAGE) {
-      if (short.length && shortChars + size > PACK_CHARS) {
+      const added = short.length ? size + PACK_SEPARATOR.length : size;
+      if (short.length && shortChars + added > PACK_CHARS) {
         packs.push(short);
-        short = [];
-        shortChars = 0;
+        short = [passage];
+        shortChars = size;
+        continue;
       }
       short.push(passage);
-      shortChars += size;
+      shortChars += added;
       continue;
     }
     if (short.length) packs.push(short);
@@ -69,6 +73,7 @@ export async function drainPassages(port: DrainPort): Promise<boolean> {
   let failure: { error: unknown } | null = null;
   let lastError: { error: unknown } | null = null;
   let failedInARow = 0;
+  let failedInARowPassages = 0;
   let succeeded = 0;
   let total = 0;
   let exhausted = false;
@@ -92,6 +97,7 @@ export async function drainPassages(port: DrainPort): Promise<boolean> {
           const translated = translatedIn(pack, results);
           if (translated) {
             failedInARow = 0;
+            failedInARowPassages = 0;
             succeeded++;
           }
           port.onStage?.("apply");
@@ -102,8 +108,12 @@ export async function drainPassages(port: DrainPort): Promise<boolean> {
           if (!live()) return;
           lastError = { error };
           port.onFailed?.(pack.length);
-          const fresh = pack.some(([, , attempt]) => !attempt);
-          if (fresh && ++failedInARow >= FAILED_PACKS_IN_A_ROW) failure ??= { error };
+          const fresh = pack.filter(([, , attempt]) => !attempt).length;
+          failedInARowPassages += fresh;
+          if (fresh && ++failedInARow >= FAILED_PACKS_IN_A_ROW && !failure) {
+            failure = { error };
+            port.onAbandoned?.(failedInARowPassages);
+          }
           await port.apply(pack.flatMap(untranslated)).catch(() => {});
         },
       )

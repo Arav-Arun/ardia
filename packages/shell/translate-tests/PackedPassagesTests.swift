@@ -107,9 +107,35 @@ final class PackedPassagesTests: XCTestCase {
     XCTAssertEqual(parts[1], ["« Help"])
   }
 
+  func testAGapThatBelongsToASkippedPassageDoesNotHandItsTextToTheNextOne() {
+    let parts = PackedPassages.parts(
+      of: answer([.piece("Settings", 0, 0), .gap(" · ", 1), .plain("Links "), .piece("Help", 2, 0)]),
+      over: [["Einstellungen"], ["Links"], ["Hilfe"]])
+    XCTAssertEqual(parts[0], ["Settings"])
+    XCTAssertNil(parts[1])
+    XCTAssertNil(parts[2])
+  }
+
+  func testAGapInsideOnePassageFailsIt() {
+    let parts = PackedPassages.parts(
+      of: answer([.piece("Read the ", 0, 0), .gap(" · ", 1), .piece("notes", 0, 1), .gap(" · ", 1), .piece("Help", 1, 0)]),
+      over: [["Lies die ", "Hinweise"], ["Hilfe"]])
+    XCTAssertNil(parts[0])
+    XCTAssertEqual(parts[1], ["Help"])
+  }
+
+  func testPacksCountTheSeparatorsBetweenPassages() {
+    let passages = (0..<4).map { _ in [String(repeating: "x", count: 150)] }
+    let packs = PackedPassages.packs(passages, limit: 600, count: 24)
+    XCTAssertEqual(packs, [0..<3, 3..<4])
+    for pack in packs {
+      XCTAssertLessThanOrEqual(PackedPassages.text(Array(passages[pack])).characters.count, 600)
+    }
+  }
+
   func testPacksStopAtTheCharacterLimitAndTheCount() {
     let passages = [["aaaa"], ["bb"], ["cccccc"], ["d"], ["e"], ["f"]]
-    XCTAssertEqual(PackedPassages.packs(passages, limit: 6, count: 10), [0..<2, 2..<3, 3..<6])
+    XCTAssertEqual(PackedPassages.packs(passages, limit: 12, count: 10), [0..<2, 2..<4, 4..<6])
     XCTAssertEqual(PackedPassages.packs(passages, limit: 100, count: 4), [0..<4, 4..<6])
     XCTAssertEqual(PackedPassages.packs([["long passage over the limit"]], limit: 4, count: 4), [0..<1])
     XCTAssertEqual(PackedPassages.packs([], limit: 4, count: 4), [])

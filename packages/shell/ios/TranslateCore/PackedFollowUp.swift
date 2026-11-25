@@ -7,6 +7,7 @@ enum PackedFollowUp {
     packed: [[String]?],
     owner: String,
     work: SharedWork<Key, [String]>,
+    retries: SharedWork<Key, [String]>,
     unchanged: (Key, [String]) -> Bool,
     alone: @escaping @MainActor (Key) async -> [String]?,
     again: @escaping @MainActor (Key, [String]) async -> [String]?
@@ -18,11 +19,11 @@ enum PackedFollowUp {
         out.append(parts)
         continue
       }
-      let asked = await work.value(for: key, owner: owner) {
-        if let parts { return await again(key, parts) }
-        return await alone(key)
+      if let parts {
+        out.append(await retries.value(for: key, owner: owner) { await again(key, parts) } ?? parts)
+      } else {
+        out.append(await work.value(for: key, owner: owner) { await alone(key) })
       }
-      out.append(asked ?? parts)
     }
     return out
   }

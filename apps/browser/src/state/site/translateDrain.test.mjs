@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-const { drainPassages, packsOf, FIRST_PACK_CHARS, PACK_CHARS, FAILED_PACKS_IN_A_ROW, LONG_PASSAGE } = await import("./translateDrain.ts");
+const { drainPassages, packsOf, FIRST_PACK_CHARS, PACK_CHARS, PACK_SEPARATOR, FAILED_PACKS_IN_A_ROW, LONG_PASSAGE } = await import("./translateDrain.ts");
 
 const deferred = () => {
   let resolve, reject;
@@ -218,6 +218,25 @@ test("only passages that got an answer count as applied", async () => {
 test("short passages are packed only up to the pack's characters, whatever one block hands over", () => {
   const short = (id) => [id, [[id * 1000, "x".repeat(LONG_PASSAGE - 1)]]];
   const packs = packsOf([1, 2, 3, 4, 5, 6].map(short));
-  assert.ok(packs.every((pack) => pack.reduce((n, [, pieces]) => n + pieces[0][1].length, 0) <= PACK_CHARS));
-  assert.deepEqual(packs.map((pack) => pack.map(([id]) => id)), [[1, 2, 3], [4, 5, 6]]);
+  assert.ok(packs.every((pack) => pack.map(([, pieces]) => pieces[0][1]).join(PACK_SEPARATOR).length <= PACK_CHARS));
+  assert.deepEqual(packs.map((pack) => pack.map(([id]) => id)), [[1, 2], [3, 4], [5, 6]]);
+});
+
+test("a pack's characters count the separators between its passages", () => {
+  const packs = packsOf([1, 2, 3, 4].map((id) => [id, [[id * 1000, "x".repeat(150)]]]));
+  assert.deepEqual(packs.map((pack) => pack.map(([id]) => id)), [[1, 2, 3], [4]]);
+  for (const pack of packs) assert.ok(pack.map(([, pieces]) => pieces[0][1]).join(PACK_SEPARATOR).length <= PACK_CHARS);
+});
+
+test("a model outage that ends the drain reports every fresh passage it left untranslated", async () => {
+  const batches = [1, 2, 3, 4].map((id) => ({ passages: [passage(id)], more: true, gone: false, done: id, total: 4 }));
+  const page = fakePage(batches);
+  page.port.inFlight = 1;
+  page.port.translate = async () => {
+    throw new Error("the model went away");
+  };
+  const abandoned = [];
+  page.port.onAbandoned = (n) => abandoned.push(n);
+  await assert.rejects(drainPassages(page.port), /went away/);
+  assert.deepEqual(abandoned, [3]);
 });

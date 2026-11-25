@@ -12,11 +12,12 @@ enum PackedPassages {
     var start = 0
     var used = 0
     for (i, passage) in passages.enumerated() {
-      let length = size(passage)
+      let length = size(passage) + (i > start ? separator.count : 0)
       if i > start, used + length > limit || i - start >= count {
         out.append(start..<i)
         start = i
-        used = 0
+        used = size(passage)
+        continue
       }
       used += length
     }
@@ -47,7 +48,7 @@ enum PackedPassages {
     var broken = Array(repeating: false, count: passages.count)
     var left: Set<Int> = []
     var current: Int?
-    var gapSince = false
+    var gapBefore: Int?
     var last: (passage: Int, piece: Int)?
     var lead = ""
     for run in translated.runs {
@@ -59,22 +60,24 @@ enum PackedPassages {
       if link.scheme == "ac-gap" {
         last = nil
         lead = ""
-        gapSince = true
+        gapBefore = Int(link.absoluteString.dropFirst("ac-gap:".count)) ?? -1
         continue
       }
       guard link.scheme == "ac-piece", let (p, i) = index(link), passages.indices.contains(p), passages[p].indices.contains(i) else {
         return passages.map { _ in nil }
       }
       if let current, current != p {
-        if !gapSince {
-          broken[current] = true
+        if gapBefore != p {
           broken[p] = true
+          if gapBefore == nil { broken[current] = true }
         }
         left.insert(current)
         if left.contains(p) { broken[p] = true }
+      } else if let current, gapBefore != nil {
+        broken[current] = true
       }
       current = p
-      gapSince = false
+      gapBefore = nil
       if last == nil {
         parts[p][i] += lead
         lead = ""

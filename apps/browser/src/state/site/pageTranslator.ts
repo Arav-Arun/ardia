@@ -23,7 +23,7 @@ if (!window[KEY]) {
     if (v === undefined) skipCache.set(el, (v = !!el.closest(SKIP)));
     return v;
   };
-  const spaceCache = new WeakMap();
+  let spaceCache = new WeakMap();
   const preservesSpace = (el) => {
     if (!el) return false;
     let v = spaceCache.get(el);
@@ -126,6 +126,7 @@ if (!window[KEY]) {
     },
     start(token) {
       if (this.active) return this.token === token;
+      spaceCache = new WeakMap();
       this.active = true;
       this.token = token;
       this.visibility = new IntersectionObserver((entries) => {

@@ -23,6 +23,7 @@ enum TranslationSessions {
   private static var memo: [PassageKey: [String]] = [:]
   private static let work = SharedWork<PassageKey, [String]>()
   private static let packWork = SharedWork<[PassageKey], [[String]?]>()
+  private static let retryWork = SharedWork<PassageKey, [String]>()
   private static let memoLimit = 5000
 
   static func translations(source: String, target: String, standard: Bool = false, _ requests: [TranslationSession.Request]) async throws -> [TranslationSession.Response] {
@@ -60,7 +61,7 @@ enum TranslationSessions {
     guard keys.count > 1 else { return [(keys[0], await passage(keys[0], owner: owner))] }
     let packed = await packWork.value(for: keys, owner: owner) { await translatePack(keys) } ?? keys.map { _ in nil }
     let answers = await PackedFollowUp.settle(
-      keys, packed: packed, owner: owner, work: work,
+      keys, packed: packed, owner: owner, work: work, retries: retryWork,
       unchanged: { key, parts in TranslateModule.isUnchanged(parts, from: key.pieces) },
       alone: { key in await translateFresh(key) },
       again: { key, parts in await askAgain(key, parts) })
@@ -87,11 +88,13 @@ enum TranslationSessions {
   static func open(owner: String) {
     work.open(owner: owner)
     packWork.open(owner: owner)
+    retryWork.open(owner: owner)
   }
 
   static func cancel(owner: String) {
     work.cancel(owner: owner)
     packWork.cancel(owner: owner)
+    retryWork.cancel(owner: owner)
   }
 
   private static func passage(_ key: PassageKey, owner: String) async -> [String]? {
