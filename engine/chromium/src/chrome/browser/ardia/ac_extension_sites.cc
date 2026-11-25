@@ -2,13 +2,18 @@
 
 #include "chrome/browser/ardia/ac_extension_sites_internal.h"
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 
+#include "base/containers/circular_deque.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
+#include "base/no_destructor.h"
+#include "base/task/sequenced_task_runner.h"
 #include "chrome/browser/profiles/profile.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/permissions/permissions_updater.h"
@@ -45,6 +50,7 @@ extensions::PermissionSet HostPermissions(const URLPattern& pattern) {
 void RestoreKeptGrants(base::WeakPtr<Profile> profile,
                        const std::string& id,
                        std::unique_ptr<extensions::PermissionSet> kept,
+                       base::OnceCallback<void(Reply)> finish,
                        Reply reply) {
   const extensions::Extension* extension =
       profile ? extensions::ExtensionRegistry::Get(profile.get())
@@ -52,12 +58,11 @@ void RestoreKeptGrants(base::WeakPtr<Profile> profile,
                                        extensions::ExtensionRegistry::EVERYTHING)
               : nullptr;
   if (!extension || kept->effective_hosts().is_empty()) {
-    return reply.Ok();
+    return std::move(finish).Run(std::move(reply));
   }
   extensions::PermissionsUpdater(profile.get())
       .GrantRuntimePermissions(
-          *extension, *kept,
-          base::BindOnce([](Reply done) { done.Ok(); }, std::move(reply)));
+          *extension, *kept, base::BindOnce(std::move(finish), std::move(reply)));
 }
 
 std::unique_ptr<extensions::PermissionSet> GrantsKeptAfterRemoving(
@@ -118,37 +123,107 @@ std::string SiteProblem(Profile* profile,
   return "";
 }
 
-void ChangeSite(Profile* profile,
-                const extensions::Extension& extension,
-                const std::string& site,
-                bool grant,
-                Reply reply) {
-  extensions::PermissionsManager* manager =
-      extensions::PermissionsManager::Get(profile);
+namespace {
+
+using Queued = std::map<std::string, base::circular_deque<base::OnceClosure>>;
+
+Queued& Changing() {
+  static base::NoDestructor<Queued> changing;
+  return *changing;
+}
+
+void RunNext(const std::string& key) {
+  auto it = Changing().find(key);
+  if (it == Changing().end()) {
+    return;
+  }
+  if (it->second.empty()) {
+    Changing().erase(it);
+    return;
+  }
+  base::OnceClosure next = std::move(it->second.front());
+  it->second.pop_front();
+  std::move(next).Run();
+}
+
+base::ScopedClosureRunner TurnFor(const std::string& key) {
+  return base::ScopedClosureRunner(base::BindOnce(
+      [](std::string key) {
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, base::BindOnce(&RunNext, std::move(key)));
+      },
+      key));
+}
+
+void Finish(base::ScopedClosureRunner, Reply reply) {
+  reply.Ok();
+}
+
+void StartChange(base::WeakPtr<Profile> profile,
+                 const std::string& id,
+                 const std::string& site,
+                 bool grant,
+                 Reply reply,
+                 base::ScopedClosureRunner turn) {
+  const extensions::Extension* extension =
+      profile ? extensions::ExtensionRegistry::Get(profile.get())
+                    ->GetExtensionById(id,
+                                       extensions::ExtensionRegistry::EVERYTHING)
+              : nullptr;
   std::optional<URLPattern> pattern = RuntimeSitePattern(site);
+  if (!extension) {
+    return reply.Error("No such extension");
+  }
   if (!pattern) {
     return reply.Error("That isn't a site an extension can be given");
   }
+  extensions::PermissionsManager* manager =
+      extensions::PermissionsManager::Get(profile.get());
   if (grant) {
-    extensions::PermissionsUpdater(profile).GrantRuntimePermissions(
-        extension, HostPermissions(*pattern),
-        base::BindOnce([](Reply done) { done.Ok(); }, std::move(reply)));
+    extensions::PermissionsUpdater(profile.get())
+        .GrantRuntimePermissions(
+            *extension, HostPermissions(*pattern),
+            base::BindOnce(&Finish, std::move(turn), std::move(reply)));
     return;
   }
   std::unique_ptr<const extensions::PermissionSet> granted =
       extensions::PermissionSet::CreateIntersection(
-          HostPermissions(*pattern), *manager->GetRevokablePermissions(extension),
+          HostPermissions(*pattern),
+          *manager->GetRevokablePermissions(*extension),
           extensions::URLPatternSet::IntersectionBehavior::kDetailed);
   if (granted->IsEmpty()) {
     return reply.Ok();
   }
   std::unique_ptr<const extensions::PermissionSet> stored =
-      manager->GetRuntimePermissionsFromPrefs(extension);
-  extensions::PermissionsUpdater(profile).RevokeRuntimePermissions(
-      extension, *granted,
-      base::BindOnce(&RestoreKeptGrants, profile->GetWeakPtr(), extension.id(),
-                     GrantsKeptAfterRemoving(stored.get(), *pattern),
-                     std::move(reply)));
+      manager->GetRuntimePermissionsFromPrefs(*extension);
+  extensions::PermissionsUpdater(profile.get())
+      .RevokeRuntimePermissions(
+          *extension, *granted,
+          base::BindOnce(&RestoreKeptGrants, profile, id,
+                         GrantsKeptAfterRemoving(stored.get(), *pattern),
+                         base::BindOnce(&Finish, std::move(turn)),
+                         std::move(reply)));
+}
+
+}
+
+void ChangeSite(Profile* profile,
+                const extensions::Extension& extension,
+                const std::string& site,
+                bool grant,
+                Reply reply) {
+  const std::string key = profile->GetPath().AsUTF8Unsafe() + "\n" +
+                          (profile->IsOffTheRecord() ? "otr\n" : "") +
+                          extension.id();
+  auto change = base::BindOnce(&StartChange, profile->GetWeakPtr(),
+                               extension.id(), site, grant, std::move(reply),
+                               TurnFor(key));
+  auto [it, idle] = Changing().try_emplace(key);
+  if (!idle) {
+    it->second.push_back(std::move(change));
+    return;
+  }
+  std::move(change).Run();
 }
 
 }
