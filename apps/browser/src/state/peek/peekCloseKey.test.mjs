@@ -203,3 +203,50 @@ test("a close that never completes leaves nothing behind once its Peek is replac
   assert.equal(trackedPeekCloses(), 0, "closing the window forgets it too");
   assert.equal(takePeekMotionCounts().peek_close_key_closes_with_find, 0);
 });
+
+const replyLater = (w, peek) => {
+  const replies = [];
+  registerPeekMotion(w, { tabId: peek, close: () => new Promise((resolve) => replies.push(resolve)), promote: async () => true });
+  return (accepted) => replies.shift()(accepted);
+};
+
+test("a ⌘W the motion refuses takes no credit even when a pinch close finishes before the refusal arrives", async () => {
+  sharingOn();
+  const { w, peek } = windowWithPeek();
+  webviews.set(peek, { focus: async () => {}, stopFinding: async () => {} });
+  const reply = replyLater(w, peek);
+  openFind(peek);
+  closeKey(w);
+  finishPeek(peek);
+  reply(false);
+  await settle();
+  assert.equal(shownPeek(S(), w), undefined, "the pinch closed it");
+  assert.equal(takePeekMotionCounts().peek_close_key_closes_with_find, 0);
+  const { trackedPeekCloses } = await import("./actions.ts");
+  assert.equal(trackedPeekCloses(), 0, "nothing is kept once the refusal arrives");
+});
+
+test("a ⌘W close counts once it is both accepted and finished, in either order", async () => {
+  for (const order of ["finished first", "accepted first"]) {
+    sharingOn();
+    const { w, peek } = windowWithPeek();
+    webviews.set(peek, { focus: async () => {}, stopFinding: async () => {} });
+    const reply = replyLater(w, peek);
+    openFind(peek);
+    closeKey(w);
+    if (order === "finished first") {
+      finishPeek(peek);
+      await settle();
+      assert.equal(takePeekMotionCounts().peek_close_key_closes_with_find, 0, `${order}: not before the motion accepts it`);
+      reply(true);
+    } else {
+      reply(true);
+      await settle();
+      assert.equal(takePeekMotionCounts().peek_close_key_closes_with_find, 0, `${order}: not before it finishes`);
+      finishPeek(peek);
+    }
+    await settle();
+    assert.equal(shownPeek(S(), w), undefined);
+    assert.equal(takePeekMotionCounts().peek_close_key_closes_with_find, 1, order);
+  }
+});

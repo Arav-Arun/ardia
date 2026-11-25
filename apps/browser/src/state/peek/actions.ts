@@ -37,45 +37,62 @@ const motionOf = (windowId: string) => {
   return motion && motion.tabId === shownPeek(store(), windowId)?.tabId ? motion : undefined;
 };
 
-const closesStarted = new Set<string>();
-const closingByKeyWithFind = new Map<string, ConsentToken | null>();
+type KeyClose = { consent: ConsentToken | null; accepted: boolean; finished: boolean };
 
-export const trackedPeekCloses = () => closesStarted.size + closingByKeyWithFind.size;
+const closesStarted = new Set<string>();
+const keyClosesWithFind = new Map<string, KeyClose>();
+
+export const trackedPeekCloses = () => closesStarted.size + keyClosesWithFind.size;
 
 function forgetClose(tabId: string) {
   closesStarted.delete(tabId);
-  closingByKeyWithFind.delete(tabId);
+  keyClosesWithFind.delete(tabId);
 }
 
 function forgetGoneCloses(s: BrowserState) {
   const live = peekTabIds(s.peeks);
-  for (const id of [...closesStarted, ...closingByKeyWithFind.keys()]) if (!live.has(id)) forgetClose(id);
+  for (const id of closesStarted) if (!live.has(id)) closesStarted.delete(id);
+  for (const [id, close] of keyClosesWithFind) if (!live.has(id) && !close.finished) keyClosesWithFind.delete(id);
+}
+
+function settleKeyClose(tabId: string, step: "accepted" | "finished") {
+  const close = keyClosesWithFind.get(tabId);
+  if (!close) return;
+  close[step] = true;
+  if (!close.accepted || !close.finished) return;
+  keyClosesWithFind.delete(tabId);
+  notePeekClosedByCloseKeyWithFind(close.consent);
 }
 
 function dismissShownPeek(windowId: string, keyWithFind?: { consent: ConsentToken | null }) {
   forgetGoneCloses(store());
   const peek = shownPeek(store(), windowId);
   if (!peek) return;
-  const first = !closesStarted.has(peek.tabId);
-  closesStarted.add(peek.tabId);
-  if (first && keyWithFind) closingByKeyWithFind.set(peek.tabId, keyWithFind.consent);
+  const tabId = peek.tabId;
+  const first = !closesStarted.has(tabId);
+  closesStarted.add(tabId);
+  if (first && keyWithFind) keyClosesWithFind.set(tabId, { consent: keyWithFind.consent, accepted: false, finished: false });
   const motion = motionOf(windowId);
-  if (!motion) return finishPeek(peek.tabId);
-  void motion.close().then((accepted) => {
-    if (!accepted && first) forgetClose(peek.tabId);
-  });
+  if (!motion) {
+    if (first) settleKeyClose(tabId, "accepted");
+    return finishPeek(tabId);
+  }
+  const refused = () => void (first && forgetClose(tabId));
+  void motion.close().then((accepted) => (accepted && first ? settleKeyClose(tabId, "accepted") : refused()), refused);
 }
 
 export const dismissPeek = (windowId: string) => dismissShownPeek(windowId);
 
 export function finishPeek(tabId: string) {
-  const withFind = closingByKeyWithFind.has(tabId);
-  const consent = closingByKeyWithFind.get(tabId) ?? null;
-  forgetClose(tabId);
+  closesStarted.delete(tabId);
   const source = peekSourceOf(store(), tabId);
-  if (!source) return;
+  const keyClose = keyClosesWithFind.get(tabId);
+  if (!source) return void keyClosesWithFind.delete(tabId);
+  if (keyClose) keyClose.finished = true;
   store().closePeek(source);
-  if (withFind && !peekSourceOf(store(), tabId)) notePeekClosedByCloseKeyWithFind(consent);
+  if (!keyClose) return;
+  if (peekSourceOf(store(), tabId)) keyClosesWithFind.delete(tabId);
+  else settleKeyClose(tabId, "finished");
 }
 
 const focusSoon = (windowId: string, tabId: string) =>
