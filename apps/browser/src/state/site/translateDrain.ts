@@ -73,7 +73,7 @@ export async function drainPassages(port: DrainPort): Promise<boolean> {
   let failure: { error: unknown } | null = null;
   let lastError: { error: unknown } | null = null;
   let failedInARow = 0;
-  let failedInARowPassages = 0;
+  let pendingRetries = 0;
   let succeeded = 0;
   let total = 0;
   let exhausted = false;
@@ -81,11 +81,21 @@ export async function drainPassages(port: DrainPort): Promise<boolean> {
   let released = false;
   void port.released.then(() => (released = true));
   const live = () => !released && port.holds();
+  const stage = (name: "collect" | "model" | "apply") => {
+    if (!failure) port.onStage?.(name);
+  };
+  const settleRetries = (pack: Passage[], answered: (passage: Passage) => boolean) => {
+    for (const passage of pack) {
+      const attempt = passage[2] ?? 0;
+      if (attempt > 0) pendingRetries = Math.max(0, pendingRetries - 1);
+      if (!answered(passage) && attempt < PASSAGE_RETRIES) pendingRetries++;
+    }
+  };
   const settle = async () => {
     await Promise.race([Promise.allSettled(running), port.released]);
     if (!live()) return false;
     if (failure) {
-      port.onAbandoned?.(failedInARowPassages);
+      port.onAbandoned?.(pendingRetries);
       throw failure.error;
     }
     if (!succeeded && lastError) throw lastError.error;
@@ -98,12 +108,11 @@ export async function drainPassages(port: DrainPort): Promise<boolean> {
         async (results) => {
           if (!live()) return;
           const translated = translatedIn(pack, results);
-          if (translated && !failure) {
-            failedInARow = 0;
-            failedInARowPassages = 0;
-          }
+          const answered = new Set(results.filter(([, text]) => text !== null).map(([id]) => id));
+          settleRetries(pack, ([, pieces]) => pieces.some(([id]) => answered.has(id)));
+          if (translated && !failure) failedInARow = 0;
           if (translated) succeeded++;
-          port.onStage?.("apply");
+          stage("apply");
           await port.apply(results);
           if (live()) port.onApplied?.(translated, total);
         },
@@ -111,9 +120,12 @@ export async function drainPassages(port: DrainPort): Promise<boolean> {
           if (!live()) return;
           lastError = { error };
           port.onFailed?.(pack.length);
-          const fresh = pack.filter(([, , attempt]) => !attempt).length;
-          failedInARowPassages += fresh;
-          if (fresh && ++failedInARow >= FAILED_PACKS_IN_A_ROW) failure ??= { error };
+          settleRetries(pack, () => false);
+          const fresh = pack.some(([, , attempt]) => !attempt);
+          if (fresh && ++failedInARow >= FAILED_PACKS_IN_A_ROW && !failure) {
+            port.onStage?.("model");
+            failure = { error };
+          }
           await port.apply(pack.flatMap(untranslated)).catch(() => {});
         },
       )
@@ -128,7 +140,7 @@ export async function drainPassages(port: DrainPort): Promise<boolean> {
     if (failure) return settle();
     while (running.size < port.inFlight && backlog.length) start(backlog.shift()!);
     if (running.size < port.inFlight && !exhausted) {
-      port.onStage?.("collect");
+      stage("collect");
       const batch = await port.next(asked ? PACK_CHARS : FIRST_PACK_CHARS);
       asked = true;
       if (!live()) return false;
@@ -137,7 +149,7 @@ export async function drainPassages(port: DrainPort): Promise<boolean> {
       exhausted = !batch.more;
       backlog.push(...packsOf(cleanPassages(batch.passages)));
       if (backlog.length) {
-        port.onStage?.("model");
+        stage("model");
         continue;
       }
     }

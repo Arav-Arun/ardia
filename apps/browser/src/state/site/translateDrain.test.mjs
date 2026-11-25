@@ -265,3 +265,51 @@ test("an outage counts the packs still in flight when it ends the drain", async 
   assert.equal(await drained, "the model went away");
   assert.deepEqual(abandoned, [4]);
 });
+
+function scriptedPage(batches) {
+  const page = fakePage(batches);
+  page.answers = new Map();
+  page.port.translate = (pack) => {
+    const answer = deferred();
+    page.answers.set(pack[0][0], { answer, pack });
+    return answer.promise;
+  };
+  page.settle = async (id, ok) => {
+    for (let i = 0; i < 50 && !page.answers.has(id); i++) await tick();
+    const { answer, pack } = page.answers.get(id);
+    if (ok) answer.resolve(pack.flatMap(([, pieces]) => pieces.map(([pid, text]) => [pid, text.toUpperCase()])));
+    else answer.reject(new Error("the model went away"));
+    for (let i = 0; i < 5; i++) await tick();
+  };
+  return page;
+}
+
+test("an outage counts a passage whose retry it cut short, once", async () => {
+  const fresh = (id) => ({ passages: [passage(id)], more: true, gone: false, done: id, total: 6 });
+  const page = scriptedPage([fresh(1), fresh(2), { passages: [[11, [[11000, "text 1 again"]], 1]], more: true, gone: false, done: 3, total: 6 }, fresh(3), fresh(4), { ...fresh(5), more: false }]);
+  const abandoned = [];
+  page.port.onAbandoned = (n) => abandoned.push(n);
+  const drained = drainPassages(page.port).then(() => "done", (e) => e.message);
+  await page.settle(1, false);
+  await page.settle(2, true);
+  await page.settle(3, false);
+  await page.settle(4, false);
+  await page.settle(5, false);
+  await page.settle(11, false);
+  assert.equal(await drained, "the model went away");
+  assert.deepEqual(abandoned, [4]);
+});
+
+test("a pack that lands after an outage ended the drain doesn't change the stage it failed at", async () => {
+  const page = scriptedPage([1, 2, 3, 4].map((id) => ({ passages: [passage(id)], more: id < 4, gone: false, done: id, total: 4 })));
+  const stages = [];
+  page.port.onStage = (name) => stages.push(name);
+  const drained = drainPassages(page.port).then(() => "done", (e) => e.message);
+  await page.settle(1, false);
+  await page.settle(2, false);
+  await page.settle(3, false);
+  await page.settle(4, true);
+  assert.equal(await drained, "the model went away");
+  assert.equal(stages.at(-1), "model");
+  assert.ok(page.applied.some(([id, text]) => id === 4000 && text === "TEXT 4.0"));
+});
