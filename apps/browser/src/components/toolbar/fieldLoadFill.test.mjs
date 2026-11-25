@@ -59,3 +59,12 @@ test("without the native glow (an older build, Linux, Windows) the field keeps t
   assert.notEqual(FieldLoadFill, FieldGlowFill);
   assert.match(String(FieldLoadFill.type), /JsFieldLoadFill/);
 });
+
+test("the rim uses the field radius and cannot overlap itself on narrow fields", async () => {
+  const { fieldRimRadius } = await import("./FieldLoadFill.tsx");
+  assert.equal(fieldRimRadius(320, 30, 8), 8);
+  assert.equal(fieldRimRadius(160, 34, 10), 10);
+  assert.equal(fieldRimRadius(18, 30, 12), 9);
+  assert.equal(fieldRimRadius(100, 22, 14), 11);
+  assert.equal(fieldRimRadius(100, 22, 0), 0);
+});

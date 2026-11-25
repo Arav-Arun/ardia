@@ -79,6 +79,35 @@ final class FieldGlowLayersTests: XCTestCase {
     return layers
   }
 
+  func testRimUsesTheFieldRadiusAndStaysFixedDuringProgress() throws {
+    let layers = try layers()
+    layers.radius = 10
+    let rim = layers.capPlate.rim
+    XCTAssertEqual(rim.bounds.height, 10)
+    XCTAssertEqual(rim.position.y, 20)
+    XCTAssertEqual(rim.sublayers?.first?.cornerRadius, 10)
+    XCTAssertEqual(rim.sublayers?.first?.borderWidth, CGFloat(layers.look.line))
+    let taper = try XCTUnwrap(rim.mask as? CAGradientLayer)
+    XCTAssertEqual(taper.startPoint.y, 0)
+    XCTAssertEqual(taper.endPoint.y, 0.85, accuracy: 0.0001)
+    XCTAssertEqual((taper.colors as? [CGColor])?.map(\.alpha), [0, 1])
+    var model = FieldGlowModel()
+    layers.run(model.show(), model: model)
+    layers.run(model.progress(to: 0.4, still: false), model: model)
+    XCTAssertEqual(rim.position.x + layers.slide.position.x, 0)
+    let samples = (rim.animation(forKey: "filled") as? CAKeyframeAnimation)?.values as? [Double]
+    let slide = (layers.slide.animation(forKey: "filled") as? CAKeyframeAnimation)?.values as? [Double]
+    XCTAssertNotNil(samples)
+    XCTAssertEqual(samples, slide?.map { -$0 })
+    layers.resize(CGSize(width: 18, height: 20), flipped: false)
+    XCTAssertEqual(rim.bounds.height, 9)
+    XCTAssertEqual(rim.position.y, 0)
+    XCTAssertEqual(taper.startPoint.y, 1)
+    XCTAssertEqual(taper.endPoint.y, 1.5 / 9, accuracy: 0.0001)
+    layers.cancel()
+    XCTAssertNil(rim.animation(forKey: "filled"))
+  }
+
   func testAResizeWhileIdleRepaintsWithoutAttachingAnAnimation() throws {
     let layers = try layers()
     layers.settle(at: FieldGlowModel())
