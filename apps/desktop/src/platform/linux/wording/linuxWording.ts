@@ -78,6 +78,10 @@ export const LINUX_WORDING: readonly Wording[] = [
         "After a crash: the signal and its code, and for each step on the crashing thread the file it ran in (like chrome or libc.so.6) and the position inside that file, with the build IDs of Ardia's own files, read from the crash dump Chromium's crash handler keeps on this computer. Never the dump itself, which can hold page content",
       ],
       [
+        "; and for every crash, of Ardia itself or of one of those processes: the code that ended it and its kind (like a trace trap or a segmentation fault), the exception's code and, for a bad memory access, only whether it was near address zero (never the address), and which kind of thread crashed (from a fixed list, like a page's main thread or a worker thread, never its name) and whether it was the main queue",
+        "",
+      ],
+      [
         "plus the version that crashed, how long the process had run, the total size of its writable memory regions, and how the system ended it (its termination reason, like a signal or a code-signing kill)",
         "plus the engine version that crashed, how long the process had run, and the signal that ended it",
       ],

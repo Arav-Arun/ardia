@@ -171,10 +171,14 @@ enum CrashReports {
     let termination = body["termination"] as? [String: Any] ?? [:]
     for (key, value) in versions + [
       ("incidentId", header["incident_id"]), ("exceptionType", exception["type"]), ("signal", exception["signal"]),
-      ("terminationNamespace", termination["namespace"]),
+      ("terminationNamespace", termination["namespace"]), ("terminationIndicator", termination["indicator"]),
+      ("exceptionCodes", exception["codes"]),
+      ("crashedThread", threads.indices.contains(faulting) ? threads[faulting]["name"] : nil),
+      ("crashedQueue", threads.indices.contains(faulting) ? threads[faulting]["queue"] : nil),
     ] {
       if let value = value as? String { report[key] = value }
     }
+    if let code = termination["code"] as? NSNumber, code.int64Value >= 0 { report["terminationCode"] = code.int64Value }
     if let launched = reportTime(body["procLaunch"]), let captured = reportTime(body["captureTime"]), captured >= launched {
       report["uptimeSeconds"] = Int(captured.timeIntervalSince(launched).rounded())
     }
