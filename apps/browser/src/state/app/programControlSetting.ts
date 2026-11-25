@@ -8,6 +8,8 @@ export const setProgramControl = (on: boolean) => useBrowser.getState().updateSe
 
 export const setControlFromSettings = (on: boolean) => setProgramControl(on);
 
+export const setProgramControlInferredOff = () => useBrowser.getState().updateSettings({ cliControl: false }, { inferred: true });
+
 function userChoseControl(): boolean {
   const { settingsMeta } = useBrowser.getState();
   return settingsMeta.chosen.includes(CONTROL_KEY) && !settingsMeta.inferred.includes(CONTROL_KEY);

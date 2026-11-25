@@ -24,6 +24,7 @@ globalThis.acTestCliControl = (on) => {
 };
 const { useBrowser } = await import("../browser/store.ts");
 const cli = await import("./programControl.ts");
+const { userTurnedControlOff } = await import("./programControlSetting.ts");
 const settle = () => new Promise((r) => setImmediate(r));
 const setOn = (on) => useBrowser.getState().updateSettings({ cliControl: on });
 const { emitEvent } = await import("../../test-native/index.ts");
@@ -59,6 +60,25 @@ test("a failure of the current start still turns the setting off and keeps the r
   assert.equal(useBrowser.getState().settings.cliControl, false);
   assert.match(cli.useControlServer.getState().server?.reason ?? "", /is a directory/);
   assert.deepEqual(calls, [true, false, true, false]);
+});
+
+test("the engine stopping control itself is not the user turning it off", () => {
+  assert.equal(useBrowser.getState().settings.cliControl, false);
+  assert.equal(userTurnedControlOff(), false, "approving the Command Line plugin again must be able to turn control on");
+  assert.ok(useBrowser.getState().settingsMeta.inferred.includes("cliControl"));
+});
+
+test("an Off the user chose, in Settings or with the pill's Stop, is still the user's", async () => {
+  setOn(true);
+  assert.equal(userTurnedControlOff(), false, "On is not an Off");
+  setOn(false);
+  assert.equal(userTurnedControlOff(), true, "the Settings toggle");
+  setOn(true);
+  cli.stopProgramControl();
+  assert.equal(useBrowser.getState().settings.cliControl, false);
+  assert.equal(userTurnedControlOff(), true, "the pill's Stop");
+  while (replies.length) replies.shift()({ state: "off", generation: 2 });
+  await settle();
 });
 
 test("the engine hears which page the user is looking at while control is on", async () => {

@@ -12,7 +12,7 @@ import { noteDragsEnded } from "../telemetry/stuckDrags";
 import { consentToken, type ConsentToken } from "../telemetry/client";
 import type { ControlCaller } from "./controlCaller";
 import { noteCliConnections } from "../automation/offscreen";
-import { compactControlPill, programControlOn, setProgramControl } from "./programControlSetting";
+import { compactControlPill, programControlOn, setProgramControl, setProgramControlInferredOff } from "./programControlSetting";
 import { startCommandInstall } from "./linuxCommandInstall";
 
 const INDICATOR_HOLD_MS = 3000;
@@ -117,7 +117,7 @@ export function startProgramControl() {
     newest = generation;
     useControlServer.setState({ server });
     const stoppedItself = server.state === "off" && !!server.reason;
-    if (mayReconcile && stoppedItself && programControlOn(useBrowser.getState())) setProgramControl(false);
+    if (mayReconcile && stoppedItself && programControlOn(useBrowser.getState())) setProgramControlInferredOff();
   };
   onControlChanged((server) => apply(server, inFlight === 0));
   let applied: boolean | null = null;
