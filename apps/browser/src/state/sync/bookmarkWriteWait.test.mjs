@@ -34,3 +34,25 @@ test("a bookmark apply from sync returns only once Chrome has the change, so the
   assert.equal(stub.chromeBookmarks("").get(id).t, "A renamed");
   stop();
 });
+
+test("a bookmark apply whose Chrome write doesn't finish in time reports failure, so nothing is settled or counted", async (t) => {
+  stub.docs.clear();
+  stub.bookmarkDbs.clear();
+  const stop = startBookmarks();
+  await settle();
+  await reloadBookmarks();
+  S().addBookmark({ profileId: "default", url: "https://b.example/", title: "B" });
+  await settle();
+  const adapter = bookmarksAdapter("default");
+  const { values } = await adapter.extract(() => undefined);
+  const key = [...values.keys()].find((k) => values.get(k).t === "B");
+  stub.bookmarkModel.applyHeld = new Promise(() => {});
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const applying = Promise.resolve(adapter.apply(new Map([[key, { ...values.get(key), t: "B renamed" }]]), new Set([key]), () => undefined, {}));
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  t.mock.timers.tick(10_001);
+  assert.equal(await applying, false);
+  t.mock.timers.reset();
+  stub.bookmarkModel.applyHeld = null;
+  stop();
+});

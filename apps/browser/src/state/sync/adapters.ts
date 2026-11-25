@@ -77,6 +77,7 @@ export function bookmarksAdapter(profileId: string): Adapter {
   const ready = () => !!store().bookmarksReady[engineProfile(store(), profileId)];
   return withSyncWorkCounts("bookmark", {
     prefix: BOOKMARK,
+    extractUsesBase: true,
     extractsOnlyFrom: () => bookmarksToken(profileId),
     extract: (base) => {
       if (!ready()) return null;
@@ -177,7 +178,7 @@ export function bookmarksAdapter(profileId: string): Adapter {
         if (folder?.kind === "folder") nodes[parent] = { ...folder, children: ids.sort(byPosition) };
       }
       useBrowser.setState({ bookmarks: { ...b, nodes } });
-      await bookmarksWritten(engineProfile(s, profileId));
+      return await bookmarksWritten(engineProfile(s, profileId));
     },
   });
 }

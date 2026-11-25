@@ -295,3 +295,23 @@ test("history: Chrome committed only the first of two synced visit sets before t
   assert.equal(timesOn(a), undefined);
   assert.equal(timesOn(p), undefined);
 });
+
+test("history: Chrome kept two of the three visits it was given before the kill: the third is applied again, not lost", async () => {
+  const { a, p } = await savedPair();
+  const url = "https://visited.example/";
+  const times = [Date.now() - 90_000, Date.now() - 60_000, Date.now() - 30_000];
+  const visit = (list) => ({ url, title: "Visited", favicon: null, visits: list.length, lastVisit: list.at(-1), visitTimes: list });
+  const timesOn = (mac) => mac.with(() => historyOf(S(), "default").find((e) => e.url === url)?.visitTimes);
+  a.with(() => useBrowser.setState({ history: { "": { list: [visit(times.slice(0, 1))], floor: -Infinity, ready: true } } }));
+  await settled(a, p);
+  a.with(() => useBrowser.setState({ history: { "": { list: [visit(times)], floor: -Infinity, ready: true } } }));
+  await a.sync();
+  await p.sync();
+  assert.deepEqual(timesOn(p), times);
+  p.disk = { ...p.disk, history: { "": { list: [visit(times.slice(0, 2))], floor: -Infinity, ready: true } } };
+  p.killed();
+  assert.deepEqual(timesOn(p), times.slice(0, 2));
+  await syncAll([p, a], 2);
+  assert.deepEqual(timesOn(p), times);
+  assert.deepEqual(timesOn(a), times);
+});

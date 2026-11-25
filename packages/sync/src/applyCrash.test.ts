@@ -1,16 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Clock } from "./hlc.ts";
-import { syncScope } from "./scope.ts";
-import { emptyScope, type Adapter, type ApplyBatch, type Listing, type ScopeState, type Transport } from "./scopeState.ts";
+import { restoreJournal, syncScope } from "./scope.ts";
+import { emptyScope, type Adapter, type ApplyBatch, type Listing, type LogFile, type ScopeState, type Transport } from "./scopeState.ts";
 
 const SAVE_MS = 30_000;
 
 class Folder {
   files = new Map<string, string>();
+  pendingFor = new Map<string, Set<string>>();
   counter = 0;
   now = 1_000_000;
-  transport(): Transport {
+  transport(device = ""): Transport {
     return {
       write: async (_scope, payload) => {
         const id = `f${++this.counter}`;
@@ -21,7 +22,9 @@ class Folder {
         const listing: Listing = { files: [], pending: [], damaged: [], present: [] };
         for (const [id, payload] of this.files) {
           listing.present.push(id);
-          if (!known.includes(id)) listing.files.push({ id, payload });
+          if (known.includes(id)) continue;
+          if (this.pendingFor.get(device)?.has(id)) listing.pending.push(id);
+          else listing.files.push({ id, payload });
         }
         return listing;
       },
@@ -32,8 +35,8 @@ class Folder {
   }
 }
 
-type Saved = { kind: "state"; json: string; clock: string | null } | { kind: "batch"; json: string };
-type Mode = { replaces?: boolean; throttled?: boolean; failsAfter?: string; ignores?: (key: string) => boolean; slowApplyMs?: number; quitting?: boolean };
+type Saved = { kind: "state"; json: string; clock: string | null } | { kind: "batch"; json: string } | { kind: "journal"; json: string };
+type Mode = { replaces?: boolean; throttled?: boolean; failsAfter?: string; ignores?: (key: string) => boolean; slowApplyMs?: number; quitting?: boolean; onePerCycle?: boolean; republishes?: string; journalFails?: boolean; killedBeforeCycleRecord?: boolean };
 
 class Mac {
   memory = new Map<string, unknown>();
@@ -48,6 +51,7 @@ class Mac {
   duringWriteAhead?: () => void;
   saved: Saved[] = [];
   applies = 0;
+  extracts = 0;
   readonly id: string;
   readonly folder: Folder;
   constructor(id: string, folder: Folder, writeAhead = true) {
@@ -65,9 +69,10 @@ class Mac {
     return {
       prefix: "b:",
       extract: () => {
-        if (this.mode.throttled) return null;
+        if (this.mode.throttled || (this.mode.onePerCycle && this.extracts++ > 0)) return null;
         const ignores = this.mode.ignores;
-        return { values: new Map([...this.memory].filter(([key]) => !ignores?.(key))), ignore: ignores };
+        const republishes = this.mode.republishes;
+        return { values: new Map([...this.memory].filter(([key]) => !ignores?.(key))), ignore: ignores, republish: republishes ? (key: string) => key === republishes : undefined };
       },
       apply: (visible, changed) => {
         this.applies++;
@@ -89,23 +94,25 @@ class Mac {
   async sync() {
     const persistApplying = this.writeAhead
       ? async (batch: ApplyBatch) => {
+          if (this.mode.journalFails) throw new Error("disk full");
           this.saved.push({ kind: "batch", json: JSON.stringify(batch) });
           await new Promise((resolve) => setImmediate(resolve));
           this.duringWriteAhead?.();
           delete this.duringWriteAhead;
         }
       : undefined;
+    this.extracts = 0;
     const result = await syncScope({
       scope: "s",
       state: this.state,
-      transport: this.folder.transport(),
+      transport: this.folder.transport(this.id),
       adapters: [this.adapter()],
       clock: this.clock,
       device: this.id,
       now: () => this.folder.now,
-      options: { pruneGrace: 0, persist: async () => {}, persistApplying, launch: this.launch, nativeSaveMs: SAVE_MS, monotonic: () => this.steady, holdApply: () => !!this.mode.quitting },
+      options: { pruneGrace: 0, persist: async (files) => void this.saved.push({ kind: "journal", json: JSON.stringify(files) }), persistApplying, launch: this.launch, nativeSaveMs: SAVE_MS, monotonic: () => this.steady, holdApply: () => !!this.mode.quitting },
     });
-    this.saved.push({ kind: "state", json: JSON.stringify(this.state), clock: this.clock.last });
+    if (!this.mode.killedBeforeCycleRecord) this.saved.push({ kind: "state", json: JSON.stringify(this.state), clock: this.clock.last });
     return result;
   }
   killed() {
@@ -113,12 +120,17 @@ class Mac {
     const last = this.saved.map((s) => s.kind).lastIndexOf("state");
     const state = last >= 0 ? (this.saved[last] as Extract<Saved, { kind: "state" }>) : null;
     this.state = state ? (JSON.parse(state.json) as ScopeState) : emptyScope();
+    const journal: LogFile[] = [];
     for (const later of this.saved.slice(last + 1)) {
+      if (later.kind === "journal") journal.push(...(JSON.parse(later.json) as LogFile[]));
       if (later.kind !== "batch") continue;
       const batch = JSON.parse(later.json) as ApplyBatch;
-      this.state.applying = [...(this.state.applying ?? []).filter((b) => b.id !== batch.id), batch];
+      const others = (this.state.applying ?? []).filter((b) => b.id !== batch.id);
+      this.state.applying = Object.keys(batch.k).length ? [...others, batch] : others;
     }
     this.clock = new Clock(this.id, state?.clock ?? null, () => this.folder.now);
+    restoreJournal(this.state, journal, this.clock);
+    this.mode = {};
     this.launch = `${this.id}-${++this.launches}`;
     this.steady = 0;
   }
@@ -397,4 +409,83 @@ test("quitting while the batch is being written leaves the apply for the next la
   assert.equal(b.applies, before, "the native apply never ran");
   assert.equal(b.memory.get("b:t1"), "A");
   assert.ok(b.state.unapplied.includes("b:t1"));
+});
+
+test("a cancelled apply is retired on disk at once, so a crash before the cycle record can't bring it back over a later edit", async () => {
+  const { a, b } = await pairWith({ "b:t1": "A" });
+  b.duringWriteAhead = () => b.memory.set("b:t1", "C");
+  b.mode.killedBeforeCycleRecord = true;
+  await remoteChange(a, b, () => a.memory.set("b:t1", "B"));
+  assert.equal(b.memory.get("b:t1"), "C");
+  b.memory.set("b:t1", "B");
+  b.chromeSaves();
+  b.killed();
+  await settle([b, a], 3);
+  assert.equal(b.memory.get("b:t1"), "B");
+  assert.equal(a.memory.get("b:t1"), "B");
+});
+
+test("an adapter that reads only once per cycle still recovers, from that one read", async () => {
+  const { a, b } = await pairWith({ "b:t1": "T1" });
+  await remoteChange(a, b, () => a.memory.set("b:t1", "T1 renamed"));
+  b.killed();
+  a.memory.delete("b:t1");
+  a.tick(1_000);
+  await a.sync();
+  b.mode = { onePerCycle: true };
+  b.tick(60_000);
+  await b.sync();
+  assert.equal(!!b.state.applying?.some((batch) => batch.l !== b.launch), false, "judged from the one read");
+  b.mode = { onePerCycle: true };
+  await settle([b, a], 3);
+  assert.deepEqual(view(a), {});
+  assert.deepEqual(view(b), {});
+});
+
+test("a key queued to be applied again isn't republished from the stale native value first", async () => {
+  const { a, b } = await pairWith({ "b:t1": "T1" });
+  await remoteChange(a, b, () => a.memory.set("b:t1", "T1 renamed"));
+  b.killed();
+  b.mode = { republishes: "b:t1" };
+  b.tick(60_000);
+  const { published } = await b.sync();
+  assert.equal(published, 0);
+  assert.equal(b.memory.get("b:t1"), "T1 renamed");
+  assert.equal(a.memory.get("b:t1"), "T1 renamed");
+});
+
+test("a write-ahead journal that can't be written fails the cycle and leaves a joining scope unjoined", async () => {
+  const folder = new Folder();
+  const a = new Mac("macA", folder);
+  a.memory.set("b:t1", "T1");
+  await a.sync();
+  const b = new Mac("macB", folder);
+  b.mode.journalFails = true;
+  await assert.rejects(b.sync(), /couldn't journal/);
+  assert.equal(b.state.joined, false);
+  assert.equal(b.memory.has("b:t1"), false);
+  assert.ok(b.state.unapplied.includes("b:t1"));
+  b.mode = {};
+  await b.sync();
+  assert.equal(b.memory.get("b:t1"), "T1");
+  assert.equal(b.state.joined, true);
+});
+
+test("a change Chrome saved whose record was lost in the crash isn't reverted while its sync file is still downloading", async () => {
+  const { folder, a, b } = await pairWith({ "b:t1": "A" });
+  b.mode.killedBeforeCycleRecord = true;
+  await remoteChange(a, b, () => a.memory.set("b:t1", "B"));
+  assert.equal(b.memory.get("b:t1"), "B");
+  b.chromeSaves();
+  b.killed();
+  const newest = [...folder.files.keys()].at(-1)!;
+  folder.pendingFor.set("macB", new Set([newest]));
+  b.tick(60_000);
+  const { published } = await b.sync();
+  assert.equal(published, 0);
+  assert.equal(b.memory.get("b:t1"), "B", "not put back to the checkpoint's older value");
+  folder.pendingFor.clear();
+  await settle([b, a], 2);
+  assert.equal(b.memory.get("b:t1"), "B");
+  assert.equal(a.memory.get("b:t1"), "B");
 });

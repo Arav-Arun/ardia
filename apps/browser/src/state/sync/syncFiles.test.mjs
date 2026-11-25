@@ -300,8 +300,8 @@ test("a batch about to be applied is on disk before the apply, survives a restar
   const { files } = await opening({ doc });
   const state = (doc.scopes["p:s1"] = emptyScope());
   putBase(state, "bm:t1", '{"t":"T1"}');
-  const first = batchOf(10, { "bm:t1": ['{"t":"T1"}', "fp1"] });
-  const second = batchOf(11, { "bm:t2": [null, "fp2"] });
+  const first = batchOf(10, { "bm:t1": ['{"t":"T1"}', '"fp1"'] });
+  const second = batchOf(11, { "bm:t2": [null, '"fp2"'] });
   const before = parts().length;
   await files.persistApplying("p:s1")(first);
   await files.persistApplying("p:s1")(second);
@@ -321,7 +321,7 @@ test("a batch about to be applied is on disk before the apply, survives a restar
 test("the full state waits while a batch is live, for two minutes at most", async () => {
   const doc = newDoc();
   const { files } = await opening({ doc });
-  doc.scopes.app = { ...emptyScope(), applying: [batchOf(40, { "bm:x": [null, "fp"] })] };
+  doc.scopes.app = { ...emptyScope(), applying: [batchOf(40, { "bm:x": [null, '"fp"'] })] };
   const at = (ms, fn) => {
     Date.now = () => realNow() + ms;
     return Promise.resolve(fn()).finally(() => (Date.now = realNow));
@@ -336,7 +336,7 @@ test("a batch too big for one part is split across parts under the limit and rea
   const doc = newDoc({ profiles: { default: { syncId: "s1", enabled: true } } });
   const { files } = await opening({ doc });
   doc.scopes["p:s1"] = emptyScope();
-  const keys = Object.fromEntries(Array.from({ length: 100_000 }, (_, i) => [`h:https://example.com/a/fairly/long/path/${i}`, [null, `fp${i}`]]));
+  const keys = Object.fromEntries(Array.from({ length: 100_000 }, (_, i) => [`h:https://example.com/a/fairly/long/path/${i}`, [null, `"fp${i}"`]]));
   const before = parts().length;
   await files.persistApplying("p:s1")(batchOf(20, keys));
   const written = parts().slice(before);
@@ -368,22 +368,53 @@ test("keys a batch no longer covers, and its residual mark, stay that way across
   const full = batchOf(60, { "bm:a": ['{"t":"A"}', '{"t":"B"}'], "bm:b": ['{"t":"X"}', '{"t":"Y"}'], "bm:c": [null, '{"t":"Z"}'] });
   await files.persistApplying("p:s1")(full);
   const settled = files.watchScope("p:s1", state, new Clock("devA"));
-  state.applying = [{ ...full, r: 1, x: 1, k: { "bm:b": full.k["bm:b"] } }];
+  const trimmed = { ...full, r: 1, cut: ["bm:a", "bm:c"], k: { "bm:b": full.k["bm:b"] } };
+  state.applying = [trimmed];
   await settled();
   const { doc: once } = await restart(doc);
-  assert.deepEqual(once.scopes["p:s1"].applying, [{ ...full, r: 1, x: 1, k: { "bm:b": full.k["bm:b"] } }]);
+  assert.deepEqual(once.scopes["p:s1"].applying, [trimmed]);
   const { doc: twice } = await restart(once);
-  assert.deepEqual(twice.scopes["p:s1"].applying, [{ ...full, r: 1, x: 1, k: { "bm:b": full.k["bm:b"] } }]);
+  assert.deepEqual(twice.scopes["p:s1"].applying, [trimmed]);
+});
+
+test("a cycle part that drops one key of a 100,000-key batch names that key, not the rest", async () => {
+  const doc = newDoc({ profiles: { default: { syncId: "s1", enabled: true } } });
+  const { files } = await opening({ doc });
+  const state = (doc.scopes["p:s1"] = emptyScope());
+  const keys = Object.fromEntries(Array.from({ length: 100_000 }, (_, i) => [`h:https://example.com/a/fairly/long/path/${i}`, [null, `{"t":"${i}"}`]]));
+  const full = batchOf(70, keys);
+  await files.persistApplying("p:s1")(full);
+  const settled = files.watchScope("p:s1", state, new Clock("devA"));
+  const { "h:https://example.com/a/fairly/long/path/0": _gone, ...left } = keys;
+  state.applying = [{ ...full, r: 1, cut: ["h:https://example.com/a/fairly/long/path/0"], k: left }];
+  await settled();
+  assert.ok(shell.docs.get(parts().at(-1)).length < 10_000, "the cycle part stays small");
+  const { doc: after } = await restart(doc);
+  assert.equal(Object.keys(after.scopes["p:s1"].applying[0].k).length, 99_999);
+  assert.ok(!("h:https://example.com/a/fairly/long/path/0" in after.scopes["p:s1"].applying[0].k));
+});
+
+test("a batch retired with an empty write is gone after a restart, and steps that aren't JSON are dropped", async () => {
+  const doc = newDoc({ profiles: { default: { syncId: "s1", enabled: true } } });
+  const { files } = await opening({ doc });
+  doc.scopes["p:s1"] = emptyScope();
+  const kept = batchOf(80, { "bm:a": ['{"t":"A"}', '{"t":"B"}'] });
+  await files.persistApplying("p:s1")(kept);
+  await files.persistApplying("p:s1")(batchOf(81, { "bm:b": [null, '{"t":"B"}'] }));
+  await files.persistApplying("p:s1")(batchOf(81, {}));
+  await files.persistApplying("p:s1")(batchOf(82, { "bm:c": ["{not json", '{"t":"C"}'] }));
+  const { doc: after } = await restart(doc);
+  assert.deepEqual(after.scopes["p:s1"].applying, [kept]);
 });
 
 test("damaged batches in a part, a checkpoint or a cycle's part are dropped instead of stalling sync", async () => {
   const doc = newDoc({ profiles: { default: { syncId: "s1", enabled: true } } });
-  const good = batchOf(30, { "bm:t1": ['{"t":"T1"}', "fp1"] });
-  const checkpoint = { covers: 0, scopes: { "p:s1": { ...emptyScope(), applying: [null, good, { id: "x" }, batchOf(31, { "bm:t2": [3, "fp"] })] } }, version: 1 };
+  const good = batchOf(30, { "bm:t1": ['{"t":"T1"}', '"fp1"'] });
+  const checkpoint = { covers: 0, scopes: { "p:s1": { ...emptyScope(), applying: [null, good, { id: "x" }, batchOf(31, { "bm:t2": [3, '"fp"'] })] } }, version: 1 };
   const { files } = await opening({ doc, docs: { "sync-state.nns": sealed(checkpoint) } });
   assert.deepEqual(doc.scopes["p:s1"].applying, [good]);
   const next = parts().length + 1;
-  shell.docs.set(`sync-journal-${next}.nns`, sealed({ id: Date.now() + 1, device: "devA", applying: { "p:s1": [null, { id: 32 }, batchOf(33, { "bm:t3": [null, "fp3"] })] }, version: 1 }));
+  shell.docs.set(`sync-journal-${next}.nns`, sealed({ id: Date.now() + 1, device: "devA", applying: { "p:s1": [null, { id: 32 }, batchOf(33, { "bm:t3": [null, '"fp3"'] })] }, version: 1 }));
   shell.docs.set(`sync-journal-${next + 1}.nns`, sealed({ id: Date.now() + 2, device: "devA", changes: { "p:s1": { records: {}, base: {}, rest: { applying: { "bm:t1": null }, applyingIds: [30, "33", null] } } }, version: 1 }));
   const { doc: after } = await restart(doc);
   assert.deepEqual(after.scopes["p:s1"].applying, undefined, "ids that aren't a list of numbers keep no batch");

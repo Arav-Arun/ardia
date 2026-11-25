@@ -12,7 +12,16 @@ const steadyNow = () => (typeof performance !== "undefined" ? performance.now() 
 export const launchOf = (options: ScopeOptions = {}) => options.launch ?? thisLaunch;
 const monotonicOf = (options: ScopeOptions = {}) => (options.monotonic ?? steadyNow)();
 
-const isJsonOrNull = (v: unknown) => v === null || typeof v === "string";
+function isJsonOrNull(v: unknown) {
+  if (v === null) return true;
+  if (typeof v !== "string") return false;
+  try {
+    JSON.parse(v);
+    return true;
+  } catch {
+    return false;
+  }
+}
 const isStep = (v: unknown) => Array.isArray(v) && v.length === 2 && isJsonOrNull(v[0]) && isJsonOrNull(v[1]);
 const isFiniteNumber = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
@@ -21,7 +30,8 @@ export function isApplyBatch(v: unknown): v is ApplyBatch {
   const b = v as Record<string, unknown>;
   if (!isFiniteNumber(b.id) || typeof b.p !== "string" || typeof b.l !== "string" || !isFiniteNumber(b.at)) return false;
   if (b.done !== undefined && !isFiniteNumber(b.done)) return false;
-  if ((b.r !== undefined && b.r !== 1) || (b.x !== undefined && b.x !== 1)) return false;
+  if (b.r !== undefined && b.r !== 1) return false;
+  if (b.cut !== undefined && !(Array.isArray(b.cut) && b.cut.every((key) => typeof key === "string"))) return false;
   return typeof b.k === "object" && b.k !== null && !Array.isArray(b.k) && Object.values(b.k).every(isStep);
 }
 
@@ -68,14 +78,15 @@ export async function writeAhead(state: ScopeState, prefix: string, keys: Iterab
   }
 }
 
-export function trimBatch(state: ScopeState, batch: ApplyBatch | null, keys: Iterable<string>) {
-  if (!batch) return;
-  for (const key of keys) {
-    if (!(key in batch.k)) continue;
-    delete batch.k[key];
-    batch.x = 1;
+export async function cancelIfRaced(state: ScopeState, batch: ApplyBatch | null, raced: Set<string>, options: ScopeOptions = {}): Promise<boolean> {
+  if (!batch || !Object.keys(batch.k).some((key) => raced.has(key))) return false;
+  dropBatch(state, batch);
+  try {
+    await options.persistApplying?.({ ...batch, k: {} });
+  } catch (error) {
+    console.warn(`[sync] couldn't journal that ${batch.p} won't apply after a local edit`, error);
   }
-  if (!Object.keys(batch.k).length) dropBatch(state, batch);
+  return true;
 }
 
 export function finishBatch(batch: ApplyBatch | null, options: ScopeOptions = {}) {
@@ -96,29 +107,33 @@ export function startApplying(state: ScopeState, now: number, options: ScopeOpti
   if (!state.applying.length) delete state.applying;
 }
 
-const recovering = new WeakMap<ScopeState, Set<string>>();
+type Recovering = { pending: Set<string>; counted: Set<string> };
+const recovering = new WeakMap<ScopeState, Recovering>();
 const reapplied = new WeakMap<ScopeState, number>();
 
-export function queueRecovered(state: ScopeState, keys: string[]) {
+export function queueRecovered(state: ScopeState, keys: string[], counted: Set<string>) {
   if (!keys.length) return;
   const queued = new Set(state.unapplied);
   let marks = recovering.get(state);
-  if (!marks) recovering.set(state, (marks = new Set()));
+  if (!marks) recovering.set(state, (marks = { pending: new Set(), counted: new Set() }));
   for (const key of keys) {
-    marks.add(key);
+    marks.pending.add(key);
+    if (counted.has(key)) marks.counted.add(key);
     if (queued.has(key)) continue;
     queued.add(key);
     state.unapplied.push(key);
   }
 }
 
+export const awaitsRecovery = (state: ScopeState, key: string) => !!recovering.get(state)?.pending.has(key);
+
 export function countReapplied(state: ScopeState, applied: Iterable<string>, deferred: Set<string>) {
   const marks = recovering.get(state);
-  if (!marks?.size) return;
+  if (!marks?.pending.size) return;
   let count = 0;
   for (const key of applied) {
-    if (deferred.has(key) || !marks.delete(key)) continue;
-    count++;
+    if (deferred.has(key) || !marks.pending.delete(key)) continue;
+    if (marks.counted.delete(key)) count++;
   }
   if (count) reapplied.set(state, (reapplied.get(state) ?? 0) + count);
 }

@@ -4,7 +4,7 @@ import { holdsBack, noteFileHealth } from "./fileHealth.ts";
 import { baseKeysWith, baseWritesUnder, dropBase, dropRecord, putBase, putRecord, visible } from "./scopeKeys.ts";
 export * from "./scopeKeys.ts";
 import { covered, isApplied, markApplied, raiseApplied } from "./applied.ts";
-import { countReapplied, finishBatch, startApplying, takeReapplied, trimBatch, writeAhead } from "./applyBatches.ts";
+import { awaitsRecovery, cancelIfRaced, countReapplied, finishBatch, startApplying, takeReapplied, writeAhead, type WriteAhead } from "./applyBatches.ts";
 import { recoverBatches } from "./applyRecovery.ts";
 import { parseSyncFile } from "./syncFile.ts";
 export { parseSyncFile } from "./syncFile.ts";
@@ -102,14 +102,14 @@ async function changesOf(state: ScopeState, adapter: Adapter, now: number, optio
   const extractWith = (baseJson: (key: string) => string | undefined) =>
     Promise.resolve(adapter.extract((key) => parseBase(baseJson(key)), queued, now, (key) => key in state.records, (key) => state.records[key]?.v, (key) => state.records[key]?.h, baseJson));
   const first = await extractWith((key) => state.base[key]);
-  const extraction = first && state.applying ? await recoverBatches(state, adapter.prefix, first, extractWith, options) : first;
+  const extraction = first && state.applying ? await recoverBatches(state, adapter.prefix, first, adapter.extractUsesBase ? extractWith : null, options) : first;
   if (!extraction) return null;
   const changes: Change[] = [];
   const { values, json: knownJson, republish, ignore } = extraction;
   values.forEach((value, key) => {
     if (value === null || value === undefined) throw new Error(`[sync] ${key}: a live value can't be null`);
     const json = knownJson?.(key, value) ?? canonical(value);
-    if (state.base[key] === json && !republish?.(key)) return;
+    if (state.base[key] === json && (!republish?.(key) || awaitsRecovery(state, key))) return;
     changes.push({ key, value, json });
   });
   const keys = baseKeysWith(state, adapter.prefix);
@@ -359,6 +359,7 @@ export async function syncScope(args: {
   const keys = new Set([...state.unapplied, ...changed]);
   const unapplied: string[] = [];
   let heldApply = false;
+  let journalFailed = false;
   const applyHeld = () => !!options?.holdApply?.();
   for (const adapter of adapters) {
     const publishLate = async () => {
@@ -371,9 +372,11 @@ export async function syncScope(args: {
     for (const key of state.unapplied) if (key.startsWith(adapter.prefix) && !late.has(key)) keys.add(key);
     heldApply ||= applyHeld();
     const deferred = new Set<string>();
-    const ahead = heldApply ? null : await writeAhead(state, adapter.prefix, keys, now(), options);
-    if (ahead?.batch) trimBatch(state, ahead.batch, await publishLate());
-    const applied = !heldApply && !ahead?.failed && (await applyAdapter(state, adapter, keys, now(), 2 * (options?.tombstoneTTL ?? DEFAULTS.tombstoneTTL), applyHeld, deferred));
+    const ahead: WriteAhead | null = heldApply ? null : await writeAhead(state, adapter.prefix, keys, now(), options);
+    const cancelled = !!ahead?.batch && (await cancelIfRaced(state, ahead.batch, await publishLate(), options));
+    journalFailed ||= !!ahead?.failed;
+    heldApply ||= !!ahead?.failed;
+    const applied = !heldApply && !cancelled && (await applyAdapter(state, adapter, keys, now(), 2 * (options?.tombstoneTTL ?? DEFAULTS.tombstoneTTL), applyHeld, deferred));
     finishBatch(ahead?.batch ?? null, options);
     heldApply ||= applyHeld();
     if (!applied) for (const key of keys) if (key.startsWith(adapter.prefix)) unapplied.push(key);
@@ -385,6 +388,7 @@ export async function syncScope(args: {
     delete state.awaitRemote;
   }
   await flush(state, transport, scope, device, now(), options);
+  if (journalFailed) throw new Error("[sync] couldn't journal what this cycle was about to apply");
   const compacted = await compact(state, transport, scope, device, now(), options);
   const snapshotBytes = compacted ? (newestSnapshot(Object.entries(state.files), device)?.[1].b ?? 0) : 0;
   return { published, changed: changed.size, pending: state.pending, compacted, snapshotBytes, reapplied: takeReapplied(state) };

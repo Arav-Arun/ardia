@@ -190,7 +190,7 @@ const { holdsBack, noteFileHealth } = __require("packages/sync/src/fileHealth.ts
 const { baseKeysWith, baseWritesUnder, dropBase, dropRecord, putBase, putRecord, visible } = __require("packages/sync/src/scopeKeys.ts");
 
 const { covered, isApplied, markApplied, raiseApplied } = __require("packages/sync/src/applied.ts");
-const { countReapplied, finishBatch, startApplying, takeReapplied, trimBatch, writeAhead } = __require("packages/sync/src/applyBatches.ts");
+const { awaitsRecovery, cancelIfRaced, countReapplied, finishBatch, startApplying, takeReapplied, writeAhead } = __require("packages/sync/src/applyBatches.ts");
 const { recoverBatches } = __require("packages/sync/src/applyRecovery.ts");
 const { parseSyncFile } = __require("packages/sync/src/syncFile.ts");
 
@@ -288,14 +288,14 @@ async function changesOf(state            , adapter         , now        , optio
   const extractWith = (baseJson                                     ) =>
     Promise.resolve(adapter.extract((key) => parseBase(baseJson(key)), queued, now, (key) => key in state.records, (key) => state.records[key]?.v, (key) => state.records[key]?.h, baseJson));
   const first = await extractWith((key) => state.base[key]);
-  const extraction = first && state.applying ? await recoverBatches(state, adapter.prefix, first, extractWith, options) : first;
+  const extraction = first && state.applying ? await recoverBatches(state, adapter.prefix, first, adapter.extractUsesBase ? extractWith : null, options) : first;
   if (!extraction) return null;
   const changes           = [];
   const { values, json: knownJson, republish, ignore } = extraction;
   values.forEach((value, key) => {
     if (value === null || value === undefined) throw new Error(`[sync] ${key}: a live value can't be null`);
     const json = knownJson?.(key, value) ?? canonical(value);
-    if (state.base[key] === json && !republish?.(key)) return;
+    if (state.base[key] === json && (!republish?.(key) || awaitsRecovery(state, key))) return;
     changes.push({ key, value, json });
   });
   const keys = baseKeysWith(state, adapter.prefix);
@@ -545,6 +545,7 @@ async function syncScope(args
   const keys = new Set([...state.unapplied, ...changed]);
   const unapplied           = [];
   let heldApply = false;
+  let journalFailed = false;
   const applyHeld = () => !!options?.holdApply?.();
   for (const adapter of adapters) {
     const publishLate = async () => {
@@ -557,9 +558,11 @@ async function syncScope(args
     for (const key of state.unapplied) if (key.startsWith(adapter.prefix) && !late.has(key)) keys.add(key);
     heldApply ||= applyHeld();
     const deferred = new Set        ();
-    const ahead = heldApply ? null : await writeAhead(state, adapter.prefix, keys, now(), options);
-    if (ahead?.batch) trimBatch(state, ahead.batch, await publishLate());
-    const applied = !heldApply && !ahead?.failed && (await applyAdapter(state, adapter, keys, now(), 2 * (options?.tombstoneTTL ?? DEFAULTS.tombstoneTTL), applyHeld, deferred));
+    const ahead                    = heldApply ? null : await writeAhead(state, adapter.prefix, keys, now(), options);
+    const cancelled = !!ahead?.batch && (await cancelIfRaced(state, ahead.batch, await publishLate(), options));
+    journalFailed ||= !!ahead?.failed;
+    heldApply ||= !!ahead?.failed;
+    const applied = !heldApply && !cancelled && (await applyAdapter(state, adapter, keys, now(), 2 * (options?.tombstoneTTL ?? DEFAULTS.tombstoneTTL), applyHeld, deferred));
     finishBatch(ahead?.batch ?? null, options);
     heldApply ||= applyHeld();
     if (!applied) for (const key of keys) if (key.startsWith(adapter.prefix)) unapplied.push(key);
@@ -571,6 +574,7 @@ async function syncScope(args
     delete state.awaitRemote;
   }
   await flush(state, transport, scope, device, now(), options);
+  if (journalFailed) throw new Error("[sync] couldn't journal what this cycle was about to apply");
   const compacted = await compact(state, transport, scope, device, now(), options);
   const snapshotBytes = compacted ? (newestSnapshot(Object.entries(state.files), device)?.[1].b ?? 0) : 0;
   return { published, changed: changed.size, pending: state.pending, compacted, snapshotBytes, reapplied: takeReapplied(state) };
@@ -820,10 +824,11 @@ __define("packages/sync/src/applyBatches.ts", function (exports, __require) {
   __export(exports, "isApplyBatch", () => isApplyBatch);
   __export(exports, "validBatches", () => validBatches);
   __export(exports, "writeAhead", () => writeAhead);
-  __export(exports, "trimBatch", () => trimBatch);
+  __export(exports, "cancelIfRaced", () => cancelIfRaced);
   __export(exports, "finishBatch", () => finishBatch);
   __export(exports, "startApplying", () => startApplying);
   __export(exports, "queueRecovered", () => queueRecovered);
+  __export(exports, "awaitsRecovery", () => awaitsRecovery);
   __export(exports, "countReapplied", () => countReapplied);
   __export(exports, "takeReapplied", () => takeReapplied);
 const { canonical } = __require("packages/sync/src/canon.ts");
@@ -840,7 +845,16 @@ const steadyNow = () => (typeof performance !== "undefined" ? performance.now() 
 const launchOf = (options               = {}) => options.launch ?? thisLaunch;
 const monotonicOf = (options               = {}) => (options.monotonic ?? steadyNow)();
 
-const isJsonOrNull = (v         ) => v === null || typeof v === "string";
+function isJsonOrNull(v         ) {
+  if (v === null) return true;
+  if (typeof v !== "string") return false;
+  try {
+    JSON.parse(v);
+    return true;
+  } catch {
+    return false;
+  }
+}
 const isStep = (v         ) => Array.isArray(v) && v.length === 2 && isJsonOrNull(v[0]) && isJsonOrNull(v[1]);
 const isFiniteNumber = (v         )              => typeof v === "number" && Number.isFinite(v);
 
@@ -849,7 +863,8 @@ function isApplyBatch(v         )                  {
   const b = v                           ;
   if (!isFiniteNumber(b.id) || typeof b.p !== "string" || typeof b.l !== "string" || !isFiniteNumber(b.at)) return false;
   if (b.done !== undefined && !isFiniteNumber(b.done)) return false;
-  if ((b.r !== undefined && b.r !== 1) || (b.x !== undefined && b.x !== 1)) return false;
+  if (b.r !== undefined && b.r !== 1) return false;
+  if (b.cut !== undefined && !(Array.isArray(b.cut) && b.cut.every((key) => typeof key === "string"))) return false;
   return typeof b.k === "object" && b.k !== null && !Array.isArray(b.k) && Object.values(b.k).every(isStep);
 }
 
@@ -896,14 +911,15 @@ async function writeAhead(state            , prefix        , keys               
   }
 }
 
-function trimBatch(state            , batch                   , keys                  ) {
-  if (!batch) return;
-  for (const key of keys) {
-    if (!(key in batch.k)) continue;
-    delete batch.k[key];
-    batch.x = 1;
+async function cancelIfRaced(state            , batch                   , raced             , options               = {})                   {
+  if (!batch || !Object.keys(batch.k).some((key) => raced.has(key))) return false;
+  dropBatch(state, batch);
+  try {
+    await options.persistApplying?.({ ...batch, k: {} });
+  } catch (error) {
+    console.warn(`[sync] couldn't journal that ${batch.p} won't apply after a local edit`, error);
   }
-  if (!Object.keys(batch.k).length) dropBatch(state, batch);
+  return true;
 }
 
 function finishBatch(batch                   , options               = {}) {
@@ -924,29 +940,33 @@ function startApplying(state            , now        , options               = {
   if (!state.applying.length) delete state.applying;
 }
 
-const recovering = new WeakMap                         ();
+                                                                 
+const recovering = new WeakMap                        ();
 const reapplied = new WeakMap                    ();
 
-function queueRecovered(state            , keys          ) {
+function queueRecovered(state            , keys          , counted             ) {
   if (!keys.length) return;
   const queued = new Set(state.unapplied);
   let marks = recovering.get(state);
-  if (!marks) recovering.set(state, (marks = new Set()));
+  if (!marks) recovering.set(state, (marks = { pending: new Set(), counted: new Set() }));
   for (const key of keys) {
-    marks.add(key);
+    marks.pending.add(key);
+    if (counted.has(key)) marks.counted.add(key);
     if (queued.has(key)) continue;
     queued.add(key);
     state.unapplied.push(key);
   }
 }
 
+const awaitsRecovery = (state            , key        ) => !!recovering.get(state)?.pending.has(key);
+
 function countReapplied(state            , applied                  , deferred             ) {
   const marks = recovering.get(state);
-  if (!marks?.size) return;
+  if (!marks?.pending.size) return;
   let count = 0;
   for (const key of applied) {
-    if (deferred.has(key) || !marks.delete(key)) continue;
-    count++;
+    if (deferred.has(key) || !marks.pending.delete(key)) continue;
+    if (marks.counted.delete(key)) count++;
   }
   if (count) reapplied.set(state, (reapplied.get(state) ?? 0) + count);
 }
@@ -1002,7 +1022,7 @@ const holds = (chain                    , json        ) => !!chain?.some((s) => 
 
                                                                                                                             
 
-async function tryHypothesis(state            , chains                     , hypothesis        , first            , extractWith             )                 {
+async function tryHypothesis(state            , chains                     , hypothesis        , first            , extractWith                    )                 {
   const overrides = new Map                ();
   for (const [key, chain] of chains) overrides.set(key, valueAt(chain, hypothesis));
   const baseJson = (key        ) => {
@@ -1010,7 +1030,7 @@ async function tryHypothesis(state            , chains                     , hyp
     return json === ABSENT ? undefined : json;
   };
   const same = [...overrides].every(([key, json]) => (state.base[key] ?? ABSENT) === json);
-  const extraction = same ? first : await extractWith(baseJson);
+  const extraction = same || !extractWith ? first : await extractWith(baseJson);
   if (!extraction) return { hypothesis, extraction: first, matches: -1, baseJson };
   let matches = 0;
   for (const [key, chain] of chains) {
@@ -1028,13 +1048,14 @@ function keepUnresolved(state            , batches              , resolved      
       continue;
     }
     const left = Object.entries(batch.k).filter(([key]) => !resolved.has(key));
-    if (left.length) kept.push({ ...batch, r: 1, x: 1, k: Object.fromEntries(left) });
+    const cut = Object.keys(batch.k).filter((key) => resolved.has(key));
+    if (left.length) kept.push({ ...batch, r: 1, ...(cut.length ? { cut: [...(batch.cut ?? []), ...cut] } : {}), k: Object.fromEntries(left) });
   }
   if (kept.length) state.applying = kept;
   else delete state.applying;
 }
 
-async function recoverBatches(state            , prefix        , first            , extractWith             , options               = {})                             {
+async function recoverBatches(state            , prefix        , first            , extractWith                    , options               = {})                             {
   const launch = launchOf(options);
   const batches = (state.applying ?? []).filter((b) => b.p === prefix && b.l !== launch).sort((a, z) => a.id - z.id);
   if (!batches.length) return first;
@@ -1054,6 +1075,7 @@ async function recoverBatches(state            , prefix        , first          
   const sinceRestart = chainsOf((state.applying ?? []).filter((b) => b.p === prefix && b.l === launch), (key) => !chains.has(key));
   const resolved = new Set        ();
   const queue           = [];
+  const changedHere = new Set        ();
   for (const [key, chain] of chains) {
     if (extraction.ignore?.(key)) continue;
     resolved.add(key);
@@ -1064,10 +1086,13 @@ async function recoverBatches(state            , prefix        , first          
     }
     setBase(state, key, actual);
     const target = view.has(key) ? canonical(view.get(key)) : ABSENT;
-    if (actual !== target) queue.push(key);
+    const recordBehind = target !== actual && chain.some((s) => s.from === target) && !chain.some((s) => s.to === target);
+    if (recordBehind) continue;
+    queue.push(key);
+    if (actual !== target) changedHere.add(key);
   }
   keepUnresolved(state, batches, resolved);
-  queueRecovered(state, queue);
+  queueRecovered(state, queue, changedHere);
   return extraction;
 }
 
@@ -1092,7 +1117,7 @@ __define("packages/sync/src/scopeState.ts", function (exports, __require) {
   
                                               
 
-                                                                                                                                                                    
+                                                                                                                                                                             
 
                                                                                                                               
 
@@ -1180,6 +1205,7 @@ const emptyScope = ()             => ({
                                           
                               
                              
+                            
  
 
                             

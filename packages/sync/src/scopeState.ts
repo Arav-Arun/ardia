@@ -16,7 +16,7 @@ export type SnapshotFile = {
 };
 export type SyncFile = LogFile | SnapshotFile;
 
-export type ApplyBatch = { id: number; p: string; l: string; at: number; done?: number; r?: 1; x?: 1; k: Record<string, [from: string | null, to: string | null]> };
+export type ApplyBatch = { id: number; p: string; l: string; at: number; done?: number; r?: 1; cut?: string[]; k: Record<string, [from: string | null, to: string | null]> };
 
 type FileMeta = { d: string; k: "log" | "snapshot" | "bad"; s?: number; vv?: Record<string, number>; at: number; b?: number };
 
@@ -104,6 +104,7 @@ export interface Adapter {
   extractsOnlyFrom?(): object | undefined;
   adoptRemoteOnJoin?: boolean;
   publishAfterPull?: boolean;
+  extractUsesBase?: boolean;
 }
 
 export type ScopeOptions = {
