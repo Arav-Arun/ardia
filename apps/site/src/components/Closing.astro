@@ -142,7 +142,9 @@ const formats = import.meta.env.DEV ? [] : ["avif"];
   .brew code {
     font-family: var(--mono);
     color: var(--ink);
-    white-space: nowrap;
+    display: inline-block;
+    max-width: 100%;
+    overflow-wrap: anywhere;
     user-select: all;
   }
   .closing-stage {
