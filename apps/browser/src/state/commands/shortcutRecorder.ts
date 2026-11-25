@@ -17,10 +17,12 @@ export function shortcutRecorder(record: () => Promise<Shortcut | null>, cancel:
       if (active !== null) return undefined;
       const session = ++sessions;
       active = session;
-      const combo = await record();
-      if (active !== session) return undefined;
-      active = null;
-      return combo;
+      try {
+        const combo = await record();
+        return active === session ? combo : undefined;
+      } finally {
+        if (active === session) active = null;
+      }
     },
     stop() {
       if (active === null) return;

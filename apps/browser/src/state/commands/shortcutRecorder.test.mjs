@@ -48,3 +48,12 @@ test("after one recording ends the next click records again", async () => {
   calls[1](J);
   assert.deepEqual(await second, J);
 });
+
+test("a recording that fails lets the next click record again", async () => {
+  let attempts = 0;
+  const recorder = shortcutRecorder(() => (++attempts === 1 ? Promise.reject(new Error("host refused")) : Promise.resolve(J)), () => {});
+  await assert.rejects(recorder.take(), /host refused/);
+  assert.equal(recorder.recording, false);
+  assert.deepEqual(await recorder.take(), J);
+  assert.equal(attempts, 2);
+});

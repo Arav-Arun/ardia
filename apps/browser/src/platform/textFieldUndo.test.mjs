@@ -277,6 +277,26 @@ scenario("composed") { editor, note in
   note("committed")
   undoAll(editor, note)
 }
+scenario("replacedWithinTyping") { editor, note in
+  type(editor, "g")
+  suggest(editor, "g", "oogle")
+  editor.insertText("G", replacementRange: NSRange(location: 0, length: 1))
+  note("replaced")
+  undoAll(editor, note)
+}
+scenario("replacedIntoSuggestion") { editor, note in
+  type(editor, "g")
+  suggest(editor, "g", "oogle")
+  editor.insertText("x", replacementRange: NSRange(location: 1, length: 3))
+  note("replaced")
+}
+scenario("composedWithoutSuggestion") { editor, note in
+  type(editor, "ab")
+  editor.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+  note(editor.undoManager?.canUndo == true ? "undoableWhileMarked" : "historyLostWhileMarked")
+  editor.insertText("家", replacementRange: NSRange(location: NSNotFound, length: 0))
+  note("committed")
+}
 scenario("accepted") { editor, note in
   type(editor, "sidebar")
   suggest(editor, "sidebar", ".example.com")
@@ -306,6 +326,10 @@ test("the command bar's inline suggestion stays out of Undo and Redo: ⌘Z undoe
     assert.deepEqual(got.wordDeleted, { deleted: "exa", undo: "", redo: "exa", changes: 5 }, "⌥⌫ on a suggestion put it in the undo history, so ⌘Z brought back the suggestion alone");
     assert.deepEqual(got.lineDeleted, { deleted: "exa", undo: "", redo: "exa", changes: 5 }, "deleting to the end of the line put the suggestion in the undo history");
     assert.deepEqual(got.composed, { marked: "exaへんかん", committed: "exa変換", undo: "", redo: "exa変換", changes: 6 }, "an input method's composition replaced the suggestion inside the undo history");
+    assert.deepEqual(got.replacedWithinTyping, { replaced: "G", undo: "", redo: "G", changes: 4 }, "an input method's explicit replacement range inside the typing was moved by taking the suggestion out");
+    assert.equal(got.replacedIntoSuggestion.replaced, "gxle", "a replacement range reaching into the suggestion must replace what it named, not land past the end of a field shortened by taking the suggestion out");
+    assert.equal(got.composedWithoutSuggestion.undoableWhileMarked, "abか", "composing with an input method emptied the typing undo");
+    assert.equal(got.composedWithoutSuggestion.committed, "ab家");
     assert.equal(got.accepted.typed, "sidebar.example.com/a");
     assert.equal(got.accepted.undo, "");
     assert.equal(got.accepted.redo, "sidebar.example.com/a", "an accepted suggestion is part of what Redo gives back");

@@ -50,7 +50,7 @@ export function CommandKeyField({ command, onChange }: { command: string; onChan
     const session = recorder.current;
     if (!session || session.recording) return;
     setRecording(true);
-    const combo = await session.take();
+    const combo = await session.take().catch(() => null);
     if (combo === undefined) return;
     setRecording(false);
     const change = applyRecordedShortcut(item, combo, latest.current);

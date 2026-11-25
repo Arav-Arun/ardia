@@ -71,6 +71,11 @@ enum InlineKeep {
     _ = settle(field, typing: nil)
   }
 
+  private static func settle(_ field: NSTextView, before replacement: NSRange) {
+    guard replacement.location != NSNotFound, suggestionShown(field), NSMaxRange(replacement) > typedLength else { return settle(field) }
+    if suggesting === field { suggesting = nil }
+  }
+
   private static func settle(_ field: NSTextView, typing: String?) -> Bool {
     guard suggesting === field else { return false }
     suggesting = nil
@@ -162,7 +167,7 @@ enum InlineKeep {
         if keeps(field, inserting: value, at: replacement) { return }
         let typed = (value as? String) ?? (value as? NSAttributedString)?.string
         if replacement.location == NSNotFound, let typed, suggestionShown(field), settle(field, typing: typed) { return }
-        settle(field)
+        settle(field, before: replacement)
         original(field, insert, value, replacement)
       }
       class_replaceMethod(editorClass, insert, imp_implementationWithBlock(kept), method_getTypeEncoding(method))
@@ -174,7 +179,7 @@ enum InlineKeep {
       typealias Mark = @convention(c) (NSTextView, Selector, AnyObject, NSRange, NSRange) -> Void
       let original = unsafeBitCast(method_getImplementation(method), to: Mark.self)
       let marked: @convention(block) (NSTextView, AnyObject, NSRange, NSRange) -> Void = { field, value, selected, replacement in
-        if !field.hasMarkedText() { settle(field) }
+        if !field.hasMarkedText() { settle(field, before: replacement) }
         original(field, mark, value, selected, replacement)
       }
       class_replaceMethod(editorClass, mark, imp_implementationWithBlock(marked), method_getTypeEncoding(method))
