@@ -207,7 +207,8 @@ final class PeekStage: ExpoView {
           if leave { _ = self.close(generation) }
         }
       } else {
-        onPeekPinch(["generation": generation, "outcome": outcome.rawValue])
+        let shown: PeekMotion.PinchOutcome = outcome == .close && asking == nil && motion.phase != .closing ? .stay : outcome
+        onPeekPinch(["generation": generation, "outcome": shown.rawValue])
       }
     }
     render(at: now)

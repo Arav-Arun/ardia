@@ -165,6 +165,7 @@ void TabBridge::ForgetLeaveAsk() {
   leave_ask_answered_ = false;
   leave_approved_until_ = base::TimeTicks();
   AnswerLeaveAsk(false);
+  ++leave_ask_generation_;
 }
 
 bool TabBridge::TakeAnsweredLeaveAsk() {
@@ -176,7 +177,19 @@ void TabBridge::AnswerLeaveAsk(bool leave) {
     return;
   }
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-      FROM_HERE, base::BindOnce(std::move(leave_answer_), leave));
+      FROM_HERE,
+      base::BindOnce(
+          [](base::WeakPtr<TabBridge> bridge, int generation,
+             base::OnceCallback<void(bool)> answer, bool leave) {
+            const bool stale =
+                bridge && bridge->leave_ask_generation_ != generation;
+            std::move(answer).Run(leave && !stale);
+            base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+                FROM_HERE,
+                base::BindOnce(&WindowHost::ResumeClosesAfterLeaveAsk));
+          },
+          weak_factory_.GetWeakPtr(), leave_ask_generation_,
+          std::move(leave_answer_), leave));
 }
 
 void TabBridge::BeforeUnloadFired(bool proceed) {

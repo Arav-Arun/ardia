@@ -630,6 +630,37 @@ try {
       assert.equal(out.tabs, 2);
     });
   }
+  if (wanted("window-close-during-leave-prompt")) {
+    await start({});
+    await check("window-close-during-leave-prompt", async (record) => {
+      await run(`open("wc"); return 0;`);
+      await waitFor((s) => s.phase === "open");
+      const page = await app.page("page.html?n=wc");
+      await page.send("Page.enable");
+      const dialogs = [];
+      page.on("Page.javascriptDialogOpening", (d) => dialogs.push(d.type));
+      await page.eval(`addEventListener("beforeunload", (e) => { e.preventDefault(); e.returnValue = ""; }); document.querySelector("#f").value = "draft"; 0`, { userGesture: true });
+      await run(`command("closeTab"); return 0;`);
+      const asked = async (n, ms = 4000) => { const end = Date.now() + ms; while (dialogs.length < n && Date.now() < end) await sleep(30); return dialogs.length >= n; };
+      record.peekAsked = await asked(1);
+      await sleep(1200);
+      await run(`globalThis.expo.modules.ArdiaAppWindows.closeWindow("w1"); return 0;`);
+      await sleep(1500);
+      record.alive = !page.closed && !!(await app.pageTarget("page.html?n=wc"));
+      record.dialogsBeforeStay = dialogs.length;
+      if (record.alive) await page.send("Page.handleJavaScriptDialog", { accept: false }).catch((e) => (record.stayError = String(e.message)));
+      record.windowAsked = await asked(2);
+      if (record.windowAsked) await page.send("Page.handleJavaScriptDialog", { accept: true }).catch(() => {});
+      await sleep(1500);
+      record.goneAfterLeave = !(await app.pageTarget("page.html?n=wc"));
+      page.close();
+      assert.ok(record.peekAsked, "closing the Peek asked");
+      assert.equal(record.alive, true, "closing the window while the Peek's prompt is up never closes the page before it is answered");
+      assert.equal(record.dialogsBeforeStay, 1, "one prompt at a time");
+      assert.ok(record.windowAsked, "after Stay, the window close asks the page itself");
+      assert.equal(record.goneAfterLeave, true, "Leave for the window closes the page");
+    });
+  }
   if (wanted("press-during-zoom")) {
     await start({ peekMesh: "unavailable", peekSlow: "10" });
     await check("press-during-zoom", async (record) => {

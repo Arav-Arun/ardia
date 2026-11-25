@@ -79,6 +79,11 @@ void Terminate() {
   if (g_phase != QuitPhase::kNone) {
     return;
   }
+  if (WindowHost::AnyTabAskingBeforeLeaving()) {
+    NotifyWindowsQuitCancelled();
+    HostQuitCancelled();
+    return;
+  }
   id<NSApplicationDelegate> delegate = NSApp.delegate;
   if (![delegate respondsToSelector:@selector(applicationShouldTerminate:)]) {
     QuitEngine();
@@ -111,6 +116,11 @@ bool IsQuitting() {
 
 void QuitEngine() {
   if (g_phase != QuitPhase::kNone || browser_shutdown::IsTryingToQuit()) {
+    return;
+  }
+  if (WindowHost::AnyTabAskingBeforeLeaving()) {
+    NotifyWindowsQuitCancelled();
+    HostQuitCancelled();
     return;
   }
   const int generation = ++g_quit_generation;
