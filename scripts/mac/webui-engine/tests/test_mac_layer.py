@@ -70,6 +70,12 @@ class PureHeaderTests(unittest.TestCase):
     def test_shell_policy(self):
         compile_and_run(self, TESTS / 'shell_policy_test.cc', self.out / 'shell-policy')
 
+    def test_dialog_policy(self):
+        compile_and_run(self, TESTS / 'dialog_policy_test.cc', self.out / 'dialog-policy')
+
+    def test_window_policy(self):
+        compile_and_run(self, TESTS / 'window_policy_test.cc', self.out / 'window-policy')
+
     def test_page_policy(self):
         scripts = self.out / 'evaluation-scripts.txt'
         compile_and_run(self, TESTS / 'page_policy_test.cc', self.out / 'page-policy',
@@ -121,7 +127,8 @@ class BuildGraphTests(unittest.TestCase):
         official = self.gn.split('if (is_official_build) {', 1)[1].split('} else {', 1)[0]
         self.assertIn('"ac_mac_webui_release.mm"', official)
         for heavy in ('ac_mac_shell_host.mm', 'ac_mac_glass.mm', 'ac_mac_popover.mm', 'ac_mac_menu.mm',
-                      'ac_mac_webui.mm', 'ac_mac_window.mm', 'ac_mac_page_commands.mm', 'ac_mac_page_events.mm',
+                      'ac_mac_webui.mm', 'ac_mac_window.mm', 'ac_mac_dialog.mm', 'ac_mac_shell_lifecycle.mm',
+                      'ac_mac_window_events.mm', 'ac_mac_page_commands.mm', 'ac_mac_page_events.mm',
                       'ac_mac_page_delegate.mm'):
             self.assertNotIn(heavy, official)
 
@@ -339,6 +346,174 @@ class ContractTests(unittest.TestCase):
         for path in re.findall(r'- "([^"]+)"', webui_filter):
             self.assertIn(f'- "{path}"', trigger, path)
         self.assertIn('runs-on: blacksmith-6vcpu-macos-27', workflow.split('webui-engine:', 1)[1].split('\n\n', 1)[0])
+
+    def test_dialogs_are_sheets_that_background_runs_never_show(self):
+        dialog = self.read('ac_mac_dialog.mm')
+        present = dialog.split('void DialogSheets::Present(', 1)[1].split('\n}\n', 1)[0]
+        self.assertLess(present.index('if (background_ || !window) {'), present.index('beginSheetModalForWindow:'))
+        self.assertIn('dialog_policy::Response{.forced = true}', present)
+        self.assertNotIn('runModal', dialog)
+        self.assertIn('dialog_policy::Parse(RequestFrom(request), window_id_)', dialog)
+        self.assertIn('[parent endSheet:shown returnCode:NSModalResponseAbort];', dialog)
+        self.assertIn('.Set("name", dialog_policy::kResolvedEvent)', dialog)
+        self.assertIn('kResolvedEvent = "shell.dialogResolved"', self.read('ac_mac_dialog_policy.h'))
+        lifecycle = self.read('ac_mac_shell_lifecycle.mm')
+        for capability in ('"ArdiaShell.beginDialog",', '"ArdiaShell.cancelDialog",'):
+            self.assertIn(capability, lifecycle.split('kAdvertised[] = {', 1)[1].split('};', 1)[0])
+        self.assertIn('base::DictValue().Set("accepted", true)', lifecycle)
+        desktop = (REPO / 'apps/desktop/src/hostDialogs.ts').read_text()
+        self.assertIn('"ArdiaShell.beginDialog"', desktop)
+        self.assertIn('envelope?.name !== "shell.dialogResolved"', desktop)
+
+    def test_quit_menu_item_runs_the_shell_quit_flow(self):
+        model = self.read('ac_mac_menu_model.h')
+        self.assertIn('command("Quit " + app, "quit", "q", kCommand)', model)
+        self.assertNotIn('role("Quit " + app, Role::kQuit', model)
+        host = self.read('ac_mac_shell_host.mm')
+        self.assertIn('if (command == "quit" && !RendererLive()) {', host)
+        self.assertEqual((REPO / 'apps/desktop/src/quit.ts').read_text().count('export const QUIT_COMMAND = "quit";'), 1)
+        lifecycle = self.read('ac_mac_shell_lifecycle.mm')
+        quit = lifecycle.split('void StartQuit(const window_policy::DownloadAsker& asker) {', 1)[1].split('\n}\n', 1)[0]
+        self.assertIn('RequestWindowClose(generation)', quit)
+        self.assertIn('window_policy::kQuitDeadlineSeconds', quit)
+        self.assertIn('Quit().Expired(generation)', quit)
+        self.assertIn('window_policy::BlocksShutdown(item->IsTransient(),', lifecycle)
+
+    def test_a_confirmed_quit_cancels_downloads_before_it_exits(self):
+        lifecycle = self.read('ac_mac_shell_lifecycle.mm')
+        finish = lifecycle.split('void FinishShellQuit(window_policy::DownloadAuthorization authorized) {', 1)[1].split('\n}\n', 1)[0]
+        self.assertLess(finish.index('window_policy::DownloadsToCancel(true, UnloadHandlersPending(), authorized, ActiveDownloadIds())'),
+                        finish.index('item->Cancel(false);'))
+        self.assertLess(finish.index('item->Cancel(false);'), finish.index('chrome::AttemptExit();'))
+        self.assertNotIn('QuitDownloadAuthorization()', finish)
+        exit_decision = lifecycle.split('void ExitSoon(bool shell_confirmed) {', 1)[1].split('\n}\n', 1)[0]
+        self.assertLess(exit_decision.index('std::exchange(QuitDownloadAuthorization(), {})'), exit_decision.index('PostTask('))
+        self.assertIn('base::BindOnce(&FinishShellQuit, std::move(authorized))', exit_decision)
+        self.assertIn('FinishShellQuit(std::exchange(QuitDownloadAuthorization(), {}));', lifecycle)
+        opened = lifecycle.split('void NoteDialogOpened(', 1)[1].split('\n}\n', 1)[0]
+        self.assertIn('ShownDownloads().Opened(asker, *dialog);', opened)
+        self.assertIn('NoteDialogOpened(window_policy::DownloadAsker{window_id_, live}, *request);', lifecycle)
+        self.assertNotIn('CancelAllDownloads', lifecycle)
+        pending = lifecycle.split('bool UnloadHandlersPending() {', 1)[1].split('\n}\n', 1)[0]
+        self.assertIn('ForEachCurrentBrowserWindowInterfaceOrderedByActivation(', pending)
+        self.assertIn('UnloadController::From(browser)', pending)
+        self.assertIn('TabsNeedBeforeUnloadFired()', pending)
+        self.assertNotIn('Hosts()', pending)
+        shown = lifecycle.split('if (method == "ArdiaShell.downloadsInProgress") {', 1)[1].split('return std::move(done)', 1)[0]
+        self.assertIn('std::set<std::string> shown = ActiveDownloadIds();', shown)
+        self.assertIn('const int count = static_cast<int>(shown.size());', shown)
+        self.assertIn('ShownDownloads().Shown(', shown)
+        self.assertNotIn('BlockingShutdownCountAllProfiles', lifecycle)
+        start = lifecycle.split('void StartQuit(const window_policy::DownloadAsker& asker) {', 1)[1].split('\n}\n', 1)[0]
+        self.assertLess(start.index('ShownDownloads().Take(asker)'), start.index('if (Quit().running())'))
+        self.assertLess(start.index('ShownDownloads().Take(asker)'), start.index('ExitSoon(true)'))
+        answer = lifecycle.split('void NoteDialogAnswer(const base::Value& envelope) {', 1)[1].split('\n}\n', 1)[0]
+        self.assertIn('ShownDownloads().Declined(', answer)
+        self.assertIn('NoteDialogAnswer(envelope);', lifecycle.split('void ShellHostView::StartLifecycle() {', 1)[1].split('\n}\n', 1)[0])
+        exit_soon = lifecycle.split('void ExitSoon(bool shell_confirmed) {', 1)[1].split('\n}\n', 1)[0]
+        self.assertIn('shell_confirmed ? base::BindOnce(&FinishShellQuit, std::move(authorized))', exit_soon)
+        self.assertIn(': base::BindOnce(&chrome::AttemptExit)', exit_soon)
+        self.assertIn('ExitSoon(false);', lifecycle.split('void QuitWithoutShell() {', 1)[1].split('\n}\n', 1)[0])
+        quit = lifecycle.split('void StartQuit(const window_policy::DownloadAsker& asker) {', 1)[1].split('\n}\n', 1)[0]
+        self.assertNotIn('ExitSoon(false)', quit)
+        self.assertNotIn('chrome::AttemptExit()', quit)
+        self.assertIn('FinishShellQuit(std::exchange(QuitDownloadAuthorization(), {}));', quit)
+        self.assertEqual(lifecycle.count('chrome::AttemptExit();'), 1)
+
+    def test_a_late_quit_acknowledgment_cancels_its_close_instead_of_exiting(self):
+        lifecycle = self.read('ac_mac_shell_lifecycle.mm')
+        acknowledge = lifecycle.split('void ShellHostView::AcknowledgeWindowClose(', 1)[1].split('\n}\n', 1)[0]
+        self.assertIn('Quit().Acknowledged(window_id_, quit_generation_)', acknowledge)
+        stale = acknowledge.split('if (step == window_policy::QuitStep::kStale) {', 1)[1].split('}', 1)[0]
+        self.assertIn('CancelWindowClose(*identity', stale)
+        self.assertNotIn('ExitSoon', stale)
+        self.assertNotIn('!Quit().running()', acknowledge)
+        self.assertNotIn('close_quitting_', lifecycle + self.read('ac_mac_shell_host.h'))
+
+    def test_a_newer_quit_reissues_an_in_flight_close(self):
+        lifecycle = self.read('ac_mac_shell_lifecycle.mm')
+        request = lifecycle.split('base::DictValue ShellHostView::RequestWindowClose(', 1)[1].split('\n}\n', 1)[0]
+        self.assertLess(request.index('window_policy::PlanCloseRequest('), request.index('close_.Request(renderer_generation_)'))
+        reissue = request.split('case window_policy::CloseRequestPlan::kReissue:', 1)[1].split('break;', 1)[0]
+        self.assertIn('CancelWindowClose(close_.identity()', reissue)
+        self.assertNotIn('quit_generation_ = quit_generation;\n  }\n  const bool fresh', request)
+
+    def test_the_sidebar_edge_polls_while_over_outside_the_window(self):
+        events = self.read('ac_mac_window_events.mm')
+        poll = events.split('void WindowEvents::PollPointer(bool on) {', 1)[1].split('\n}\n', 1)[0]
+        self.assertIn('[state_->pointer_poll invalidate];', poll)
+        self.assertIn('scheduledTimerWithTimeInterval:kPointerPollSeconds', poll)
+        self.assertIn('kPointerPollSeconds = 0.1', events)
+        self.assertIn('PollPointer(false);', events.split('void WindowEvents::WatchPointer(bool on) {', 1)[1].split('\n}\n', 1)[0])
+        lifecycle = self.read('ac_mac_shell_lifecycle.mm')
+        self.assertIn('window_policy::PollsOutside(edge_.over(), pointer->x, pointer->y, pointer->width, pointer->height)', lifecycle)
+        watch = lifecycle.split('void ShellHostView::SidebarEdgeCall(', 1)[1].split('\n}\n', 1)[0]
+        self.assertLess(watch.index('window_events_->LivePointer()'), watch.index('edge_.Watch(hold, side, while_pressed)'))
+        self.assertLess(watch.index('edge_.Place('), watch.index('edge_.Watch(hold, side, while_pressed)'))
+        self.assertLess(watch.index('edge_.Watch(hold, side, while_pressed)'), watch.index('ReconcilePointerPoll(live);'))
+        self.assertIn('ReconcilePointerPoll(pointer);', lifecycle.split('void ShellHostView::OnPointerMoved(', 1)[1].split('\n}\n', 1)[0])
+
+    def test_the_sidebar_edge_lets_go_when_another_window_covers_the_pointer(self):
+        events = self.read('ac_mac_window_events.mm')
+        self.assertIn('NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways | NSTrackingInVisibleRect', events)
+        self.assertIn('NSApplicationDidResignActiveNotification', events)
+        self.assertIn('windowNumberAtPoint:screen belowWindowWithWindowNumber:0', events)
+        self.assertIn('removeTrackingArea:state_->pointer_area', events)
+        lifecycle = self.read('ac_mac_shell_lifecycle.mm')
+        self.assertIn('ReportSidebarEdge(edge_.Covered());', lifecycle.split('void ShellHostView::OnPointerMoved(', 1)[1].split('\n}\n', 1)[0])
+
+    def test_window_close_runs_the_shared_close_protocol(self):
+        lifecycle = self.read('ac_mac_shell_lifecycle.mm')
+        for name in ('shell.closeRequested', 'shell.closeCancelled'):
+            self.assertIn(f'"{name}"', lifecycle)
+        for capability in ('requestWindowClose', 'beginWindowCloseDrain', 'acknowledgeWindowClose', 'rejectWindowClose'):
+            self.assertIn(f'"ArdiaShell.{capability}",', lifecycle)
+        acknowledge = lifecycle.split('void ShellHostView::AcknowledgeWindowClose(', 1)[1].split('\n}\n', 1)[0]
+        self.assertLess(acknowledge.index('close_.Acknowledge('), acknowledge.index('WriteSessionInBackground('))
+        self.assertIn('window_policy::ValidDeparture(', acknowledge)
+        self.assertNotIn('AttemptExit', self.read('ac_mac_shell_calls.mm'))
+        shell = (REPO / 'apps/desktop/src/shims/shell.tsx').read_text()
+        for method in ('requestWindowClose', 'beginWindowCloseDrain', 'acknowledgeWindowClose', 'rejectWindowClose'):
+            self.assertIn(f'"{method}"', shell)
+
+    def test_window_state_is_real_and_reported(self):
+        calls = self.read('ac_mac_shell_calls.mm')
+        self.assertNotIn('.Set("maximized", false)', calls)
+        self.assertIn('if (HandlesLifecycleCall(method)) {', calls)
+        events = self.read('ac_mac_window_events.mm')
+        for name in ('NSWindowDidBecomeKeyNotification', 'NSWindowDidResignKeyNotification',
+                     'NSWindowDidResizeNotification', 'NSWindowDidEnterFullScreenNotification',
+                     'NSWindowDidExitFullScreenNotification', 'NSWindowWillCloseNotification'):
+            self.assertIn(name, events)
+        self.assertIn('window_policy::StateOf(window.isZoomed, FullScreen(), window.isMiniaturized)', events)
+        lifecycle = self.read('ac_mac_shell_lifecycle.mm')
+        self.assertIn('Emit("ArdiaShell", "windowState", base::Value(WindowStateValue()));', lifecycle)
+        for kind in ('"focus"', '"blur"', '"frame"', '"fullScreen"', '"close"', '"sidebarEdge"'):
+            self.assertIn(f'.Set("type", {kind})', lifecycle)
+        window = self.read('ac_mac_window.mm')
+        self.assertIn('window_policy::kMinWidth', window)
+        self.assertIn('KeepMinimumSize(widget);', window.split('void ApplyShellWindowStyle(', 1)[1].split('\n}\n', 1)[0])
+        policy = self.read('ac_mac_window_policy.h')
+        self.assertIn('kMinWidth = 720', policy)
+        self.assertIn('kMinHeight = 460', policy)
+        swift = (REPO / 'apps/browser/macos/Ardia-macOS/BrowserWindow.swift').read_text()
+        self.assertIn('NSSize(width: 720, height: 460)', swift)
+
+    def test_background_never_moves_the_window_into_view(self):
+        lifecycle = self.read('ac_mac_shell_lifecycle.mm')
+        for skipped in ('full screen toggle skipped (background)', 'minimize skipped (background)',
+                        'skipped (background)'):
+            self.assertIn(skipped, lifecycle)
+
+    def test_shortcut_recording_and_switcher_capture_are_served(self):
+        lifecycle = self.read('ac_mac_shell_lifecycle.mm')
+        self.assertIn('focus_manager_->set_shortcut_handling_suspended(on);', lifecycle)
+        self.assertIn('RestoreSwitcherSource();', lifecycle)
+        host = self.read('ac_mac_shell_host.mm')
+        self.assertIn('if (command == "tabSwitcher" && !switcher_capture_) {', host)
+        runtime = (REPO / 'apps/desktop/src/shortcutsRuntime.ts').read_text()
+        for method in ('ArdiaShell.setShortcutRecording', 'ArdiaShell.setSwitcherCapture', 'ArdiaShell.restoreShortcutFocus'):
+            self.assertIn(f'"{method}"', runtime)
 
     def test_caption_double_click_is_served_and_advertised(self):
         calls = self.read('ac_mac_shell_calls.mm')

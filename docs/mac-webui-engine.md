@@ -66,6 +66,30 @@ that branch). It is a development tool and never runs in a release. Like Windows
   Menu commands arrive as `ArdiaShell.onCommand` with `source: "menu"`. Only `setMainMenu` installs the Services, Window and Help menus.
 `shell.showContextMenu` pops an `NSMenu`;
   with `ARDIA_BACKGROUND=1` it is logged instead. The menu model and its validation are in `ac_mac_menu_model.h`.
+- **Quit.** The menu's Quit item (⌘Q) is the `quit` command, so `apps/desktop` asks about quitting and active
+  downloads (`ArdiaShell.downloadsInProgress`) first. `ArdiaShell.quit` then asks every live window to flush its
+  session through the close protocol and exits once all have acknowledged, or after 10 s. A window that refuses
+  cancels the quit, and a window that answers after its quit ended keeps its window open instead of exiting. The
+  shell already asked about active downloads, so that quit cancels the ones it reported before it exits and
+  Chromium doesn't ask again. It counts downloads the way Chromium does at shutdown, and the list belongs to the window that asked: declining
+  the download prompt drops it (declining some other question doesn't), so a later Quit can't cancel those downloads without asking again. A download that started
+  while the windows flushed is left for Chromium to ask about,
+  and if any tab in any browser window still has a "Leave site?" handler to run, no download is cancelled. A
+  second Quit while a window is still flushing for the first gives that window a fresh close. With no live shell, Quit exits at once and Chromium asks about downloads itself.
+- **Dialogs.** `ArdiaShell.beginDialog` and `cancelDialog` show `confirm` and `prompt` as an `NSAlert` sheet on the
+  window, one at a time, and answer with `shell.dialogResolved`. With `ARDIA_BACKGROUND=1` a dialog is logged and
+  answered as cancelled. The request checks are in `ac_mac_dialog_policy.h`.
+- **Window close.** `requestWindowClose`, `beginWindowCloseDrain`, `acknowledgeWindowClose` and `rejectWindowClose`
+  follow Linux's protocol (`shell.closeRequested`, `shell.closeCancelled`). The red traffic light asks the shell first
+  instead of closing at once. A departing window's session is saved before it closes.
+- **Window state and controls.** `ArdiaShell.windowState` reads the real window (zoomed, full screen). The host sends
+  `windowState` and `onWindowEvent` (`focus`, `blur`, `frame`, `maximized`, `fullScreen`, `close`, `sidebarEdge`)
+  as the window changes. The sidebar edge lets go when the pointer leaves for another app's window, and while it is
+  over just outside the window it checks the pointer every 100 ms. It also serves `toggleFullScreen`, `restoreFullScreen`, `setWindowTitle`, `minimizeWindow`,
+  `toggleMaximizeWindow`, `setWindowFrame`, `setAppearance` and `watchSidebarEdge`, plus `setShortcutRecording`,
+  `setSwitcherCapture` and `restoreShortcutFocus` for the shortcut recorder and the tab switcher. Browser windows
+  are at least 720 × 460, as in the React Native app. A background instance never goes full screen or minimizes.
+  These checks are in `ac_mac_window_policy.h`.
 - **Unclaimed tabs.** Tabs Chromium opens on its own (`target=_blank`, `window.open`) are offered as `ArdiaTabs`
   `unclaimed` and through `ArdiaTabs.unclaimedTabs`, and `tab.create` adopts an offered one by `adoptId` (`tab:<id>`).
 - **Page commands.** `tab.command` serves the shared `WebViewHandle` set with Linux's names, arguments and replies

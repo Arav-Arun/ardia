@@ -8,6 +8,7 @@
 #include <set>
 #include <utility>
 
+#include "ardia/mac/ac_mac_dialog.h"
 #include "ardia/mac/ac_mac_glass.h"
 #include "ardia/mac/ac_mac_menu.h"
 #include "ardia/mac/ac_mac_page_commands.h"
@@ -290,6 +291,8 @@ MenuCommandHandler MainMenuHandler() {
     }
     if (target) {
       target->OnMenuCommand(choice.command, choice.argument);
+    } else if (choice.command == "quit") {
+      QuitWithoutShell();
     }
   });
 }
@@ -506,6 +509,7 @@ void ShellHostView::Initialize() {
                                  base::Value(std::move(data)));
           },
           GetWeakPtr()));
+  StartLifecycle();
   browser_->GetTabStripModel()->AddObserver(this);
   WatchWindowDrag();
   LayoutOverlay();
@@ -528,6 +532,7 @@ void ShellHostView::DetachBrowser() {
   }
   bindings_.clear();
   StopWatchingWindowDrag();
+  StopLifecycle();
   popovers_.reset();
   glass_.reset();
   if (focus_manager_) {
@@ -885,6 +890,7 @@ void ShellHostView::RetireRenderer() {
     focus_manager_->UnregisterAccelerators(this);
   }
   shortcuts_.clear();
+  RetireLifecycle();
 }
 
 void ShellHostView::DeliverReply(base::WeakPtr<ShellBridge> handler,
@@ -1355,8 +1361,11 @@ std::optional<std::string> ShellHostView::PopoverBootstrapJson(
 
 void ShellHostView::OnMenuCommand(const std::string& command,
                                   const std::string& argument) {
-  if (command.empty()) {
+  if (command.empty() || shortcut_recording_) {
     return;
+  }
+  if (command == "quit" && !RendererLive()) {
+    return QuitWithoutShell();
   }
   if (command == "focusCommandBar" || command == "newTab") {
     FocusShell();
@@ -1691,7 +1700,10 @@ bool ShellHostView::AcceleratorPressed(const ui::Accelerator& accelerator) {
     return true;
   }
   const std::string command = Text(found->second, "command");
-  if (command == "focusCommandBar" || command == "newTab") {
+  if (command == "tabSwitcher" && !switcher_capture_) {
+    NoteSwitcherSource();
+  }
+  if (command == "focusCommandBar" || command == "newTab" || command == "tabSwitcher") {
     FocusShell();
   }
   base::DictValue payload;
