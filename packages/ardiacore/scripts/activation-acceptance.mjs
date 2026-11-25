@@ -1066,8 +1066,10 @@ try {
       await sleep(1500);
       const stripChange = await coverAndWatch("an unrelated tab closed 600 ms after covering", async () => {
         await sleep(600);
+        const atClose = await pipState(call.t);
+        if (atClose.visibility !== "visible" || atClose.open) throw new Error(`the unrelated tab has to close while the call page is still visible and not popped out: ${JSON.stringify(atClose)}`);
         await closeTab(unrelated);
-        return { closedAfterMs: 600 };
+        return { closedAfterMs: 600, visibilityAtClose: atClose.visibility };
       });
       await js(call.t, "leave()");
       await sleep(2500);
