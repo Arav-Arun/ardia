@@ -163,3 +163,43 @@ test("Esc with a Peek's Find bar open closes only Find, keeps the Peek and gives
     assert.equal(shownPeek(S(), w), undefined, `${where}: the next Esc closes the Peek`);
   }
 });
+
+test("⌘W pressed while a Close-button close is already animating takes no credit for it", async () => {
+  sharingOn();
+  const { w, peek } = windowWithPeek();
+  webviews.set(peek, { focus: async () => {}, stopFinding: async () => {} });
+  heldClose(w, peek);
+  openFind(peek);
+  const { dismissPeek } = await import("./actions.ts");
+  dismissPeek(w);
+  closeKey(w);
+  finishPeek(peek);
+  await settle();
+  assert.equal(shownPeek(S(), w), undefined);
+  assert.equal(takePeekMotionCounts().peek_close_key_closes_with_find, 0);
+});
+
+test("a close that never completes leaves nothing behind once its Peek is replaced or its window closes", async () => {
+  const { trackedPeekCloses, startPeeks } = await import("./actions.ts");
+  startPeeks();
+  sharingOn();
+  const { w, a, peek } = windowWithPeek();
+  webviews.set(peek, { focus: async () => {}, stopFinding: async () => {} });
+  heldClose(w, peek);
+  openFind(peek);
+  closeKey(w);
+  assert.ok(trackedPeekCloses() > 0, "the close is pending while it animates");
+  S().openPeek(a, "https://peek.example/replacement", { x: 100, y: 200 });
+  await settle();
+  assert.equal(trackedPeekCloses(), 0, "replacing the Peek forgets its pending close");
+  const second = shownPeek(S(), w).tabId;
+  webviews.set(second, { focus: async () => {}, stopFinding: async () => {} });
+  heldClose(w, second);
+  openFind(second);
+  closeKey(w);
+  assert.ok(trackedPeekCloses() > 0);
+  S().closeWindow(w);
+  await settle();
+  assert.equal(trackedPeekCloses(), 0, "closing the window forgets it too");
+  assert.equal(takePeekMotionCounts().peek_close_key_closes_with_find, 0);
+});

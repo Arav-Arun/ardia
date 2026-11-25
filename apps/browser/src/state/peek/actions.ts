@@ -37,20 +37,41 @@ const motionOf = (windowId: string) => {
   return motion && motion.tabId === shownPeek(store(), windowId)?.tabId ? motion : undefined;
 };
 
-export function dismissPeek(windowId: string) {
-  const peek = shownPeek(store(), windowId);
-  if (!peek) return;
-  const motion = motionOf(windowId);
-  if (motion) void motion.close();
-  else finishPeek(peek.tabId);
+const closesStarted = new Set<string>();
+const closingByKeyWithFind = new Map<string, ConsentToken | null>();
+
+export const trackedPeekCloses = () => closesStarted.size + closingByKeyWithFind.size;
+
+function forgetClose(tabId: string) {
+  closesStarted.delete(tabId);
+  closingByKeyWithFind.delete(tabId);
 }
 
-const closingByKeyWithFind = new Map<string, ConsentToken | null>();
+function forgetGoneCloses(s: BrowserState) {
+  const live = peekTabIds(s.peeks);
+  for (const id of [...closesStarted, ...closingByKeyWithFind.keys()]) if (!live.has(id)) forgetClose(id);
+}
+
+function dismissShownPeek(windowId: string, keyWithFind?: { consent: ConsentToken | null }) {
+  forgetGoneCloses(store());
+  const peek = shownPeek(store(), windowId);
+  if (!peek) return;
+  const first = !closesStarted.has(peek.tabId);
+  closesStarted.add(peek.tabId);
+  if (first && keyWithFind) closingByKeyWithFind.set(peek.tabId, keyWithFind.consent);
+  const motion = motionOf(windowId);
+  if (!motion) return finishPeek(peek.tabId);
+  void motion.close().then((accepted) => {
+    if (!accepted && first) forgetClose(peek.tabId);
+  });
+}
+
+export const dismissPeek = (windowId: string) => dismissShownPeek(windowId);
 
 export function finishPeek(tabId: string) {
   const withFind = closingByKeyWithFind.has(tabId);
   const consent = closingByKeyWithFind.get(tabId) ?? null;
-  closingByKeyWithFind.delete(tabId);
+  forgetClose(tabId);
   const source = peekSourceOf(store(), tabId);
   if (!source) return;
   store().closePeek(source);
@@ -64,7 +85,7 @@ const focusSoon = (windowId: string, tabId: string) =>
   }, 50);
 
 export function promotePeekNow(windowId: string, tabId: string) {
-  closingByKeyWithFind.delete(tabId);
+  forgetClose(tabId);
   const peek = shownPeek(store(), windowId);
   if (peek?.tabId !== tabId) {
     endPeekToolbarPreview(windowId, tabId);
@@ -126,11 +147,9 @@ export function runPeekCommand(command: string, windowId: string, consent: Conse
     return true;
   }
   if (command !== "closeTab" || s.windowUi[windowId]?.panel.open) return false;
-  if (s.find[peek.tabId]?.open) {
-    closeFind(peek.tabId, { refocus: false });
-    closingByKeyWithFind.set(peek.tabId, consent);
-  }
-  dismissPeek(windowId);
+  const findOpen = !!s.find[peek.tabId]?.open;
+  if (findOpen) closeFind(peek.tabId, { refocus: false });
+  dismissShownPeek(windowId, findOpen ? { consent } : undefined);
   return true;
 }
 
@@ -161,6 +180,7 @@ export function startPeeks() {
   sync();
   useBrowser.subscribe(sync);
   useBrowser.subscribeTo(["peeks", "tabs"], (s, prev) => {
+    if (s.peeks !== prev.peeks) forgetGoneCloses(s);
     if (s.peeks !== prev.peeks) bumpOnFirstLoad(s);
     if (s.tabs !== prev.tabs || s.peeks !== prev.peeks) landBackOnSite(s);
   });
