@@ -647,6 +647,33 @@ test("windows webui native update policy keeps every hostile input and call argu
   }
 });
 
+test("a synced pinned tile's letters are at most two visible characters, whatever the record holds", async () => {
+  const { pinnedLettersAdapter } = await import("./state/sync/pinnedLettersAdapter.ts");
+  const { cleanTileLetters, TILE_LETTERS_MAX, TILE_LETTERS_MAX_LENGTH } = await import("./lib/tileLetter.ts");
+  const { graphemeClusters } = await import("./lib/graphemes.ts");
+  const S = () => useBrowser.getState();
+  S().hydrate({});
+  const w = S().createWindow({ url: "https://tile.example/" });
+  const id = S().windows[w].tabIds[0];
+  S().pinTabs([id], true);
+  const profileId = S().tabs[id].profileId;
+  const adapter = pinnedLettersAdapter(profileId);
+  const key = `plet:${S().tabs[id].pinKey ?? id}`;
+  const records = { known: () => true, defer: () => {}, landed: () => {}, held: () => false, now: 0, horizon: 0, joined: true };
+  const apply = (value) => adapter.apply(new Map([[key, value]]), new Set([key]), () => undefined, records);
+  apply("Ab");
+  assert.equal(S().tabs[id].tileLetters, "AB", "positive control: plain letters land");
+  for (const { value } of HOSTILE_VALUES) {
+    apply(value);
+    const letters = S().tabs[id].tileLetters;
+    if (letters === undefined) continue;
+    assert.equal(typeof letters, "string");
+    assert.ok(!/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}\s]/u.test(letters.replace(/[\u200C\u200D\u{E0020}-\u{E007F}]/gu, "")) && !/(?![\u200C\u200D\u{E0020}-\u{E007F}])\p{Cf}/u.test(letters), JSON.stringify(letters));
+    assert.ok(letters.length <= TILE_LETTERS_MAX_LENGTH && graphemeClusters(letters).length <= TILE_LETTERS_MAX, JSON.stringify(letters));
+    assert.equal(cleanTileLetters(letters), letters, "what lands is already clean, so it doesn't change on the next sync");
+  }
+});
+
 test("socket tabs.input: every hostile value reaches the engine only as a checked action, point, key or text", () => {
   for (const value of HOSTILE_VALUES.map((h) => h.value)) {
     for (const params of [{ action: value, x: 1, y: 1 }, { action: "click", x: value, y: 1 }, { action: "key", key: value }, { action: "key", key: "a", code: value }, { action: "text", text: value }, { action: "click", x: 1, y: 1, modifiers: [value] }]) {
