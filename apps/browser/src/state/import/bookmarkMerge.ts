@@ -98,7 +98,11 @@ function matchFolders(m: Merging, folders: ImportedNode[], places: Place[]): Map
     if (!candidates.length) continue;
     const holders = new Map<string, number[]>();
     candidates.forEach((c, i) => {
-      for (const page of pagesUnder(m, c.id)) holders.set(page, [...(holders.get(page) ?? []), i]);
+      for (const page of pagesUnder(m, c.id)) {
+        const list = holders.get(page);
+        if (list) list.push(i);
+        else holders.set(page, [i]);
+      }
     });
     const edges: FolderEdge[] = [];
     sources.forEach((source, s) => {

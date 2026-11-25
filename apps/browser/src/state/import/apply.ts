@@ -58,7 +58,7 @@ export function importBookmarks(profileId: string, root: ImportedNode | undefine
   const merged = mergeImportedBookmarks(nodes, seen, [{ rootId: roots.bar, nodes: toolbar }, { rootId: roots.other, nodes: other }], { source: browserName, engine, made });
   if (merged.links || merged.folders) useBrowser.setState({ bookmarks: { ...s.bookmarks, nodes } });
   const kept = Object.entries(made).filter(([id, f]) => f.engine !== engine || !s.bookmarksReady[engine] || nodes[id]);
-  if (Object.keys(merged.made).length || kept.length !== Object.keys(made).length) saveImportedFolders({ ...Object.fromEntries(kept), ...merged.made });
+  if (Object.keys(merged.made).length || kept.length !== Object.keys(made).length) saveImportedFolders({ ...Object.fromEntries(kept), ...merged.made }, consent ?? null);
   noteRepeatBookmarks({ skipped: merged.skipped, foldersReused: merged.intoEarlier ? 1 : 0 }, consent);
   return merged.links;
 }

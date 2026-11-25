@@ -83,7 +83,9 @@ export function pairFolders(sourceCount: number, candidateCount: number, edges: 
   const groups = new Map<number, FolderEdge[]>();
   for (const e of edges) {
     const key = root(e.source);
-    groups.set(key, [...(groups.get(key) ?? []), e]);
+    const list = groups.get(key);
+    if (list) list.push(e);
+    else groups.set(key, [e]);
   }
   const paired = new Array<number>(sourceCount).fill(-1);
   for (const group of groups.values()) {

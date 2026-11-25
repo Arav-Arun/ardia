@@ -1,6 +1,8 @@
 import { readDocument, writeDocument } from "../../platform/documents";
 import { isFields, isString } from "../../lib/decode";
 import { parseSaved, unchanged, versionedJson, type Migrations } from "../../lib/savedDocument";
+import type { ConsentToken } from "../telemetry/choice";
+import { warnFor } from "../telemetry/consoleConsent";
 import type { ImportedFolder, ImportedFolders } from "./bookmarkMerge";
 
 export const IMPORTED_FOLDERS_DOCUMENT = "imported-bookmarks.json";
@@ -28,10 +30,10 @@ export function readImportedFolders(): ImportedFolders {
   }
 }
 
-export function saveImportedFolders(folders: ImportedFolders) {
+export function saveImportedFolders(folders: ImportedFolders, consent: ConsentToken | null) {
   try {
     writeDocument(IMPORTED_FOLDERS_DOCUMENT, versionedJson({ folders }, VERSION));
   } catch (error) {
-    console.warn("Couldn't save which bookmark folders imports made", error);
+    warnFor(consent, "[import] couldn't save which bookmark folders imports made", error);
   }
 }

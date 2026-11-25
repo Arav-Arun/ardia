@@ -118,6 +118,7 @@ issue	hash	file	test
 2389	286b3766a861cc3f	apps/browser/src/state/import/repeatBookmarks.test.mjs	importing the same Dia bookmarks again adds no second Imported from Dia folder (#2389)
 2389	1752315936f0a1f1	apps/browser/src/state/import/repeatBookmarks.test.mjs	two folders of the same name each take their own new links, matched by the links they share
 2389	db26ed91c007d080	apps/browser/src/state/import/repeatBookmarks.test.mjs	which folders an import made is saved, so a relaunch keeps matching them
+2389	f31b9e996d103eab	apps/browser/src/state/tabs/pageKeys.test.mjs	a line break or tab inside an address is dropped, as the URL parser does, and never throws
 2492	f666f5d810bba18b	apps/browser/src/state/tabs/tabs.test.mjs	tabs closed together come back to their places, from ⇧⌘T or Recently Closed in any order (#2492)
 2572	80a3ca73b2bdbcc1	apps/browser/src/state/commands/menuState.test.mjs	the menu state tells the shell whether links from other apps open in Little Ardia
 2695	382756f4c8c1feb5	apps/browser/src/components/ui/pressFeedback.test.mjs	a pressed glyph dips a little and comes back without a bounce
