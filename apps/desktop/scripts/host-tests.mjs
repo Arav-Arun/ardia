@@ -29,7 +29,7 @@ const SHARED_TESTS = [
   "hostReport.test.mjs", "engineCapabilities.test.mjs", "hostAppearance.test.mjs", "tabSwitchAhead.test.mjs",
   "shellPainted.test.mjs", "introMusic.test.mjs", "hostCrashReports.test.mjs", "windowControls.test.mjs",
   "readerService.test.mjs", "hostKillSwitches.test.mjs", "fieldTiming.test.mjs", "launchMeasure.test.mjs",
-  "keyringTelemetry.test.mjs"
+  "keyringTelemetry.test.mjs", "textInputCaret.test.mjs"
 ];
 
 const root = fileURLToPath(new URL("../", import.meta.url));
