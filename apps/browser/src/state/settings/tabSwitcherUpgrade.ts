@@ -26,7 +26,8 @@ export function withTabSwitcherModes<S extends object>(saved: S | undefined, met
   const settingsMeta = { chosen: meta.chosen, inferred: [...meta.inferred, TAB_SWITCHER_MODES_APPLIED] };
   if (!saved) return { settings: saved, settingsMeta };
   const { fields, stepped } = upgradedFields(saved as Record<string, unknown>, usedToStep);
-  return { settings: fields as S, settingsMeta: stepped ? { ...settingsMeta, chosen: [...new Set([...meta.chosen, ...Object.keys(STEPPED)])] } : settingsMeta };
+  const marked = (keys: string[]) => [...new Set([...keys, ...Object.keys(STEPPED)])];
+  return { settings: fields as S, settingsMeta: stepped ? { chosen: marked(settingsMeta.chosen), inferred: marked(settingsMeta.inferred) } : settingsMeta };
 }
 
 export function withSyncedTabSwitcherModes(patch: Partial<Settings>, modesExplicit: boolean): Partial<Settings> {

@@ -4,7 +4,7 @@ const stub = await import("../../test-native/index.ts");
 const { useBrowser } = await import("../browser/store.ts");
 const { Clock, emptyScope, syncScope } = await import("@ardia/sync");
 const { useEditClock } = await import("./editClock.ts");
-const { settingsAdapter } = await import("./settingsAdapter.ts");
+const { settingsAdapter, settleSettingsFromSavedSync } = await import("./settingsAdapter.ts");
 const { ctrlTabKeys } = await import("../commands/commandShortcuts.ts");
 
 const S = () => useBrowser.getState();
@@ -158,4 +158,37 @@ test("two upgraded Macs that inferred stepping from an older Mac both keep it wh
   await c.sync();
   assert.deepEqual(c.modes(), { tabSwitcherOrder: "inOrder", tabSwitcherView: "none" }, "a Mac joining later agrees");
   for (const device of [a, b, c]) assert.equal(device.with(() => ctrlTabKeys()), "switcher", device.id);
+});
+
+test("shortcuts chosen here, a legacy stepping record and an idle sync leave a joining Mac stepping too", async () => {
+  const folder = new Folder();
+  const b = new Device("B", folder);
+  b.with(() => S().updateSettings({ shortcuts: { reload: ["r", "command", "shift"] } }));
+  await b.sync();
+  const legacy = new Peer("old", folder, { shortcuts: STEP });
+  await legacy.sync();
+  await b.sync();
+  await b.sync();
+  assert.deepEqual(b.modes(), { tabSwitcherOrder: "inOrder", tabSwitcherView: "none" });
+  const c = new Device("C", folder);
+  await c.sync();
+  assert.deepEqual(c.modes(), b.modes(), "the joining Mac agrees after B's idle sync");
+  assert.equal(c.with(() => ctrlTabKeys()), "switcher");
+});
+
+test("a Mac upgrading with legacy stepping keys takes the Compact list another Mac had already synced, instead of publishing None over it", async () => {
+  const folder = new Folder();
+  const newer = new Peer("new", folder, { tabSwitcherView: "compactList" });
+  await newer.sync();
+  const d = new Device("D", folder);
+  await d.sync();
+  d.with(() => S().hydrate({ settings: { shortcuts: { ...STEP } }, settingsMeta: { chosen: ["shortcuts"], inferred: [] } }));
+  assert.equal(d.modes().tabSwitcherView, "none", "the launch upgrade infers stepping from the keys");
+  d.with(() => settleSettingsFromSavedSync(d.scope, true));
+  await d.sync();
+  assert.equal(d.modes().tabSwitcherView, "compactList", "the synced choice wins over the inference");
+  assert.notEqual(d.published().tabSwitcherView, "none");
+  const e = new Device("E", folder);
+  await e.sync();
+  assert.equal(e.modes().tabSwitcherView, "compactList", "and no other Mac is overwritten");
 });

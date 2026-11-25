@@ -23,6 +23,7 @@ test("Next Tab and Previous Tab bound to ⌃Tab become stepping, once, and the c
   assert.equal(once.settings.tabSwitcherOrder, "inOrder");
   assert.equal(once.settings.tabSwitcherView, "none");
   assert.ok(once.settingsMeta.chosen.includes("tabSwitcherOrder") && once.settingsMeta.chosen.includes("tabSwitcherView"));
+  assert.ok(once.settingsMeta.inferred.includes("tabSwitcherOrder") && once.settingsMeta.inferred.includes("tabSwitcherView"), "inferred, so a choice synced from elsewhere still wins");
   assert.ok(once.settingsMeta.inferred.includes(TAB_SWITCHER_MODES_APPLIED));
   const again = mac({ ...once.settings, tabSwitcherOrder: "recent" }, once.settingsMeta);
   assert.equal(again.settings.tabSwitcherOrder, "recent", "a later pick is never undone");

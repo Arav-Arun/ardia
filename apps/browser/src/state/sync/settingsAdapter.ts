@@ -33,14 +33,20 @@ export const settingsAdapter: Adapter = {
       const last = base(recordKey(name)) as { v?: unknown } | undefined;
       return last?.v !== undefined && last.v !== null && !validSettingValue(name, fromRecord(name, last.v));
     };
+    const syncedElsewhere = (name: SettingKey) => {
+      const last = base(recordKey(name)) as { v?: unknown } | undefined;
+      return last?.v !== undefined && last.v !== null;
+    };
+    const isMode = (name: SettingKey) => (TAB_SWITCHER_MODES as readonly string[]).includes(name);
     for (const name of SYNCED_SETTINGS) {
       const value = settings[name] as unknown;
       if (!chosen.has(name) || filledIn(name, value) || fromNewerVersion(name)) continue;
+      if (isMode(name) && inferred.has(name) && syncedElsewhere(name)) continue;
       values.set(recordKey(name), { v: toRecord(name, value) });
     }
     if (values.has(recordKey("shortcuts"))) {
       for (const name of TAB_SWITCHER_MODES) {
-        if (values.has(recordKey(name)) || settings[name] === DEFAULT_SETTINGS[name] || fromNewerVersion(name)) continue;
+        if (values.has(recordKey(name)) || settings[name] === DEFAULT_SETTINGS[name] || fromNewerVersion(name) || syncedElsewhere(name)) continue;
         values.set(recordKey(name), { v: settings[name] });
       }
     }
@@ -75,11 +81,13 @@ export const settingSyncedIn = (records: Record<string, SyncRecord>, name: Setti
 
 export function settingsToReapply(records: Record<string, SyncRecord>): string[] {
   const settings = store().settings;
-  const chosen = new Set(store().settingsMeta.chosen);
+  const meta = store().settingsMeta;
+  const chosen = new Set(meta.chosen);
+  const inferredMode = (name: SettingKey) => (TAB_SWITCHER_MODES as readonly string[]).includes(name) && meta.inferred.includes(name);
   return SYNCED_SETTINGS.flatMap((name) => {
     const key = recordKey(name);
     const value = fromRecord(name, (fromLegacy(records[key]?.v) as { v?: unknown } | null | undefined)?.v);
-    if (chosen.has(name) || !validSettingValue(name, value)) return [];
+    if ((chosen.has(name) && !inferredMode(name)) || !validSettingValue(name, value)) return [];
     return canonical(value) === canonical(settings[name]) ? [] : [key];
   });
 }
