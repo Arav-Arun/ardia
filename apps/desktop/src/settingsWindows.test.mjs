@@ -59,7 +59,9 @@ test("Manage Extensions on Linux and Windows carries the Extensions row to the S
   linux.openSettings("profiles", "work", null, "profiles.extensions");
   await new Promise(setImmediate);
   const request = windows.open.get("settings");
-  assert.deepEqual(request.settings, { pane: "profiles", profileId: "work", detail: null, reveal: "profiles.extensions" });
+  const { revealId, ...settings } = request.settings;
+  assert.deepEqual(settings, { pane: "profiles", profileId: "work", detail: null, reveal: "profiles.extensions" });
+  assert.match(revealId, /^[0-9a-f-]{36}$/);
 
   shared.useSettingsNav.setState({ pane: "general", profileId: null, detail: null, back: [], forward: [] });
   setSettingsQuery("cookies");
@@ -71,12 +73,46 @@ test("Manage Extensions on Linux and Windows carries the Extensions row to the S
   assert.equal(useSettingsSearch.getState().query, "");
 
   useSettingsSearch.setState({ reveal: null });
-  navigateUtility({ pane: "profiles", profileId: "work", detail: null, reveal: "general.importBrowser" });
-  navigateUtility({ pane: "profiles", profileId: "work", detail: null, reveal: "profiles.nope" });
-  navigateUtility({ pane: "profiles", profileId: "work", detail: null, reveal: 7 });
-  assert.equal(useSettingsSearch.getState().reveal, null, "a row from another pane, an unknown row or a non-string is ignored");
+  navigateUtility({ pane: "profiles", profileId: "work", detail: null, reveal: "general.importBrowser", revealId: "other-pane" });
+  navigateUtility({ pane: "profiles", profileId: "work", detail: null, reveal: "profiles.nope", revealId: "unknown-row" });
+  navigateUtility({ pane: "profiles", profileId: "work", detail: null, reveal: 7, revealId: "not-a-string" });
+  navigateUtility({ pane: "profiles", profileId: "work", detail: null, reveal: "profiles.extensions" });
+  assert.equal(useSettingsSearch.getState().reveal, null, "a row from another pane, an unknown row, a non-string or a request without an id is ignored");
 
   linux.openSettings("profiles", "work", "site:https://example.com");
   await new Promise(setImmediate);
   assert.deepEqual(windows.open.get("settings").settings, { pane: "profiles", profileId: "work", detail: "site:https://example.com" });
+});
+
+test("a second Settings renderer started from the host's cached payload doesn't replay a reveal the first one already showed", async () => {
+  const stored = new Map();
+  globalThis.sessionStorage = { getItem: (key) => stored.get(key) ?? null, setItem: (key, value) => void stored.set(key, String(value)) };
+  const { useSettingsSearch } = await import("../../browser/src/state/settings/searchState.ts");
+  windows.open.clear();
+  setSessionFlush(() => Promise.resolve());
+  linux.openSettings("profiles", "work", null, "profiles.extensions");
+  await new Promise(setImmediate);
+  const payload = JSON.parse(JSON.stringify(windows.open.get("settings").settings));
+  assert.equal(typeof payload.revealId, "string");
+
+  const first = await import("./utilityPlace.ts?renderer=first");
+  useSettingsSearch.setState({ reveal: null });
+  first.navigateUtility(payload);
+  assert.equal(useSettingsSearch.getState().reveal?.id, "profiles.extensions");
+  useSettingsSearch.setState({ reveal: null });
+  first.navigateUtility(payload);
+  assert.equal(useSettingsSearch.getState().reveal, null, "the ready reply repeats the bootstrap payload: shown once");
+
+  const second = await import("./utilityPlace.ts?renderer=second");
+  shared.useSettingsNav.setState({ pane: "general", profileId: null, detail: null, back: [], forward: [] });
+  second.navigateUtility(payload);
+  const nav = shared.useSettingsNav.getState();
+  assert.deepEqual([nav.pane, nav.profileId], ["profiles", "work"], "the destination is still restored");
+  assert.equal(useSettingsSearch.getState().reveal, null, "the consumed reveal isn't replayed");
+
+  linux.openSettings("profiles", "work", null, "profiles.extensions");
+  await new Promise(setImmediate);
+  second.navigateUtility(JSON.parse(JSON.stringify(windows.open.get("settings").settings)));
+  assert.equal(useSettingsSearch.getState().reveal?.id, "profiles.extensions", "a new Manage Extensions request still reveals");
+  delete globalThis.sessionStorage;
 });

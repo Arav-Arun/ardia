@@ -5,13 +5,13 @@ import { flushLinuxSession } from "./session";
 
 export * from "../../browser/src/state/settings/settingsWindows";
 
-type UtilitySettingsPlace = SettingsPlace & { reveal?: string };
+type UtilitySettingsPlace = SettingsPlace & { reveal?: string; revealId?: string };
 
 export function openSettings(pane?: SettingsPane, profileId?: string | null, detail?: string | null, reveal?: string | null) {
   let settings: UtilitySettingsPlace | undefined;
   if (pane) {
     goToSettingsPane(pane, profileId ?? null, detail ?? null);
-    settings = { pane, profileId: profileId ?? null, detail: detail ?? null, ...(reveal ? { reveal } : {}) };
+    settings = { pane, profileId: profileId ?? null, detail: detail ?? null, ...(reveal ? { reveal, revealId: crypto.randomUUID() } : {}) };
   }
   const options: OpenWindowOptions & { settings?: UtilitySettingsPlace } = { kind: "settings", title: "Settings", ...(settings ? { settings } : {}) };
   void flushLinuxSession().then(() => openWindow("settings", options)).catch(reportHostError);

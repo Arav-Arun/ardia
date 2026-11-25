@@ -56,14 +56,25 @@ test("S2: a request for profile B is dropped when the user moves on to C before 
   assert.equal(revealTargetShown({ pane: "profiles", profileId: "b", detail: null }, forB), true);
 });
 
+test("S2 (round 2): navigating A, then B, then back to A drops A's request on the way out, so it never fires again", () => {
+  at("profiles", "a");
+  revealSettingRow("profiles.extensions", consentToken());
+  const forA = request();
+  replaceSettingsPlace("b");
+  assert.equal(request(), null, "leaving A's place cancels its request in the navigation action itself");
+  replaceSettingsPlace("a");
+  assert.equal(request(), null);
+  assert.equal(revealWanted(forA, nav()), false);
+});
+
 test("S3: a measurement answered after a newer request neither scrolls, flashes nor clears the newer one", () => {
   at("profiles", "work");
-  revealSettingRow("profiles.extensions");
+  revealSettingRow("profiles.extensions", consentToken());
   const first = request();
   const old = anchor();
   const placed = [];
-  runReveal(first, "profiles.extensions", null, old, (y) => placed.push(["first", y]));
-  revealSettingRow("profiles.extensions");
+  runReveal(first, "profiles.extensions", () => old, (y) => placed.push(["first", y]));
+  revealSettingRow("profiles.extensions", consentToken());
   const second = request();
   assert.notEqual(second.token, first.token);
   old.calls[0].found(400, 30);
@@ -71,34 +82,70 @@ test("S3: a measurement answered after a newer request neither scrolls, flashes 
   assert.deepEqual(placed, []);
   assert.equal(request().token, second.token, "the newer request is still pending");
   const fresh = anchor();
-  runReveal(second, "profiles.extensions", null, fresh, (y) => placed.push(["second", y]));
+  runReveal(second, "profiles.extensions", () => fresh, (y) => placed.push(["second", y]));
   fresh.calls[0].found(500, 30);
   assert.deepEqual(placed, [["second", 500]]);
   assert.equal(request(), null);
   assert.equal(useSettingsSearch.getState().flash.id, "profiles.extensions");
 });
 
+test("S3: an answer from an anchor that was replaced, success or failure, measures the replacement instead", () => {
+  at("profiles", "work");
+  for (const outcome of ["found", "failed"]) {
+    revealSettingRow("profiles.extensions", consentToken());
+    const asked = request();
+    let current = anchor();
+    const first = current;
+    const placed = [];
+    runReveal(asked, "profiles.extensions", () => current, (y) => placed.push(y));
+    current = anchor();
+    first.still = () => false;
+    if (outcome === "found") first.calls[0].found(300, 30);
+    else first.calls[0].failed();
+    assert.deepEqual(placed, [], `${outcome}: nothing scrolls from the replaced anchor`);
+    assert.equal(request()?.token, asked.token, `${outcome}: the request stays pending`);
+    assert.equal(current.calls.length, 1, `${outcome}: the replacement is measured`);
+    current.calls[0].found(320, 30);
+    assert.deepEqual(placed, [320]);
+    assert.equal(request(), null);
+  }
+});
+
+test("S3: once the attempt is cleaned up, a late success neither scrolls nor ends the request", () => {
+  at("profiles", "work");
+  revealSettingRow("profiles.extensions", consentToken());
+  const asked = request();
+  const late = anchor();
+  const placed = [];
+  const stop = runReveal(asked, "profiles.extensions", () => late, (y) => placed.push(y));
+  stop();
+  late.calls[0].found(300, 30);
+  late.calls[0].failed();
+  assert.deepEqual(placed, []);
+  assert.equal(request()?.token, asked.token);
+});
+
 test("S3: a measurement whose anchor was replaced since it was asked for does nothing", () => {
   at("profiles", "work");
-  revealSettingRow("profiles.extensions");
+  revealSettingRow("profiles.extensions", consentToken());
   const asked = request();
   let current = true;
   const placed = [];
   const replaced = { still: () => current, measure: (found) => { current = false; found(300, 30); } };
-  runReveal(asked, "profiles.extensions", null, replaced, (y) => placed.push(y));
+  let located = 0;
+  runReveal(asked, "profiles.extensions", () => (located++ ? null : replaced), (y) => placed.push(y));
   assert.deepEqual(placed, []);
-  assert.equal(request().token, asked.token);
+  assert.equal(located, 2, "it looked for the anchor again");
 });
 
 test("S4: a failed or unanswered measurement counts one miss and ends the request", async (t) => {
   client.setSharing(true, "onboarding");
   t.after(() => client.setSharing(false, "settings"));
   await revealMisses();
-  const consent = consentToken();
   at("profiles", "work");
-  revealSettingRow("profiles.extensions");
+  revealSettingRow("profiles.extensions", consentToken());
   const failing = anchor();
-  runReveal(request(), "profiles.extensions", consent, failing, () => {});
+  runReveal(request(), "profiles.extensions", () => failing, () => {});
   failing.calls[0].failed();
   failing.calls[0].failed();
   assert.equal(request(), null);
@@ -106,9 +153,9 @@ test("S4: a failed or unanswered measurement counts one miss and ends the reques
 
   mock.timers.enable({ apis: ["setTimeout"] });
   t.after(() => mock.timers.reset());
-  revealSettingRow("profiles.extensions");
+  revealSettingRow("profiles.extensions", consentToken());
   const silent = anchor();
-  runReveal(request(), "profiles.extensions", consent, silent, () => {});
+  runReveal(request(), "profiles.extensions", () => silent, () => {});
   mock.timers.tick(REVEAL_MEASURE_MS - 1);
   assert.notEqual(request(), null);
   mock.timers.tick(1);
@@ -116,10 +163,39 @@ test("S4: a failed or unanswered measurement counts one miss and ends the reques
   silent.calls[0].failed();
   assert.equal(await revealMisses(), 1, "the unanswered measurement counts once, a late answer adds nothing");
 
-  revealSettingRow("profiles.extensions");
-  const stopped = runReveal(request(), "profiles.extensions", consent, anchor(), () => {});
+  revealSettingRow("profiles.extensions", consentToken());
+  const stopped = runReveal(request(), "profiles.extensions", () => anchor(), () => {});
   goToSettingsPane("general");
   stopped();
   mock.timers.tick(REVEAL_MEASURE_MS);
   assert.equal(await revealMisses(), 0, "a request the user navigated away from isn't a miss");
+});
+
+test("S4 (round 2): consent is the one taken when the reveal was requested, so a request made while sharing was off never adds a miss after opting in", async (t) => {
+  client.setSharing(false, "settings");
+  at("profiles", "work");
+  revealSettingRow("profiles.extensions", consentToken());
+  const asked = request();
+  client.setSharing(true, "onboarding");
+  t.after(() => client.setSharing(false, "settings"));
+  await revealMisses();
+  const failing = anchor();
+  runReveal(asked, "profiles.extensions", () => failing, () => {});
+  failing.calls[0].failed();
+  assert.equal(request(), null);
+  assert.equal(await revealMisses(), 0);
+});
+
+test("S5 (round 2): a miss is handed to the relay at once, with the request's consent, where a window has one", async (t) => {
+  client.setSharing(true, "onboarding");
+  t.after(() => client.setSharing(false, "settings"));
+  const relayed = [];
+  usage.setCountsRelayNow((consent) => relayed.push(consent));
+  t.after(() => usage.setCountsRelayNow(null));
+  at("profiles", "work");
+  revealSettingRow("profiles.extensions", consentToken());
+  const asked = request();
+  runReveal(asked, "profiles.extensions", () => null, () => {});
+  assert.deepEqual(relayed, [asked.consent]);
+  assert.notEqual(asked.consent, null);
 });

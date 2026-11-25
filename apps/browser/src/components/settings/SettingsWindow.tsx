@@ -36,7 +36,6 @@ import { WindowControls } from "../window/WindowControls";
 import { LeadingWindowControls } from "../window/LeadingWindowControls";
 import { useWindowChrome } from "../../state/windows/windowButtons";
 import { noteSettingsScroll } from "../../state/settings/growingRows";
-import { consentToken } from "../../state/telemetry/choice";
 
 const SIDEBAR = settingsLayout.sidebarWidth;
 const TOOLBAR = pageToolbar.window.height;
@@ -123,14 +122,19 @@ export function SettingsWindow() {
     if (!revealWanted(reveal, nav) || revealPane !== reveal.target.pane) return void dropReveal(reveal.token);
     if (!revealTargetShown(shown, reveal)) return;
     const animated = switched.current === key;
-    const consent = consentToken();
     const id = resolveSettingId(reveal.id);
     let stop = () => {};
-    const frame = requestAnimationFrame(() => {
+    const locate = () => {
       const target = anchorView(id);
       const container = content.current;
-      const anchor = target && container ? { measure: (found: (y: number, height: number) => void, failed: () => void) => target.measureLayout(container, (_x, y, _w, h) => found(y, h), failed), still: () => anchorView(id) === target } : null;
-      stop = runReveal(reveal, id, consent, anchor, (y, h) => {
+      if (!target || !container) return null;
+      return {
+        measure: (found: (y: number, height: number) => void, failed: () => void) => target.measureLayout(container, (_x, y, _w, h) => found(y, h), failed),
+        still: () => anchorView(id) === target && content.current === container,
+      };
+    };
+    const frame = requestAnimationFrame(() => {
+      stop = runReveal(reveal, id, locate, (y, h) => {
         const top = animated ? scrollTop.current : 0;
         const inView = y >= top + REVEAL_MARGIN && y + h <= top + viewport.current - REVEAL_MARGIN;
         if (!inView) scroller.current?.scrollTo({ y: Math.max(0, y - viewport.current / 3), animated });

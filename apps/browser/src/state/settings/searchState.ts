@@ -19,7 +19,7 @@ type SearchUi = {
 
 type Target = { id: string; pane: SettingsPane; section: string };
 
-export type RevealRequest = { id: string; at: number; token: number; target: SettingsPlace };
+export type RevealRequest = { id: string; at: number; token: number; target: SettingsPlace; consent: ConsentToken | null };
 
 export const REVEAL_MEASURE_MS = 1000;
 
@@ -27,9 +27,9 @@ let revealTokens = 0;
 
 const samePlace = (a: SettingsPlace, b: SettingsPlace) => a.pane === b.pane && a.profileId === b.profileId && a.detail === b.detail;
 
-function requestReveal(id: string): { reveal: RevealRequest } {
+function requestReveal(id: string, consent: ConsentToken | null): { reveal: RevealRequest } {
   const { pane, profileId, detail } = useSettingsNav.getState();
-  return { reveal: { id, at: Date.now(), token: ++revealTokens, target: { pane, profileId, detail } } };
+  return { reveal: { id, at: Date.now(), token: ++revealTokens, target: { pane, profileId, detail }, consent } };
 }
 
 const MENU_COMMANDS: Target = { id: "shortcuts.menuCommands", pane: "shortcuts", section: "Keyboard" };
@@ -67,7 +67,7 @@ export function dropSettingsSearch(consent: ConsentToken | null, why: "dropped" 
 
 onTargetedSettingsOpen((consent, reveal) => {
   dropSettingsSearch(consent);
-  if (reveal) revealSettingRow(reveal);
+  if (reveal) revealSettingRow(reveal, consent);
 });
 
 export const settingsSearchHost = () => () => dropSettingsSearch(consentToken(), "closed");
@@ -96,7 +96,12 @@ export const moveSettingsSelection = (step: number, count: number) =>
 
 export const selectSettingsResult = (index: number) => useSettingsSearch.setState({ selected: index });
 
-export const revealSettingRow = (id: string) => useSettingsSearch.setState(requestReveal(id));
+export const revealSettingRow = (id: string, consent: ConsentToken | null) => useSettingsSearch.setState(requestReveal(id, consent));
+
+useSettingsNav.subscribe((nav) => {
+  const { reveal } = useSettingsSearch.getState();
+  if (reveal && !samePlace(nav, reveal.target)) useSettingsSearch.setState({ reveal: null });
+});
 
 export const revealWanted = (request: RevealRequest, nav: SettingsPlace) => useSettingsSearch.getState().reveal?.token === request.token && samePlace(nav, request.target);
 
@@ -106,39 +111,53 @@ export function dropReveal(token: number) {
   if (useSettingsSearch.getState().reveal?.token === token) useSettingsSearch.setState({ reveal: null });
 }
 
-export function finishReveal(token: number, flashId: string, missed: boolean, consent: ConsentToken | null): boolean {
-  if (useSettingsSearch.getState().reveal?.token !== token) return false;
-  if (missed) noteSettingsRevealMiss(consent);
+export function finishReveal(token: number, flashId: string, missed: boolean): boolean {
+  const request = useSettingsSearch.getState().reveal;
+  if (request?.token !== token) return false;
+  if (missed) noteSettingsRevealMiss(request.consent);
   useSettingsSearch.setState({ reveal: null, flash: { id: flashId, at: Date.now() } });
   return true;
 }
 
 export type RevealAnchor = { measure(found: (y: number, height: number) => void, failed: () => void): void; still(): boolean };
 
-export function runReveal(request: RevealRequest, flashId: string, consent: ConsentToken | null, anchor: RevealAnchor | null, place: (y: number, height: number) => void): () => void {
-  const wanted = () => revealWanted(request, useSettingsNav.getState());
-  if (!wanted()) return () => {};
-  if (!anchor) {
-    finishReveal(request.token, "", true, consent);
-    return () => {};
-  }
+export function runReveal(request: RevealRequest, flashId: string, locate: () => RevealAnchor | null, place: (y: number, height: number) => void): () => void {
+  let active = true;
+  const wanted = () => active && revealWanted(request, useSettingsNav.getState());
+  const end = (found: boolean) => {
+    clearTimeout(deadline);
+    finishReveal(request.token, flashId, !found);
+  };
   const deadline = setTimeout(() => {
-    if (wanted()) finishReveal(request.token, flashId, true, consent);
+    if (wanted()) finishReveal(request.token, flashId, true);
   }, REVEAL_MEASURE_MS);
-  anchor.measure(
-    (y, height) => {
-      if (!wanted() || !anchor.still()) return;
+  const attempt = () => {
+    const anchor = locate();
+    if (!anchor) {
       clearTimeout(deadline);
-      place(y, height);
-      finishReveal(request.token, flashId, false, consent);
-    },
-    () => {
-      if (!wanted()) return;
-      clearTimeout(deadline);
-      finishReveal(request.token, flashId, true, consent);
-    },
-  );
-  return () => clearTimeout(deadline);
+      finishReveal(request.token, "", true);
+      return;
+    }
+    anchor.measure(
+      (y, height) => {
+        if (!wanted()) return;
+        if (!anchor.still()) return attempt();
+        place(y, height);
+        end(true);
+      },
+      () => {
+        if (!wanted()) return;
+        if (!anchor.still()) return attempt();
+        end(false);
+      },
+    );
+  };
+  if (wanted()) attempt();
+  else clearTimeout(deadline);
+  return () => {
+    active = false;
+    clearTimeout(deadline);
+  };
 }
 
 export function revealSetting(target: Target, via: "keyboard" | "click", rank: number, unshown = false) {
@@ -147,20 +166,22 @@ export function revealSetting(target: Target, via: "keyboard" | "click", rank: n
 }
 
 export function jumpToSetting({ id, pane, section }: Target) {
+  const consent = consentToken();
   const key = settingsSectionKey(pane, section);
   useSettingsSearch.setState((s) => (s.revealedSections.includes(key) ? {} : { revealedSections: [...s.revealedSections, key] }));
   if (!useSettingsSearch.getState().previewing) goToSettingsPane(pane, settingsProfileFor(pane, useSettingsNav.getState()));
   else showWithoutHistory(pane);
-  useSettingsSearch.setState({ ...requestReveal(id), previewing: false });
+  useSettingsSearch.setState({ ...requestReveal(id, consent), previewing: false });
 }
 
 export function previewSetting({ id, pane, section }: Target) {
+  const consent = consentToken();
   const { query, previewing, reveal } = useSettingsSearch.getState();
   if (!query.trim()) return;
   if (reveal?.id === id && previewing && useSettingsNav.getState().pane === pane) return;
   if (!previewing) goToSettingsPane(pane, settingsProfileFor(pane, useSettingsNav.getState()));
   else showWithoutHistory(pane);
-  useSettingsSearch.setState({ previewSection: settingsSectionKey(pane, section), previewing: true, ...requestReveal(id) });
+  useSettingsSearch.setState({ previewSection: settingsSectionKey(pane, section), previewing: true, ...requestReveal(id, consent) });
 }
 
 function showWithoutHistory(pane: SettingsPane) {

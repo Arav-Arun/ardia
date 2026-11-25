@@ -227,7 +227,12 @@ export function noteSidebarPeek(bounce: boolean) {
 }
 
 export const noteSettingsSearchReveal = (via: "keyboard" | "click", rank: number, unshown: boolean) => void (counts[via === "keyboard" ? "settingsSearchKeyboardReveals" : "settingsSearchClickReveals"]++, counts[rank === 0 ? "settingsSearchTopPicks" : rank < 3 ? "settingsSearchTop3Picks" : "settingsSearchLowerPicks"]++, unshown && counts.settingsSearchUnshownReveals++);
-export const noteSettingsRevealMiss = (consent: ConsentToken | null) => bump(consent, { settingsRevealMisses: 1 });
+let relayCountsNow: ((consent: ConsentToken | null) => void) | null = null;
+export const setCountsRelayNow = (relay: ((consent: ConsentToken | null) => void) | null) => void (relayCountsNow = relay);
+export function noteSettingsRevealMiss(consent: ConsentToken | null) {
+  bump(consent, { settingsRevealMisses: 1 });
+  relayCountsNow?.(consent);
+}
 export const noteSettingsSearch = (event: "started" | "empty" | "dropped" | "closed" | "keys" | "keysOpened" | "shortcutsTyped" | "shortcutsRecorded" | "shortcutsEmpty", consent?: ConsentToken | null) => bump(consent, { [({ started: "settingsSearches", empty: "settingsSearchesEmpty", dropped: "settingsSearchesDropped", closed: "settingsSearchesClosed", keys: "settingsSearchKeySearches", keysOpened: "settingsSearchKeyHitOpens", shortcutsTyped: "shortcutsKeySearchesTyped", shortcutsRecorded: "shortcutsKeySearchesRecorded", shortcutsEmpty: "shortcutsKeySearchesEmpty" } as const)[event]]: 1 });
 export const noteWebKitLimits = (event: "engineRow" | "enginesPane") => void counts[({ engineRow: "webKitLimitsFromEngineRow", enginesPane: "webKitLimitsFromEnginesPane" } as const)[event]]++;
 
