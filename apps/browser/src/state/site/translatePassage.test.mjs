@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-const { translatePassage } = await import("./translate.ts");
+const { translatePack } = await import("./translate.ts");
 
 const beforeAttributedText = () => {
   const calls = [];
@@ -12,23 +12,49 @@ const beforeAttributedText = () => {
     },
   };
 };
+const progress = () => ({ unlinked: 0, failed: 0 });
+
+test("a whole pack goes to the model in one call, each passage keeping its own parts", async () => {
+  const calls = [];
+  const model = {
+    translateBlocks: async (_s, _t, blocks, owner) => {
+      calls.push({ blocks, owner });
+      return blocks.map((pieces) => pieces.map((p) => p.toUpperCase()));
+    },
+  };
+  const out = await translatePack(model, "de", "en", [[1, [[10, "Hauptseite"]]], [2, [[20, "Lies die "], [21, "Hinweise"]]]], "tok", progress(), () => true);
+  assert.deepEqual(out, [
+    [10, "HAUPTSEITE"],
+    [20, "LIES DIE "],
+    [21, "HINWEISE"],
+  ]);
+  assert.deepEqual(calls, [{ blocks: [["Hauptseite"], ["Lies die ", "Hinweise"]], owner: "tok" }]);
+});
 
 test("before macOS 26.4 a styled passage is translated one piece per request, each node its own text", async () => {
   const model = beforeAttributedText();
-  const progress = { unlinked: 0 };
-  const out = await translatePassage(model, "en", "fr", [1, [[10, "Read the "], [11, "notes"]]], "tok", progress, () => true);
+  const counts = progress();
+  const out = await translatePack(model, "en", "fr", [[1, [[10, "Read the "], [11, "notes"]]]], "tok", counts, () => true);
   assert.deepEqual(out, [
     [10, "READ THE "],
     [11, "NOTES"],
   ]);
-  assert.equal(progress.unlinked, 1);
+  assert.equal(counts.unlinked, 1);
   assert.deepEqual(model.calls.map((c) => c.blocks), [[["Read the ", "notes"]], [["Read the "], ["notes"]]]);
   assert.ok(model.calls.every((c) => c.owner === "tok"));
 });
 
+test("the styled passages of a pack that don't map back go piece by piece together in one more call", async () => {
+  const model = beforeAttributedText();
+  const out = await translatePack(model, "en", "fr", [[1, [[10, "Home"]]], [2, [[20, "a "], [21, "b"]]], [3, [[30, "c "], [31, "d"]]]], "tok", progress(), () => true);
+  assert.equal(out.length, 5);
+  assert.equal(model.calls.length, 2);
+  assert.deepEqual(model.calls[1].blocks, [["a "], ["b"], ["c "], ["d"]]);
+});
+
 test("a released translation doesn't fall back to more requests", async () => {
   const model = beforeAttributedText();
-  const out = await translatePassage(model, "en", "fr", [1, [[10, "Read the "], [11, "notes"]]], "tok", { unlinked: 0 }, () => false);
+  const out = await translatePack(model, "en", "fr", [[1, [[10, "Read the "], [11, "notes"]]]], "tok", progress(), () => false);
   assert.deepEqual(out, [
     [10, null],
     [11, null],
@@ -36,7 +62,18 @@ test("a released translation doesn't fall back to more requests", async () => {
   assert.equal(model.calls.length, 1);
 });
 
-test("a model that answers nothing ends the translation with an error", async () => {
+test("a passage the model can't answer stays as it was while the rest of its pack is translated", async () => {
+  const model = { translateBlocks: async (_s, _t, blocks) => blocks.map((pieces) => (pieces[0] === "bad" ? null : pieces.map((p) => p.toUpperCase()))) };
+  const counts = progress();
+  const out = await translatePack(model, "en", "fr", [[1, [[10, "good"]]], [2, [[20, "bad"]]]], "tok", counts, () => true);
+  assert.deepEqual(out, [
+    [10, "GOOD"],
+    [20, null],
+  ]);
+  assert.equal(counts.failed, 1);
+});
+
+test("a model that answers nothing in a pack fails that pack with an error", async () => {
   const model = { translateBlocks: async (_s, _t, blocks) => blocks.map(() => null) };
-  await assert.rejects(translatePassage(model, "en", "fr", [1, [[10, "Hello"]]], "tok", { unlinked: 0 }, () => true), /didn't answer/);
+  await assert.rejects(translatePack(model, "en", "fr", [[1, [[10, "Hello"]]], [2, [[20, "World"]]]], "tok", progress(), () => true), /didn't answer/);
 });

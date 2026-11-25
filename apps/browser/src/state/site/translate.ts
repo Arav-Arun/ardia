@@ -8,7 +8,7 @@ import { incognitoOriginal, isIncognitoProfile } from "../browser/model";
 import { hideKeyedToast, showToast } from "../app/toasts";
 import { translatorCall } from "./pageTranslator";
 import { stopDocumentWatch, watchDocument } from "./documentWatch";
-import { drainPassages, type PageBatch, type Passage, type Translated } from "./translateDrain";
+import { drainPassages, PACK_PASSAGES, type PageBatch, type Passage, type Translated } from "./translateDrain";
 import { errorText } from "../../lib/errors";
 import { capture, consentToken, type ConsentToken } from "../telemetry/client";
 import { noteWebKitCount } from "../telemetry/engineSwitchCounts";
@@ -34,7 +34,6 @@ export function translationTarget(tabId: string): string | null {
 export const useTranslateState = (tabId: string) => useTranslate((s) => s[tabId] ?? IDLE);
 
 const IN_FLIGHT = 2;
-const BATCH_CHARS = 2000;
 const FOLLOW_MS = 600;
 const DOCUMENT_POLL_MS = 250;
 const PROGRESS_AFTER_MS = 1200;
@@ -122,18 +121,35 @@ async function detect(tabId: string) {
 
 type BlockTranslator = Pick<NonNullable<typeof translation>, "translateBlocks">;
 
-export async function translatePassage(model: BlockTranslator, source: string, target: string, [, pieces]: Passage, token: string, progress: { unlinked: number }, live: () => boolean): Promise<Translated[]> {
-  const texts = pieces.map(([, text]) => text);
-  const [parts] = await model.translateBlocks(source, target, [texts], token);
-  if (parts && parts.length === pieces.length) return pieces.map(([id], j) => [id, parts[j] ?? ""]);
-  if (!live()) return pieces.map(([id]) => [id, null]);
-  if (pieces.length > 1) progress.unlinked++;
-  const single = await model.translateBlocks(source, target, texts.map((text) => [text]), token);
-  if (live() && single.every((part) => !part)) throw new Error("the Mac's translation model didn't answer");
-  return pieces.map(([id], i) => [id, single[i]?.[0] ?? null]);
+const textsOf = ([, pieces]: Passage) => pieces.map(([, text]) => text);
+const nothing = ([, pieces]: Passage): Translated[] => pieces.map(([id]): Translated => [id, null]);
+
+export async function translatePack(model: BlockTranslator, source: string, target: string, pack: Passage[], token: string, progress: { unlinked: number; failed: number }, live: () => boolean): Promise<Translated[]> {
+  const answers = await model.translateBlocks(source, target, pack.map(textsOf), token);
+  const out: Translated[] = [];
+  const unlinked: Passage[] = [];
+  pack.forEach((passage, i) => {
+    const [, pieces] = passage;
+    const parts = answers[i];
+    if (parts && parts.length === pieces.length) out.push(...pieces.map(([id], j): Translated => [id, parts[j] ?? ""]));
+    else if (pieces.length > 1 && live()) unlinked.push(passage);
+    else out.push(...nothing(passage));
+  });
+  if (unlinked.length) {
+    progress.unlinked += unlinked.length;
+    const pieces = unlinked.flatMap(([, p]) => p);
+    const single = await model.translateBlocks(source, target, pieces.map(([, text]) => [text]), token);
+    out.push(...pieces.map(([id], i): Translated => [id, single[i]?.[0] ?? null]));
+  }
+  const answered = new Set(out.filter(([, text]) => text !== null).map(([id]) => id));
+  const failed = pack.filter(([, pieces]) => !pieces.some(([id]) => answered.has(id))).length;
+  if (live()) progress.failed += failed;
+  if (live() && failed === pack.length) throw new Error("the Mac's translation model didn't answer");
+  return out;
 }
 
-type Progress = { applied: number; unlinked: number; firstAppliedAt: number | null };
+type Progress = { applied: number; unlinked: number; failed: number; packs: number; firstAppliedAt: number | null };
+const newProgress = (): Progress => ({ applied: 0, unlinked: 0, failed: 0, packs: 0, firstAppliedAt: null });
 
 function untilReleased(tabId: string, token: string) {
   let stop = () => {};
@@ -146,7 +162,7 @@ function untilReleased(tabId: string, token: string) {
   return { promise, stop: () => stop() };
 }
 
-async function drain(tabId: string, token: string, onProgress?: (done: number, total: number) => void, progress: Progress = { applied: 0, unlinked: 0, firstAppliedAt: null }): Promise<boolean> {
+async function drain(tabId: string, token: string, onProgress?: (done: number, total: number) => void, progress: Progress = newProgress()): Promise<boolean> {
   const current = stateOf(tabId);
   if (current.status === "idle" || current.token !== token) return false;
   const { source, target } = current;
@@ -161,13 +177,17 @@ async function drain(tabId: string, token: string, onProgress?: (done: number, t
       inFlight: IN_FLIGHT,
       holds: () => holds(tabId, token) && !!webviews.get(tabId),
       released: released.promise,
-      next: (max) => page().evaluate<PageBatch>(translatorCall("next", token, max, BATCH_CHARS)),
-      translate: (passage) => translatePassage(translation!, source, target, passage, token, progress, () => holds(tabId, token)),
+      next: (maxChars) => page().evaluate<PageBatch>(translatorCall("next", token, PACK_PASSAGES, maxChars)),
+      translate: (pack) => {
+        progress.packs++;
+        return translatePack(translation!, source, target, pack, token, progress, () => holds(tabId, token));
+      },
       apply: (results) => page().evaluate(translatorCall("apply", token, results)),
       onStage: (stage) => atStage(tabId, stage),
-      onApplied: (total) => {
+      onApplied: (passages, total) => {
         progress.firstAppliedAt ??= Date.now();
-        onProgress?.(++progress.applied, total);
+        progress.applied += passages;
+        onProgress?.(progress.applied, total);
       },
     });
   } finally {
@@ -203,7 +223,9 @@ function toast(tabId: string, title: string, message?: string, progress = false)
   else showToast(windowId, title, message, { icon: "translate" });
 }
 
-export async function translatePage(tabId: string, target = defaultTarget()) {
+export type TranslateOrigin = "button" | "button_menu" | "site_controls" | "page_menu";
+
+export async function translatePage(tabId: string, target = defaultTarget(), from: TranslateOrigin = "button") {
   const consent = consentToken();
   const tab = useBrowser.getState().tabs[tabId];
   if (!translation || !tab || !webviews.get(tabId)) return;
@@ -214,7 +236,8 @@ export async function translatePage(tabId: string, target = defaultTarget()) {
   let shown = false;
   let started = 0;
   let token: string | null = null;
-  const progress: Progress = { applied: 0, unlinked: 0, firstAppliedAt: null };
+  const progress = newProgress();
+  const report = (outcome: "done" | "stopped" | "failed") => reportFirstPass(outcome, started, progress, from, outcome === "failed" ? (stages[tabId] ?? null) : null, consent);
   try {
     const status = await translation.status(source, target);
     if (status === "unsupported") return toast(tabId, `Translation error (${languageName(source)} to ${languageName(target)} isn't available)`);
@@ -238,15 +261,15 @@ export async function translatePage(tabId: string, target = defaultTarget()) {
     if (!done) {
       if (holds(tabId, mine)) toIdle(tabId);
       if (shown && stateOf(tabId).status === "idle") hideKeyedToast(tab.windowId, PROGRESS_TOAST);
-      return void reportFirstPass("stopped", started, progress, consent);
+      return void report("stopped");
     }
-    reportFirstPass("done", started, progress, consent);
+    report("done");
     if (tabEngine(useBrowser.getState(), tabId) === "webkit") noteWebKitCount("translation", consent);
     if (holds(tabId, mine)) set(tabId, { status: "translated", source, target, token: mine });
     toast(tabId, `Translated to ${languageName(target)}`);
     void follow(tabId, mine);
   } catch (error) {
-    if (started) reportFirstPass("failed", started, progress, consent);
+    if (started) report("failed");
     const replaced = token !== null && !holds(tabId, token);
     if (shown && (!replaced || stateOf(tabId).status === "idle")) hideKeyedToast(tab.windowId, PROGRESS_TOAST);
     if (replaced) return;
@@ -256,13 +279,17 @@ export async function translatePage(tabId: string, target = defaultTarget()) {
   }
 }
 
-function reportFirstPass(outcome: "done" | "stopped" | "failed", started: number, progress: Progress, consent: ConsentToken | null) {
+function reportFirstPass(outcome: "done" | "stopped" | "failed", started: number, progress: Progress, from: TranslateOrigin, failedStage: TranslateStage | null, consent: ConsentToken | null) {
   capture("translate_finished", {
     outcome,
     first_pass_ms: Date.now() - started,
     first_text_ms: progress.firstAppliedAt === null ? null : progress.firstAppliedAt - started,
     passages: progress.applied,
     unlinked_passages: progress.unlinked,
+    failed_passages: progress.failed,
+    packs: progress.packs,
+    failed_stage: failedStage,
+    from,
   }, consent);
 }
 
@@ -273,8 +300,8 @@ export async function revertPage(tabId: string, { quiet = false } = {}) {
   if (!quiet && source && status !== "idle") toast(tabId, `Translated back to ${languageName(source)}`);
 }
 
-export function toggleTranslation(tabId: string) {
-  if (stateOf(tabId).status === "idle") void translatePage(tabId);
+export function toggleTranslation(tabId: string, from: TranslateOrigin = "button") {
+  if (stateOf(tabId).status === "idle") void translatePage(tabId, defaultTarget(), from);
   else void revertPage(tabId);
 }
 

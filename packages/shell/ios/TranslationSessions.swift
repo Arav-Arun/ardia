@@ -22,6 +22,7 @@ enum TranslationSessions {
 
   private static var memo: [PassageKey: [String]] = [:]
   private static let work = SharedWork<PassageKey, [String]>()
+  private static let packWork = SharedWork<[PassageKey], [[String]?]>()
   private static let memoLimit = 5000
 
   static func translations(source: String, target: String, standard: Bool = false, _ requests: [TranslationSession.Request]) async throws -> [TranslationSession.Response] {
@@ -40,11 +41,44 @@ enum TranslationSessions {
   static func translateBlocks(source: String, target: String, owner: String, _ blocks: [[String]]) async -> [[String]?] {
     let keys = blocks.map { PassageKey(source: source, target: target, pieces: $0) }
     var found: [PassageKey: [String]] = [:]
-    await withTaskGroup(of: (PassageKey, [String]?).self) { group in
-      for key in Set(keys) { group.addTask { @MainActor in (key, await passage(key, owner: owner)) } }
-      for await (key, parts) in group { if let parts { found[key] = parts } }
+    var fresh: [PassageKey] = []
+    var seen: Set<PassageKey> = []
+    for key in keys where seen.insert(key).inserted {
+      if let known = memo[key] { found[key] = known } else { fresh.append(key) }
+    }
+    let groups = attributedAvailable ? PackedPassages.packs(fresh.map(\.pieces)).map { Array(fresh[$0]) } : fresh.map { [$0] }
+    await withTaskGroup(of: [(PassageKey, [String]?)].self) { group in
+      for keys in groups { group.addTask { @MainActor in await translateGroup(keys, owner: owner) } }
+      for await results in group {
+        for case let (key, parts?) in results { found[key] = parts }
+      }
     }
     return keys.map { found[$0] }
+  }
+
+  private static func translateGroup(_ keys: [PassageKey], owner: String) async -> [(PassageKey, [String]?)] {
+    guard keys.count > 1 else { return [(keys[0], await passage(keys[0], owner: owner))] }
+    let packed = await packWork.value(for: keys, owner: owner) { await translatePack(keys) } ?? keys.map { _ in nil }
+    var out: [(PassageKey, [String]?)] = []
+    for (key, parts) in zip(keys, packed) {
+      guard let parts else {
+        out.append((key, await passage(key, owner: owner)))
+        continue
+      }
+      let answer = TranslateModule.isUnchanged(parts, from: key.pieces) ? await askAgain(key, parts) : parts
+      if let answer, !TranslateModule.isUnchanged(answer, from: key.pieces) { remember(key, answer) }
+      out.append((key, answer))
+    }
+    return out
+  }
+
+  private static func translatePack(_ keys: [PassageKey]) async -> [[String]?]? {
+    guard #available(macOS 26.4, *), let first = keys.first else { return nil }
+    let pieces = keys.map(\.pieces)
+    let text = PackedPassages.text(pieces)
+    guard let translated = try? await run(source: first.source, target: first.target, { try await $0.translate(text).attributedTargetText })
+    else { return nil }
+    return PackedPassages.parts(of: translated, over: pieces)
   }
 
   private static var attributedAvailable: Bool {
@@ -54,10 +88,12 @@ enum TranslationSessions {
 
   static func open(owner: String) {
     work.open(owner: owner)
+    packWork.open(owner: owner)
   }
 
   static func cancel(owner: String) {
     work.cancel(owner: owner)
+    packWork.cancel(owner: owner)
   }
 
   private static func passage(_ key: PassageKey, owner: String) async -> [String]? {
@@ -70,6 +106,10 @@ enum TranslationSessions {
   private static func translateFresh(_ key: PassageKey) async -> [String]? {
     let first = await translateOnce(key, standard: false)
     if let first, !TranslateModule.isUnchanged(first, from: key.pieces) { return first }
+    return await askAgain(key, first)
+  }
+
+  private static func askAgain(_ key: PassageKey, _ first: [String]?) async -> [String]? {
     guard !Task.isCancelled, lowLatencyPairs.contains(pairKey(key.source, key.target)), worthAskingAgain(key.pieces),
       await standardInstalled(source: key.source, target: key.target),
       let again = await translateOnce(key, standard: true)

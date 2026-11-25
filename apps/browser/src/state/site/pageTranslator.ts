@@ -13,6 +13,8 @@ if (!window[KEY]) {
   const MAX_SORTED = 2000;
   const ENDS_IN_SPACE = /\s$/;
   const STARTS_WITH_SPACE = /^\s/;
+  const SPACE_RUN = /[ \t\n\r\f]+/g;
+  const PRESERVED = /^(pre|break-spaces)/;
   const skipCache = new WeakMap();
   const skipped = (el) => {
     if (!el) return true;
@@ -26,6 +28,7 @@ if (!window[KEY]) {
     if (b === undefined) blockCache.set(el, (b = el.closest(BLOCK) || document.documentElement));
     return b;
   };
+  const nearScreen = (r, margin) => r.bottom >= -margin && r.top <= innerHeight + margin && r.right >= 0 && r.left <= innerWidth;
   const eligible = (n) => n.nodeType === 3 && n.nodeValue.length <= MAX_TEXT && LETTER.test(n.nodeValue) && !skipped(n.parentElement);
   const root = () => document.body || document.documentElement;
   const t = (window[KEY] = {
@@ -65,13 +68,12 @@ if (!window[KEY]) {
         const w = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
         for (let n = w.nextNode(); n; n = w.nextNode()) if (eligible(n)) blocks.add(blockOf(n.parentElement));
       }
-      const top = -MARGIN, bottom = innerHeight + MARGIN;
       for (const b of blocks) {
         if (this.shown.has(b)) this.enqueue(b);
         else if (this.watched.has(b) || this.watchedCount >= MAX_WATCHED) continue;
         else {
           const r = b.getBoundingClientRect();
-          if (r.bottom >= top && r.top <= bottom && (r.width || r.height)) {
+          if (nearScreen(r, MARGIN) && (r.width || r.height)) {
             this.shown.add(b);
             this.enqueue(b);
           } else {
@@ -104,7 +106,7 @@ if (!window[KEY]) {
       const near = [], far = [];
       for (let i = 0; i < limit; i++) {
         const r = this.queue[i].getBoundingClientRect();
-        (r.bottom >= 0 && r.top <= innerHeight ? near : far).push(this.queue[i]);
+        (nearScreen(r, 0) ? near : far).push(this.queue[i]);
       }
       if (near.length && far.length) this.queue = near.concat(far, this.queue.slice(limit));
     },
@@ -151,6 +153,7 @@ if (!window[KEY]) {
         this.queued.delete(block);
         if (!block.isConnected) continue;
         const nodes = this.pieces(block);
+        const preserved = PRESERVED.test(getComputedStyle(block).whiteSpace);
         for (let i = 0; i < nodes.length; i += MAX_PIECES) {
           if (passages.length >= max) {
             this.queue.unshift(block);
@@ -166,9 +169,12 @@ if (!window[KEY]) {
             previous = { orig: node.nodeValue, applied: null, gapBefore: spaced, gapAfter: false };
             this.byId.set(id, node);
             this.records.set(node, previous);
-            pieces.push([id, spaced ? " " + node.nodeValue : node.nodeValue]);
+            const text = preserved ? node.nodeValue : node.nodeValue.replace(SPACE_RUN, " ");
+            pieces.push([id, spaced ? " " + text : text]);
             chars += node.nodeValue.length;
           }
+          pieces[0][1] = pieces[0][1].trimStart();
+          pieces[pieces.length - 1][1] = pieces[pieces.length - 1][1].trimEnd();
           passages.push([++this.seq, pieces]);
         }
       }

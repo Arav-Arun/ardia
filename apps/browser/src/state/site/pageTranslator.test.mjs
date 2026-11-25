@@ -38,11 +38,11 @@ class FakeElement extends FakeNode {
     return null;
   }
   getBoundingClientRect() {
-    return { top: 0, bottom: 20, width: 100, height: 20 };
+    return { top: 0, bottom: 20, left: 0, right: 100, width: 100, height: 20 };
   }
 }
 
-function fakePage(body) {
+function fakePage(body, { whiteSpace = "normal" } = {}) {
   const html = new FakeElement("html", [body]);
   html.isRoot = true;
   const descendants = (root) => root.childNodes.flatMap((child) => [child, ...descendants(child)]);
@@ -50,6 +50,8 @@ function fakePage(body) {
   const context = {
     NodeFilter: { SHOW_ELEMENT: 1, SHOW_TEXT: 4 },
     innerHeight: 800,
+    innerWidth: 1200,
+    getComputedStyle: () => ({ whiteSpace }),
     IntersectionObserver: class {
       observe() {}
       unobserve() {}
@@ -108,4 +110,27 @@ test("an answer for an earlier translation of the page is ignored", () => {
   const [[, [[fresh]]]] = page.call("next", "new", 2, 2000).passages;
   assert.equal(page.call("apply", "new", [[fresh, "Salut"]]), true);
   assert.equal(text.nodeValue, "Salut");
+});
+
+test("line breaks and indentation never reach the model, and the node keeps its own edges", () => {
+  const first = new FakeText("\n\t\tMitmachen\n\t");
+  const second = new FakeText(" und   helfen\n");
+  const page = fakePage(new FakeElement("body", [new FakeElement("li", [first, new FakeElement("a", [second])])]));
+  page.call("start", "t");
+  const [[, pieces]] = page.call("next", "t", 24, 600).passages;
+  assert.deepEqual(pieces.map(([, text]) => text), ["Mitmachen ", " und helfen"]);
+  page.call("apply", "t", [
+    [pieces[0][0], "Join "],
+    [pieces[1][0], "and help"],
+  ]);
+  assert.equal(first.nodeValue, "\n\t\tJoin\n\t");
+  assert.equal(second.nodeValue, " and help\n");
+});
+
+test("preformatted text keeps its line breaks inside but not at its edges", () => {
+  const text = new FakeText("\nErste Zeile\nZweite Zeile\n");
+  const page = fakePage(new FakeElement("body", [new FakeElement("p", [text])]), { whiteSpace: "pre-line" });
+  page.call("start", "t");
+  const [[, [[, sent]]]] = page.call("next", "t", 24, 600).passages;
+  assert.equal(sent, "Erste Zeile\nZweite Zeile");
 });

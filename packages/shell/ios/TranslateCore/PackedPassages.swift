@@ -1,0 +1,97 @@
+import Foundation
+
+enum PackedPassages {
+  static let separator = " · "
+  static let defaultLimit = 600
+  static let defaultCount = 24
+
+  static func size(_ passage: [String]) -> Int { passage.reduce(0) { $0 + $1.count } }
+
+  static func packs(_ passages: [[String]], limit: Int = defaultLimit, count: Int = defaultCount) -> [Range<Int>] {
+    var out: [Range<Int>] = []
+    var start = 0
+    var used = 0
+    for (i, passage) in passages.enumerated() {
+      let length = size(passage)
+      if i > start, used + length > limit || i - start >= count {
+        out.append(start..<i)
+        start = i
+        used = 0
+      }
+      used += length
+    }
+    if start < passages.count { out.append(start..<passages.count) }
+    return out
+  }
+
+  static func text(_ passages: [[String]]) -> AttributedString {
+    var text = AttributedString()
+    for (p, pieces) in passages.enumerated() {
+      if p > 0 {
+        var gap = AttributedString(separator)
+        gap.link = URL(string: "ac-gap:\(p)")
+        text += gap
+      }
+      for (i, piece) in pieces.enumerated() {
+        var run = AttributedString(piece)
+        run.link = URL(string: "ac-piece:\(p).\(i)")
+        text += run
+      }
+    }
+    return text
+  }
+
+  static func parts(of translated: AttributedString, over passages: [[String]]) -> [[String]?] {
+    var parts = passages.map { Array(repeating: "", count: $0.count) }
+    var tagged = passages.map { Array(repeating: false, count: $0.count) }
+    var last: (passage: Int, piece: Int)?
+    var lead = ""
+    for run in translated.runs {
+      let words = String(translated[run.range].characters)
+      guard let link = run.link else {
+        if let last { parts[last.passage][last.piece] += words } else { lead += words }
+        continue
+      }
+      if link.scheme == "ac-gap" {
+        last = nil
+        lead = ""
+        continue
+      }
+      guard link.scheme == "ac-piece", let (p, i) = index(link), passages.indices.contains(p), passages[p].indices.contains(i) else {
+        return passages.map { _ in nil }
+      }
+      if last == nil {
+        parts[p][i] += lead
+        lead = ""
+      }
+      tagged[p][i] = true
+      parts[p][i] += words
+      last = (p, i)
+    }
+    let mark = separator.trimmingCharacters(in: .whitespaces)
+    return passages.indices.map { p in
+      guard !tagged[p].contains(false), !parts[p].contains(where: { $0.allSatisfy(\.isWhitespace) }) else { return nil }
+      if !passages[p].joined().contains(mark), parts[p].contains(where: { $0.contains(mark) }) { return nil }
+      return withSourceEdges(parts[p], of: passages[p])
+    }
+  }
+
+  static func withSourceEdges(_ parts: [String], of pieces: [String]) -> [String] {
+    guard let first = pieces.first, let last = pieces.last, !parts.isEmpty else { return parts }
+    var out = parts
+    out[0] = leadingSpace(first) + String(out[0].drop(while: \.isWhitespace))
+    let end = out.count - 1
+    out[end] = String(out[end].reversed().drop(while: \.isWhitespace).reversed()) + trailingSpace(last)
+    return out
+  }
+
+  private static func leadingSpace(_ text: String) -> String { String(text.prefix(while: \.isWhitespace)) }
+
+  private static func trailingSpace(_ text: String) -> String { String(text.reversed().prefix(while: \.isWhitespace).reversed()) }
+
+  private static func index(_ link: URL) -> (Int, Int)? {
+    let numbers = link.absoluteString.dropFirst("ac-piece:".count).split(separator: ".")
+    guard numbers.count == 2, let p = Int(numbers[0]), let i = Int(numbers[1]) else { return nil }
+    return (p, i)
+  }
+}
