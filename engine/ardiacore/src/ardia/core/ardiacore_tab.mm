@@ -464,6 +464,10 @@ using ardiacore::NS;
           TabStripModel::kNoTab) {
     return;
   }
+  if (bridge->asking_before_leaving() && !browser_shutdown::HasShutdownStarted()) {
+    bridge->CloseAfterLeaveAsk();
+    return;
+  }
   bridge->set_closed_by_host();
   if (!browser_shutdown::HasShutdownStarted() &&
       _contents->NeedToFireBeforeUnloadOrUnloadEvents()) {

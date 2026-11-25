@@ -80,7 +80,6 @@ void Terminate() {
     return;
   }
   if (WindowHost::AnyTabAskingBeforeLeaving()) {
-    NotifyWindowsQuitCancelled();
     HostQuitCancelled();
     return;
   }
@@ -119,7 +118,6 @@ void QuitEngine() {
     return;
   }
   if (WindowHost::AnyTabAskingBeforeLeaving()) {
-    NotifyWindowsQuitCancelled();
     HostQuitCancelled();
     return;
   }

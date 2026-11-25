@@ -184,6 +184,9 @@ void TabBridge::AnswerLeaveAsk(bool leave) {
             const bool stale =
                 bridge && bridge->leave_ask_generation_ != generation;
             std::move(answer).Run(leave && !stale);
+            if (bridge && std::exchange(bridge->close_after_leave_ask_, false)) {
+              [bridge->tab_ closeNow];
+            }
             base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
                 FROM_HERE,
                 base::BindOnce(&WindowHost::ResumeClosesAfterLeaveAsk));

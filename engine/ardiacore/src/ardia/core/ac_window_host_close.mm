@@ -16,6 +16,7 @@
 #include "chrome/browser/ui/unload_controller.h"
 #include "ardia/core/ac_browser_internal.h"
 #include "ardia/core/ac_browser_window.h"
+#include "ardia/core/ac_lifetime.h"
 #import "ardia/core/ardiacore_internal.h"
 #include "ui/views/widget/widget.h"
 
@@ -57,6 +58,9 @@ bool WindowHost::AnyTabAskingBeforeLeaving() {
 }
 
 void WindowHost::ResumeClosesAfterLeaveAsk() {
+  if (browser_shutdown::IsTryingToQuit() || IsQuitting()) {
+    return;
+  }
   for (WindowHost* host : All()) {
     if (std::exchange(host->waiting_for_leave_ask_, false)) {
       host->ContinueClose();

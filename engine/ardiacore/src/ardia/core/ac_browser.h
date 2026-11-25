@@ -336,6 +336,7 @@ class TabBridge : public content::WebContentsObserver,
   bool TakeAnsweredLeaveAsk();
   void AnswerLeaveAsk(bool leave);
   bool asking_before_leaving() const { return !leave_answer_.is_null(); }
+  void CloseAfterLeaveAsk() { close_after_leave_ask_ = true; }
   void ForgetLeaveAsk();
   void SetTemporary(bool temporary);
   void SetTemporarySource(int32_t source_id);
@@ -413,6 +414,7 @@ class TabBridge : public content::WebContentsObserver,
   bool leave_ask_answered_ = false;
   base::TimeTicks leave_approved_until_;
   int leave_ask_generation_ = 0;
+  bool close_after_leave_ask_ = false;
   int32_t temporary_id_ = 0;
   int32_t temporary_source_id_ = 0;
   bool made_ahead_ = false;
