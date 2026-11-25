@@ -190,12 +190,13 @@ const { holdsBack, noteFileHealth } = __require("packages/sync/src/fileHealth.ts
 const { baseKeysWith, baseWritesUnder, dropBase, dropRecord, putBase, putRecord, visible } = __require("packages/sync/src/scopeKeys.ts");
 
 const { covered, isApplied, markApplied, raiseApplied } = __require("packages/sync/src/applied.ts");
-const { launchOf, noteApplyingTo, reapplyStale, startApplying, takeReapplied } = __require("packages/sync/src/applying.ts");
+const { countReapplied, finishBatch, startApplying, takeReapplied, writeAhead } = __require("packages/sync/src/applyBatches.ts");
+const { recoverBatches } = __require("packages/sync/src/applyRecovery.ts");
 const { parseSyncFile } = __require("packages/sync/src/syncFile.ts");
 
                                                                                                                                  
 
-const DEFAULTS                                                                                                        = {
+const DEFAULTS                                                                                                                      = {
   expired: () => false,
   tombstoneTTL: 45 * 86_400_000,
   compactAfterFiles: 40,
@@ -284,15 +285,16 @@ async function changesOf(state            , adapter         , now        , optio
   if (unchangedSinceExtracted(state, adapter, source)) return { changes: [], settle: undefined, source: undefined };
   let pending                     = null;
   const queued = (key        ) => (pending ??= new Set([...state.outbox, ...(state.journal ?? []).flatMap((f) => f.ops)].map((op) => op.k))).has(key);
-  const extraction = await adapter.extract((key) => parseBase(state.base[key]), queued, now, (key) => key in state.records, (key) => state.records[key]?.v, (key) => state.records[key]?.h, (key) => state.base[key]);
+  const extractWith = (baseJson                                     ) =>
+    Promise.resolve(adapter.extract((key) => parseBase(baseJson(key)), queued, now, (key) => key in state.records, (key) => state.records[key]?.v, (key) => state.records[key]?.h, baseJson));
+  const first = await extractWith((key) => state.base[key]);
+  const extraction = first && state.applying ? await recoverBatches(state, adapter.prefix, first, extractWith, options) : first;
   if (!extraction) return null;
   const changes           = [];
   const { values, json: knownJson, republish, ignore } = extraction;
-  const jsonOf = (key        , value         ) => knownJson?.(key, value) ?? canonical(value);
-  if (state.applying) reapplyStale(state, adapter.prefix, values, jsonOf, ignore, now, launchOf(options));
   values.forEach((value, key) => {
     if (value === null || value === undefined) throw new Error(`[sync] ${key}: a live value can't be null`);
-    const json = jsonOf(key, value);
+    const json = knownJson?.(key, value) ?? canonical(value);
     if (state.base[key] === json && !republish?.(key)) return;
     changes.push({ key, value, json });
   });
@@ -407,7 +409,7 @@ async function pull(state            , transport           , scope        , cloc
   return changed;
 }
 
-async function applyAdapter(state            , adapter         , keys             , now        , horizon        , held               , deferred             , options               = {})                   {
+async function applyAdapter(state            , adapter         , keys             , now        , horizon        , held               , deferred             )                   {
   const mine = new Set([...keys].filter((k) => k.startsWith(adapter.prefix)));
   if (!mine.size) return true;
   const view = visible(state, adapter.prefix);
@@ -429,7 +431,6 @@ async function applyAdapter(state            , adapter         , keys           
       landed: (key        ) => void landed.add(key),
       defer: (key        ) => void (mine.has(key) && deferred.add(key)),
     };
-    if (options.persistApplying && noteApplyingTo(state, mine, view, now, launchOf(options))) await options.persistApplying(state.applying );
     ok = await adapter.apply(view, mine, (key) => parseBase(state.base[key]), records);
   } catch (error) {
     console.warn(`[sync] applying ${adapter.prefix} failed`, error);
@@ -444,6 +445,7 @@ async function applyAdapter(state            , adapter         , keys           
   }
   applyAs[adapter.prefix] = "joined";
   for (const key of mine) if (!deferred.has(key)) settle(key);
+  countReapplied(state, mine, deferred);
   return true;
 }
 
@@ -545,13 +547,20 @@ async function syncScope(args
   let heldApply = false;
   const applyHeld = () => !!options?.holdApply?.();
   for (const adapter of adapters) {
-    const late = adapter.publishAfterPull && held ? new Set        () : await publishAdapter(state, adapter, clock, device, now(), options, stamps.get(adapter));
-    published += late.size;
-    for (const key of late) keys.delete(key);
+    const publishLate = async () => {
+      const late = adapter.publishAfterPull && held ? new Set        () : await publishAdapter(state, adapter, clock, device, now(), options, stamps.get(adapter));
+      published += late.size;
+      for (const key of late) keys.delete(key);
+      return late;
+    };
+    const late = await publishLate();
     for (const key of state.unapplied) if (key.startsWith(adapter.prefix) && !late.has(key)) keys.add(key);
     heldApply ||= applyHeld();
     const deferred = new Set        ();
-    const applied = !heldApply && (await applyAdapter(state, adapter, keys, now(), 2 * (options?.tombstoneTTL ?? DEFAULTS.tombstoneTTL), applyHeld, deferred, options));
+    const ahead = heldApply ? null : await writeAhead(state, adapter.prefix, keys, now(), options);
+    if (ahead?.batch) await publishLate();
+    const applied = !heldApply && !ahead?.failed && (await applyAdapter(state, adapter, keys, now(), 2 * (options?.tombstoneTTL ?? DEFAULTS.tombstoneTTL), applyHeld, deferred));
+    finishBatch(ahead?.batch ?? null, options);
     heldApply ||= applyHeld();
     if (!applied) for (const key of keys) if (key.startsWith(adapter.prefix)) unapplied.push(key);
     if (applied) for (const key of deferred) unapplied.push(key);
@@ -804,23 +813,32 @@ function raiseApplied(state            , device        , seq        ) {
 }
 
 });
-__define("packages/sync/src/applying.ts", function (exports, __require) {
+__define("packages/sync/src/applyBatches.ts", function (exports, __require) {
+  __export(exports, "ABSENT", () => ABSENT);
+  __export(exports, "UNSEEN_KEPT_MS", () => UNSEEN_KEPT_MS);
   __export(exports, "launchOf", () => launchOf);
-  __export(exports, "noteApplyingTo", () => noteApplyingTo);
+  __export(exports, "fingerprint", () => fingerprint);
+  __export(exports, "isApplyBatch", () => isApplyBatch);
+  __export(exports, "validBatches", () => validBatches);
+  __export(exports, "writeAhead", () => writeAhead);
+  __export(exports, "finishBatch", () => finishBatch);
   __export(exports, "startApplying", () => startApplying);
+  __export(exports, "queueRecovered", () => queueRecovered);
+  __export(exports, "countReapplied", () => countReapplied);
   __export(exports, "takeReapplied", () => takeReapplied);
-  __export(exports, "reapplyStale", () => reapplyStale);
 const { canonical } = __require("packages/sync/src/canon.ts");
-const { dropBase, putBase } = __require("packages/sync/src/scopeKeys.ts");
-                                                                          
+const { visible } = __require("packages/sync/src/scopeKeys.ts");
+                                                                            
 
 const ABSENT = "null";
 const NATIVE_SAVE_MS = 30_000;
-const KEPT_PRIOR_VALUES = 8;
+const UNSEEN_KEPT_MS = 86_400_000;
 
 const thisLaunch = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+const steadyNow = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
 const launchOf = (options               = {}) => options.launch ?? thisLaunch;
+const monotonicOf = (options               = {}) => (options.monotonic ?? steadyNow)();
 
 function fingerprint(json        )         {
   let h1 = 0xdeadbeef ^ json.length;
@@ -835,35 +853,105 @@ function fingerprint(json        )         {
   return (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36);
 }
 
-function noteApplyingTo(state            , keys                  , view                      , now        , launch        )          {
+const isStep = (v         ) => Array.isArray(v) && v.length === 2 && (v[0] === null || typeof v[0] === "string") && typeof v[1] === "string";
+const isFiniteNumber = (v         )              => typeof v === "number" && Number.isFinite(v);
+
+function isApplyBatch(v         )                  {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  const b = v                           ;
+  if (!isFiniteNumber(b.id) || typeof b.p !== "string" || typeof b.l !== "string" || !isFiniteNumber(b.at)) return false;
+  if (b.done !== undefined && !isFiniteNumber(b.done)) return false;
+  if (b.r !== undefined && b.r !== 1) return false;
+  return typeof b.k === "object" && b.k !== null && !Array.isArray(b.k) && Object.values(b.k).every(isStep);
+}
+
+const validBatches = (v         )               => (Array.isArray(v) ? v.filter(isApplyBatch) : []);
+
+function noteBatch(state            , prefix        , keys                  , now        , options              )                    {
+  const view = visible(state, prefix);
+  const k                  = {};
   let noted = false;
   for (const key of keys) {
-    const from = state.base[key] ?? ABSENT;
+    if (!key.startsWith(prefix)) continue;
+    const from = state.base[key];
     const to = view.has(key) ? canonical(view.get(key)) : ABSENT;
-    if (from === to) continue;
-    const entry = state.applying?.[key];
-    const t = fingerprint(to);
-    const w = [...new Set([...(entry?.w ?? []), fingerprint(from)])].filter((f) => f !== t).slice(-KEPT_PRIOR_VALUES);
-    (state.applying ??= {})[key] = { w, t, at: now, l: launch };
+    if ((from ?? ABSENT) === to) continue;
+    k[key] = [from ?? null, fingerprint(to)];
     noted = true;
   }
-  return noted;
+  if (!noted) return null;
+  const batches = (state.applying ??= []);
+  const id = Math.max(now, ...batches.map((b) => b.id + 1));
+  const batch             = { id, p: prefix, l: launchOf(options), at: now, k };
+  batches.push(batch);
+  return batch;
+}
+
+function dropBatch(state            , batch            ) {
+  state.applying = state.applying?.filter((b) => b !== batch);
+  if (!state.applying?.length) delete state.applying;
+}
+
+                                                                       
+
+async function writeAhead(state            , prefix        , keys                  , now        , options               = {})                      {
+  const persist = options.persistApplying;
+  const batch = persist ? noteBatch(state, prefix, keys, now, options) : null;
+  if (!persist || !batch) return { batch: null, failed: false };
+  try {
+    await persist(batch);
+    return { batch, failed: false };
+  } catch (error) {
+    console.warn(`[sync] couldn't journal what ${prefix} is about to apply`, error);
+    dropBatch(state, batch);
+    return { batch: null, failed: true };
+  }
+}
+
+function finishBatch(batch                   , options               = {}) {
+  if (batch) batch.done = monotonicOf(options);
 }
 
 function startApplying(state            , now        , options               = {}) {
   takeReapplied(state);
-  const applying = state.applying;
-  if (!applying) return;
+  if (!state.applying) return;
   const launch = launchOf(options);
+  const steady = monotonicOf(options);
   const saveMs = options.nativeSaveMs ?? NATIVE_SAVE_MS;
-  for (const key in applying) {
-    const entry = applying[key] ;
-    if (entry.l === launch && now - entry.at >= saveMs) delete applying[key];
-  }
-  if (!Object.keys(applying).length) delete state.applying;
+  const live = (b            ) => {
+    if (b.l === launch) return b.done === undefined || steady - b.done < saveMs;
+    return !b.r || now - b.at < UNSEEN_KEPT_MS;
+  };
+  state.applying = state.applying.filter(live);
+  if (!state.applying.length) delete state.applying;
 }
 
+const recovering = new WeakMap                         ();
 const reapplied = new WeakMap                    ();
+
+function queueRecovered(state            , keys          ) {
+  if (!keys.length) return;
+  const queued = new Set(state.unapplied);
+  let marks = recovering.get(state);
+  if (!marks) recovering.set(state, (marks = new Set()));
+  for (const key of keys) {
+    marks.add(key);
+    if (queued.has(key)) continue;
+    queued.add(key);
+    state.unapplied.push(key);
+  }
+}
+
+function countReapplied(state            , applied                  , deferred             ) {
+  const marks = recovering.get(state);
+  if (!marks?.size) return;
+  let count = 0;
+  for (const key of applied) {
+    if (deferred.has(key) || !marks.delete(key)) continue;
+    count++;
+  }
+  if (count) reapplied.set(state, (reapplied.get(state) ?? 0) + count);
+}
 
 function takeReapplied(state            )         {
   const count = reapplied.get(state) ?? 0;
@@ -871,49 +959,137 @@ function takeReapplied(state            )         {
   return count;
 }
 
-function reapplyStale(state            , prefix        , values                      , json                                         , ignore                                        , now        , launch        ) {
-  const native = (key        ) => (values.has(key) ? json(key, values.get(key)) : ABSENT);
-  const { stale } = recoverApplied(state, prefix, native, (key) => !!ignore?.(key), now, launch);
-  for (const key of stale) {
-    if (state.unapplied.includes(key)) continue;
-    state.unapplied.push(key);
-    reapplied.set(state, (reapplied.get(state) ?? 0) + 1);
-  }
+});
+__define("packages/sync/src/applyRecovery.ts", function (exports, __require) {
+  __export(exports, "recoverBatches", () => recoverBatches);
+const { canonical } = __require("packages/sync/src/canon.ts");
+const { ABSENT, fingerprint, launchOf, queueRecovered } = __require("packages/sync/src/applyBatches.ts");
+const { dropBase, putBase, visible } = __require("packages/sync/src/scopeKeys.ts");
+                                                                                        
+
+                                                     
+                                                                                                        
+
+const nativeJson = (extraction            , key        ) => {
+  if (!extraction.values.has(key)) return ABSENT;
+  const value = extraction.values.get(key);
+  return extraction.json?.(key, value) ?? canonical(value);
+};
+
+function setBase(state            , key        , json        ) {
+  if (json === ABSENT) dropBase(state, key);
+  else putBase(state, key, json);
 }
 
-                                                      
+function chainsOf(batches              , skip                          ) {
+  const chains = new Map                ();
+  batches.forEach((batch, at) => {
+    for (const [key, [from, to]] of Object.entries(batch.k)) {
+      if (skip(key)) continue;
+      let chain = chains.get(key);
+      if (!chain) chains.set(key, (chain = []));
+      chain.push({ at, from: from ?? ABSENT, to });
+    }
+  });
+  return chains;
+}
 
-function recoverApplied(state            , prefix        , native                         , ignored                          , now        , launch        )            {
-  const recovered            = { stale: [], adopted: 0 };
-  const applying = state.applying;
-  if (!applying) return recovered;
-  for (const key in applying) {
-    if (!key.startsWith(prefix)) continue;
-    const entry           = applying[key] ;
-    if (entry.l === launch) continue;
-    const json = ignored(key) ? undefined : native(key);
-    if (json === undefined) {
-      applying[key] = { ...entry, at: now, l: launch };
-      continue;
-    }
-    const base = state.base[key] ?? ABSENT;
-    const f = fingerprint(json);
-    if (f !== entry.t && entry.w.includes(f)) {
-      if (json !== base) {
-        if (json === ABSENT) dropBase(state, key);
-        else putBase(state, key, json);
-      }
-      recovered.stale.push(key);
-      continue;
-    }
-    if (f === entry.t && json !== base) {
-      if (json === ABSENT) dropBase(state, key);
-      else putBase(state, key, json);
-      recovered.adopted++;
-    }
-    applying[key] = { ...entry, at: now, l: launch };
+function knownJson(state            , key        , chain        , fp        )                     {
+  const record = state.records[key];
+  const candidates = [state.base[key] ?? ABSENT, ...(record ? [canonical(record.v)] : []), ...chain.map((s) => s.from)];
+  return candidates.find((json) => fingerprint(json) === fp);
+}
+
+function lastBefore(chain        , hypothesis        )                   {
+  let last                  ;
+  for (const step of chain) if (step.at < hypothesis) last = step;
+  return last;
+}
+
+function fpAt(chain        , hypothesis        )         {
+  const last = lastBefore(chain, hypothesis);
+  return last ? last.to : fingerprint(chain[0] .from);
+}
+
+function jsonAt(state            , key        , chain        , hypothesis        )                     {
+  const last = lastBefore(chain, hypothesis);
+  return last ? knownJson(state, key, chain, last.to) : chain[0] .from;
+}
+
+                                                                                                                            
+
+async function tryHypothesis(state            , chains                     , hypothesis        , first            , extractWith             )                        {
+  const overrides = new Map                ();
+  for (const [key, chain] of chains) {
+    const json = jsonAt(state, key, chain, hypothesis);
+    if (json !== undefined) overrides.set(key, json);
   }
-  return recovered;
+  const baseJson = (key        ) => {
+    const json = overrides.has(key) ? overrides.get(key)  : state.base[key];
+    return json === ABSENT ? undefined : json;
+  };
+  const same = [...overrides].every(([key, json]) => (state.base[key] ?? ABSENT) === json);
+  const extraction = same ? first : await extractWith(baseJson);
+  if (!extraction) return null;
+  let matches = 0;
+  for (const [key, chain] of chains) {
+    if (extraction.ignore?.(key)) continue;
+    if (fingerprint(nativeJson(extraction, key)) === fpAt(chain, hypothesis)) matches++;
+  }
+  return { hypothesis, extraction, matches, baseJson };
+}
+
+function keepUnresolved(state            , batches              , resolved             ) {
+  const kept               = [];
+  for (const batch of state.applying ?? []) {
+    if (!batches.includes(batch)) {
+      kept.push(batch);
+      continue;
+    }
+    const left = Object.entries(batch.k).filter(([key]) => !resolved.has(key));
+    if (left.length) kept.push({ ...batch, r: 1, k: Object.fromEntries(left) });
+  }
+  if (kept.length) state.applying = kept;
+  else delete state.applying;
+}
+
+async function recoverBatches(state            , prefix        , first            , extractWith             , options               = {})                             {
+  const launch = launchOf(options);
+  const batches = (state.applying ?? []).filter((b) => b.p === prefix && b.l !== launch).sort((a, z) => a.id - z.id);
+  if (!batches.length) return first;
+  const chains = chainsOf(batches, (key) => !!first.ignore?.(key));
+  if (!chains.size) {
+    keepUnresolved(state, batches, new Set());
+    return first;
+  }
+  let best               = null;
+  for (let hypothesis = 0; hypothesis <= batches.length; hypothesis++) {
+    const trial = await tryHypothesis(state, chains, hypothesis, first, extractWith);
+    if (!trial) return null;
+    if (!best || trial.matches > best.matches) best = trial;
+  }
+  const { extraction, hypothesis, baseJson } = best ;
+  const view = visible(state, prefix);
+  const sinceRestart = chainsOf((state.applying ?? []).filter((b) => b.p === prefix && b.l === launch), (key) => !chains.has(key));
+  const resolved = new Set        ();
+  const queue           = [];
+  for (const [key, chain] of chains) {
+    if (extraction.ignore?.(key)) continue;
+    resolved.add(key);
+    const actual = nativeJson(extraction, key);
+    const fp = fingerprint(actual);
+    const explained = fp === fpAt(chain, hypothesis) || chain.some((s) => s.to === fp || fingerprint(s.from) === fp) || !!sinceRestart.get(key)?.some((s) => s.to === fp || fingerprint(s.from) === fp);
+    if (!explained) {
+      setBase(state, key, baseJson(key) ?? ABSENT);
+      continue;
+    }
+    setBase(state, key, actual);
+    const target = view.has(key) ? canonical(view.get(key)) : ABSENT;
+    if (actual !== target) queue.push(key);
+  }
+  keepUnresolved(state, batches, resolved);
+  queueRecovered(state, queue);
+  return extraction;
 }
 
 });
@@ -937,7 +1113,7 @@ __define("packages/sync/src/scopeState.ts", function (exports, __require) {
   
                                               
 
-                                                                         
+                                                                                                                                                      
 
                                                                                                                               
 
@@ -957,7 +1133,7 @@ __define("packages/sync/src/scopeState.ts", function (exports, __require) {
                   
                         
                                                  
-                                      
+                          
                      
                   
   
@@ -1038,9 +1214,10 @@ const emptyScope = ()             => ({
                          
                                                   
                             
-                                                                          
+                                                         
                   
                         
+                           
   
 
 });

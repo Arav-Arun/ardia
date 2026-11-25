@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Clock } from "./hlc.ts";
 import { syncScope } from "./scope.ts";
-import { emptyScope, type Adapter, type Applying, type Listing, type ScopeState, type Transport } from "./scopeState.ts";
+import { emptyScope, type Adapter, type ApplyBatch, type Listing, type ScopeState, type Transport } from "./scopeState.ts";
 
 const SAVE_MS = 30_000;
 
@@ -32,16 +32,20 @@ class Folder {
   }
 }
 
-type Saved = { kind: "state"; json: string; clock: string | null } | { kind: "applying"; json: string };
+type Saved = { kind: "state"; json: string; clock: string | null } | { kind: "batch"; json: string };
+type Mode = { replaces?: boolean; throttled?: boolean; failsAfter?: string; ignores?: (key: string) => boolean; slowApplyMs?: number };
 
 class Mac {
   memory = new Map<string, unknown>();
   disk = new Map<string, unknown>();
   state: ScopeState = emptyScope();
   clock: Clock;
+  steady = 0;
   launches = 0;
   launch: string;
   writeAhead: boolean;
+  mode: Mode = {};
+  duringWriteAhead?: () => void;
   saved: Saved[] = [];
   readonly id: string;
   readonly folder: Folder;
@@ -52,12 +56,28 @@ class Mac {
     this.clock = new Clock(id, null, () => folder.now);
     this.launch = `${id}-0`;
   }
+  tick(ms: number) {
+    this.folder.now += ms;
+    this.steady += ms;
+  }
   adapter(): Adapter {
     return {
       prefix: "b:",
-      extract: () => ({ values: new Map(this.memory) }),
+      extract: () => {
+        if (this.mode.throttled) return null;
+        const ignores = this.mode.ignores;
+        return { values: new Map([...this.memory].filter(([key]) => !ignores?.(key))), ignore: ignores };
+      },
       apply: (visible, changed) => {
-        for (const key of changed) visible.has(key) ? this.memory.set(key, visible.get(key)) : this.memory.delete(key);
+        if (this.mode.slowApplyMs) this.tick(this.mode.slowApplyMs);
+        if (this.mode.replaces) {
+          this.memory = new Map([...visible].filter(([key]) => key.startsWith("b:")));
+          return;
+        }
+        for (const key of [...changed].sort()) {
+          if (key === this.mode.failsAfter) return false;
+          visible.has(key) ? this.memory.set(key, visible.get(key)) : this.memory.delete(key);
+        }
       },
     };
   }
@@ -66,7 +86,12 @@ class Mac {
   }
   async sync() {
     const persistApplying = this.writeAhead
-      ? async (applying: Record<string, Applying>) => void this.saved.push({ kind: "applying", json: JSON.stringify(applying) })
+      ? async (batch: ApplyBatch) => {
+          this.saved.push({ kind: "batch", json: JSON.stringify(batch) });
+          await new Promise((resolve) => setImmediate(resolve));
+          this.duringWriteAhead?.();
+          delete this.duringWriteAhead;
+        }
       : undefined;
     const result = await syncScope({
       scope: "s",
@@ -76,7 +101,7 @@ class Mac {
       clock: this.clock,
       device: this.id,
       now: () => this.folder.now,
-      options: { pruneGrace: 0, persist: async () => {}, persistApplying, launch: this.launch, nativeSaveMs: SAVE_MS },
+      options: { pruneGrace: 0, persist: async () => {}, persistApplying, launch: this.launch, nativeSaveMs: SAVE_MS, monotonic: () => this.steady },
     });
     this.saved.push({ kind: "state", json: JSON.stringify(this.state), clock: this.clock.last });
     return result;
@@ -86,16 +111,21 @@ class Mac {
     const last = this.saved.map((s) => s.kind).lastIndexOf("state");
     const state = last >= 0 ? (this.saved[last] as Extract<Saved, { kind: "state" }>) : null;
     this.state = state ? (JSON.parse(state.json) as ScopeState) : emptyScope();
-    for (const later of this.saved.slice(last + 1)) if (later.kind === "applying") this.state.applying = JSON.parse(later.json) as Record<string, Applying>;
+    for (const later of this.saved.slice(last + 1)) {
+      if (later.kind !== "batch") continue;
+      const batch = JSON.parse(later.json) as ApplyBatch;
+      this.state.applying = [...(this.state.applying ?? []).filter((b) => b.id !== batch.id), batch];
+    }
     this.clock = new Clock(this.id, state?.clock ?? null, () => this.folder.now);
     this.launch = `${this.id}-${++this.launches}`;
+    this.steady = 0;
   }
 }
 
-const settle = async (folder: Folder, macs: Mac[], rounds = 3) => {
+const settle = async (macs: Mac[], rounds = 3) => {
   for (let i = 0; i < rounds; i++) {
     for (const mac of macs) {
-      folder.now += 1_000;
+      mac.tick(1_000);
       await mac.sync();
     }
   }
@@ -106,130 +136,238 @@ async function pairWith(bookmarks: Record<string, string>, writeAhead = true) {
   const a = new Mac("macA", folder, writeAhead);
   const b = new Mac("macB", folder, writeAhead);
   for (const [key, title] of Object.entries(bookmarks)) a.memory.set(key, title);
-  await settle(folder, [a, b]);
+  await settle([a, b]);
   a.chromeSaves();
   b.chromeSaves();
-  folder.now += SAVE_MS + 1;
-  await settle(folder, [a, b]);
+  a.tick(SAVE_MS + 1);
+  b.tick(SAVE_MS + 1);
+  await settle([a, b]);
   return { folder, a, b };
+}
+
+async function remoteChange(a: Mac, b: Mac, edit: () => void) {
+  edit();
+  a.tick(1_000);
+  await a.sync();
+  b.tick(1_000);
+  return b.sync();
 }
 
 const view = (mac: Mac) => Object.fromEntries([...mac.memory].sort(([x], [y]) => x.localeCompare(y)));
 
 test("a bookmark deleted on another Mac stays deleted after this Mac is killed before Chrome saved the rename it applied", async () => {
-  const { folder, a, b } = await pairWith({ "b:t1": "T1", "b:t2": "T2" });
-  a.memory.set("b:t1", "T1 renamed");
-  folder.now += 1_000;
-  await a.sync();
-  folder.now += 1_000;
-  await b.sync();
+  const { a, b } = await pairWith({ "b:t1": "T1", "b:t2": "T2" });
+  await remoteChange(a, b, () => a.memory.set("b:t1", "T1 renamed"));
   assert.equal(b.memory.get("b:t1"), "T1 renamed");
   b.killed();
   assert.equal(b.memory.get("b:t1"), "T1");
   a.memory.delete("b:t1");
-  folder.now += 1_000;
+  a.tick(1_000);
   await a.sync();
-  folder.now += 60_000;
-  await settle(folder, [b, a], 4);
+  b.tick(60_000);
+  await settle([b, a], 4);
   assert.deepEqual(view(a), { "b:t2": "T2" });
   assert.deepEqual(view(b), { "b:t2": "T2" });
 });
 
 test("a bookmark added on another Mac isn't deleted everywhere when this Mac is killed before Chrome saved it", async () => {
-  const { folder, a, b } = await pairWith({ "b:t2": "T2" });
-  a.memory.set("b:new", "New");
-  folder.now += 1_000;
-  await a.sync();
-  folder.now += 1_000;
-  await b.sync();
+  const { a, b } = await pairWith({ "b:t2": "T2" });
+  await remoteChange(a, b, () => a.memory.set("b:new", "New"));
   b.killed();
   assert.equal(b.memory.has("b:new"), false);
-  folder.now += 60_000;
-  const { reapplied } = await b.sync();
+  b.tick(60_000);
+  const { reapplied, published } = await b.sync();
+  assert.equal(published, 0);
   assert.equal(reapplied, 1);
-  await settle(folder, [a, b], 3);
+  await settle([a, b], 3);
   assert.deepEqual(view(a), { "b:new": "New", "b:t2": "T2" });
   assert.deepEqual(view(b), { "b:new": "New", "b:t2": "T2" });
 });
 
-test("without the write-ahead intent the same crash republishes the stale rename", async () => {
-  const { folder, a, b } = await pairWith({ "b:t1": "T1" }, false);
-  a.memory.set("b:t1", "T1 renamed");
-  folder.now += 1_000;
-  await a.sync();
-  folder.now += 1_000;
-  await b.sync();
+test("without the write-ahead journal the same crash republishes the stale rename", async () => {
+  const { a, b } = await pairWith({ "b:t1": "T1" }, false);
+  await remoteChange(a, b, () => a.memory.set("b:t1", "T1 renamed"));
   b.killed();
   a.memory.delete("b:t1");
-  folder.now += 1_000;
+  a.tick(1_000);
   await a.sync();
-  folder.now += 60_000;
-  await settle(folder, [b, a], 4);
+  b.tick(60_000);
+  await settle([b, a], 4);
   assert.equal(a.memory.get("b:t1"), "T1");
 });
 
 test("an edit made offline after the crash still wins over the recovery", async () => {
-  const { folder, a, b } = await pairWith({ "b:t1": "T1" });
-  a.memory.set("b:t1", "T1 renamed");
-  folder.now += 1_000;
-  await a.sync();
-  folder.now += 1_000;
-  await b.sync();
+  const { a, b } = await pairWith({ "b:t1": "T1" });
+  await remoteChange(a, b, () => a.memory.set("b:t1", "T1 renamed"));
   b.killed();
-  folder.now += 60_000;
+  b.tick(60_000);
   b.memory.set("b:t1", "B's own title");
-  await settle(folder, [b, a], 3);
+  await settle([b, a], 3);
   assert.equal(a.memory.get("b:t1"), "B's own title");
   assert.equal(b.memory.get("b:t1"), "B's own title");
 });
 
 test("a second kill during recovery, before Chrome saved the re-apply, still recovers", async () => {
-  const { folder, a, b } = await pairWith({ "b:t1": "T1", "b:t2": "T2" });
-  a.memory.set("b:t1", "T1 renamed");
-  folder.now += 1_000;
-  await a.sync();
-  folder.now += 1_000;
-  await b.sync();
+  const { a, b } = await pairWith({ "b:t1": "T1", "b:t2": "T2" });
+  await remoteChange(a, b, () => a.memory.set("b:t1", "T1 renamed"));
   b.killed();
-  folder.now += 60_000;
+  b.tick(60_000);
   await b.sync();
   assert.equal(b.memory.get("b:t1"), "T1 renamed");
   b.killed();
   assert.equal(b.memory.get("b:t1"), "T1");
   a.memory.delete("b:t2");
-  folder.now += 1_000;
+  a.tick(1_000);
   await a.sync();
-  folder.now += 60_000;
-  await settle(folder, [b, a], 4);
+  b.tick(60_000);
+  await settle([b, a], 4);
   assert.deepEqual(view(a), { "b:t1": "T1 renamed" });
   assert.deepEqual(view(b), { "b:t1": "T1 renamed" });
 });
 
-test("a Mac killed after Chrome saved takes the applied value as its own base and publishes nothing", async () => {
-  const { folder, a, b } = await pairWith({ "b:t1": "T1" });
-  a.memory.set("b:t1", "T1 renamed");
-  folder.now += 1_000;
-  await a.sync();
-  folder.now += 1_000;
-  await b.sync();
+test("a Mac killed after Chrome saved takes the applied value and publishes nothing", async () => {
+  const { a, b } = await pairWith({ "b:t1": "T1" });
+  await remoteChange(a, b, () => a.memory.set("b:t1", "T1 renamed"));
   b.chromeSaves();
   b.killed();
-  folder.now += 60_000;
+  b.tick(60_000);
   const { published, reapplied } = await b.sync();
   assert.equal(published, 0);
   assert.equal(reapplied, 0);
+  assert.equal(b.state.applying, undefined);
 });
 
-test("the intent clears once Chrome's save window has passed in the same launch", async () => {
-  const { folder, a, b } = await pairWith({ "b:t1": "T1" });
-  a.memory.set("b:t1", "T1 renamed");
-  folder.now += 1_000;
-  await a.sync();
-  folder.now += 1_000;
+test("the batch clears only once Chrome's save window has passed after the apply finished, on the steady clock", async () => {
+  const { a, b } = await pairWith({ "b:t1": "T1" });
+  b.mode.slowApplyMs = 40_000;
+  await remoteChange(a, b, () => a.memory.set("b:t1", "T1 renamed"));
+  delete b.mode.slowApplyMs;
+  assert.equal(b.state.applying?.length, 1);
+  assert.ok(b.saved.some((s) => s.kind === "batch"));
+  b.tick(1_000);
   await b.sync();
-  assert.ok(b.state.applying?.["b:t1"]);
-  assert.ok(b.saved.some((s) => s.kind === "applying"));
-  folder.now += SAVE_MS;
+  assert.equal(b.state.applying?.length, 1, "a slow apply doesn't start its window before it ends");
+  b.folder.now += 3_600_000;
+  await b.sync();
+  assert.equal(b.state.applying?.length, 1, "a wall clock jump doesn't end the window");
+  b.steady += SAVE_MS;
   await b.sync();
   assert.equal(b.state.applying, undefined);
+});
+
+test("a local edit made while the write-ahead journal is being written isn't erased by an apply that replaces everything", async () => {
+  const { a, b } = await pairWith({ "b:t1": "T1", "b:t2": "T2" });
+  b.mode.replaces = true;
+  b.duringWriteAhead = () => b.memory.set("b:t2", "T2 edited on B");
+  await remoteChange(a, b, () => a.memory.set("b:t1", "T1 renamed"));
+  assert.equal(b.memory.get("b:t2"), "T2 edited on B");
+  await settle([a, b], 2);
+  assert.deepEqual(view(a), { "b:t1": "T1 renamed", "b:t2": "T2 edited on B" });
+  assert.deepEqual(view(b), view(a));
+});
+
+test("an apply that wrote a key and then failed keeps that value as a candidate when the next apply targets something else", async () => {
+  const { a, b } = await pairWith({ "b:a": "A0", "b:z": "Z0" });
+  b.mode.failsAfter = "b:z";
+  await remoteChange(a, b, () => (a.memory.set("b:a", "A1"), a.memory.set("b:z", "Z1")));
+  assert.equal(b.memory.get("b:a"), "A1");
+  b.mode = { throttled: true };
+  await remoteChange(a, b, () => a.memory.set("b:a", "A2"));
+  assert.equal(b.memory.get("b:a"), "A2");
+  b.disk = new Map([["b:a", "A1"], ["b:z", "Z0"]]);
+  b.killed();
+  b.mode = {};
+  b.tick(60_000);
+  await settle([b, a], 3);
+  assert.deepEqual(view(a), { "b:a": "A2", "b:z": "Z1" });
+  assert.deepEqual(view(b), view(a));
+});
+
+test("a stale apply another Mac reverted before the restart leaves no batch to swallow a later edit", async () => {
+  const { a, b } = await pairWith({ "b:t1": "A" });
+  await remoteChange(a, b, () => a.memory.set("b:t1", "B"));
+  b.killed();
+  a.memory.set("b:t1", "A");
+  a.tick(1_000);
+  await a.sync();
+  b.tick(60_000);
+  await settle([b, a], 2);
+  assert.equal(b.state.applying, undefined);
+  b.memory.set("b:t1", "B");
+  await settle([b, a], 2);
+  assert.equal(a.memory.get("b:t1"), "B");
+});
+
+test("many applies inside one save window keep the value Chrome last saved", async () => {
+  const { a, b } = await pairWith({ "b:t1": "v0" });
+  for (let i = 1; i <= 12; i++) await remoteChange(a, b, () => a.memory.set("b:t1", `v${i}`));
+  b.killed();
+  assert.equal(b.memory.get("b:t1"), "v0");
+  b.tick(60_000);
+  const { published } = await b.sync();
+  assert.equal(published, 0);
+  await settle([b, a], 2);
+  assert.equal(a.memory.get("b:t1"), "v12");
+  assert.equal(b.memory.get("b:t1"), "v12");
+});
+
+test("a key ignored by the first pass after a restart keeps its batch until a later pass can judge it", async () => {
+  const { a, b } = await pairWith({ "b:t1": "T1" });
+  await remoteChange(a, b, () => a.memory.set("b:t1", "T1 renamed"));
+  b.killed();
+  a.memory.delete("b:t1");
+  a.tick(1_000);
+  await a.sync();
+  b.mode = { ignores: (key) => key === "b:t1" };
+  b.tick(60_000);
+  await b.sync();
+  assert.ok(b.state.applying?.some((batch) => batch.l !== b.launch && "b:t1" in batch.k));
+  b.mode = {};
+  await settle([b, a], 3);
+  assert.deepEqual(view(a), {});
+  assert.deepEqual(view(b), {});
+});
+
+test("a saved remote value with a newer local edit lost in the crash puts the edit back instead of keeping the older value", async () => {
+  const { a, b } = await pairWith({ "b:t1": "A" });
+  await remoteChange(a, b, () => a.memory.set("b:t1", "B"));
+  b.chromeSaves();
+  b.memory.set("b:t1", "C");
+  b.tick(1_000);
+  await b.sync();
+  b.killed();
+  assert.equal(b.memory.get("b:t1"), "B");
+  b.tick(60_000);
+  await settle([b, a], 3);
+  assert.equal(b.memory.get("b:t1"), "C");
+  assert.equal(a.memory.get("b:t1"), "C");
+});
+
+test("the re-apply is counted only once it lands", async () => {
+  const { a, b } = await pairWith({ "b:t1": "T1" });
+  await remoteChange(a, b, () => a.memory.set("b:t1", "T1 renamed"));
+  b.killed();
+  b.mode = { failsAfter: "b:t1" };
+  b.tick(60_000);
+  assert.equal((await b.sync()).reapplied, 0);
+  b.mode = {};
+  b.tick(1_000);
+  assert.equal((await b.sync()).reapplied, 1);
+  b.tick(1_000);
+  assert.equal((await b.sync()).reapplied, 0);
+});
+
+test("recovering 100,000 keys after a crash doesn't scan the unapplied list once per key", async () => {
+  const { a, b } = await pairWith({});
+  await remoteChange(a, b, () => {
+    for (let i = 0; i < 100_000; i++) a.memory.set(`b:${i}`, i);
+  });
+  b.killed();
+  b.state.unapplied = Array.from({ length: 100_000 }, (_, i) => `b:other${i}`);
+  b.tick(60_000);
+  const started = performance.now();
+  const { published } = await b.sync();
+  assert.equal(published, 0);
+  assert.equal(b.memory.size, 100_000);
+  assert.ok(performance.now() - started < 15_000, `took ${Math.round(performance.now() - started)} ms`);
 });

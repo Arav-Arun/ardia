@@ -4,12 +4,13 @@ import { holdsBack, noteFileHealth } from "./fileHealth.ts";
 import { baseKeysWith, baseWritesUnder, dropBase, dropRecord, putBase, putRecord, visible } from "./scopeKeys.ts";
 export * from "./scopeKeys.ts";
 import { covered, isApplied, markApplied, raiseApplied } from "./applied.ts";
-import { launchOf, noteApplyingTo, reapplyStale, startApplying, takeReapplied } from "./applying.ts";
+import { countReapplied, finishBatch, startApplying, takeReapplied, writeAhead } from "./applyBatches.ts";
+import { recoverBatches } from "./applyRecovery.ts";
 import { parseSyncFile } from "./syncFile.ts";
 export { parseSyncFile } from "./syncFile.ts";
 import type { Adapter, LogFile, ScopeOptions, ScopeState, SnapshotFile, SyncFile, SyncRecord, Transport } from "./scopeState.ts";
 
-const DEFAULTS: Required<Omit<ScopeOptions, "persist" | "holdApply" | "persistApplying" | "launch" | "nativeSaveMs">> = {
+const DEFAULTS: Required<Omit<ScopeOptions, "persist" | "holdApply" | "persistApplying" | "launch" | "nativeSaveMs" | "monotonic">> = {
   expired: () => false,
   tombstoneTTL: 45 * 86_400_000,
   compactAfterFiles: 40,
@@ -98,15 +99,16 @@ async function changesOf(state: ScopeState, adapter: Adapter, now: number, optio
   if (unchangedSinceExtracted(state, adapter, source)) return { changes: [], settle: undefined, source: undefined };
   let pending: Set<string> | null = null;
   const queued = (key: string) => (pending ??= new Set([...state.outbox, ...(state.journal ?? []).flatMap((f) => f.ops)].map((op) => op.k))).has(key);
-  const extraction = await adapter.extract((key) => parseBase(state.base[key]), queued, now, (key) => key in state.records, (key) => state.records[key]?.v, (key) => state.records[key]?.h, (key) => state.base[key]);
+  const extractWith = (baseJson: (key: string) => string | undefined) =>
+    Promise.resolve(adapter.extract((key) => parseBase(baseJson(key)), queued, now, (key) => key in state.records, (key) => state.records[key]?.v, (key) => state.records[key]?.h, baseJson));
+  const first = await extractWith((key) => state.base[key]);
+  const extraction = first && state.applying ? await recoverBatches(state, adapter.prefix, first, extractWith, options) : first;
   if (!extraction) return null;
   const changes: Change[] = [];
   const { values, json: knownJson, republish, ignore } = extraction;
-  const jsonOf = (key: string, value: unknown) => knownJson?.(key, value) ?? canonical(value);
-  if (state.applying) reapplyStale(state, adapter.prefix, values, jsonOf, ignore, now, launchOf(options));
   values.forEach((value, key) => {
     if (value === null || value === undefined) throw new Error(`[sync] ${key}: a live value can't be null`);
-    const json = jsonOf(key, value);
+    const json = knownJson?.(key, value) ?? canonical(value);
     if (state.base[key] === json && !republish?.(key)) return;
     changes.push({ key, value, json });
   });
@@ -221,7 +223,7 @@ export async function pull(state: ScopeState, transport: Transport, scope: strin
   return changed;
 }
 
-async function applyAdapter(state: ScopeState, adapter: Adapter, keys: Set<string>, now: number, horizon: number, held: () => boolean, deferred: Set<string>, options: ScopeOptions = {}): Promise<boolean> {
+async function applyAdapter(state: ScopeState, adapter: Adapter, keys: Set<string>, now: number, horizon: number, held: () => boolean, deferred: Set<string>): Promise<boolean> {
   const mine = new Set([...keys].filter((k) => k.startsWith(adapter.prefix)));
   if (!mine.size) return true;
   const view = visible(state, adapter.prefix);
@@ -243,7 +245,6 @@ async function applyAdapter(state: ScopeState, adapter: Adapter, keys: Set<strin
       landed: (key: string) => void landed.add(key),
       defer: (key: string) => void (mine.has(key) && deferred.add(key)),
     };
-    if (options.persistApplying && noteApplyingTo(state, mine, view, now, launchOf(options))) await options.persistApplying(state.applying!);
     ok = await adapter.apply(view, mine, (key) => parseBase(state.base[key]), records);
   } catch (error) {
     console.warn(`[sync] applying ${adapter.prefix} failed`, error);
@@ -258,6 +259,7 @@ async function applyAdapter(state: ScopeState, adapter: Adapter, keys: Set<strin
   }
   applyAs[adapter.prefix] = "joined";
   for (const key of mine) if (!deferred.has(key)) settle(key);
+  countReapplied(state, mine, deferred);
   return true;
 }
 
@@ -359,13 +361,20 @@ export async function syncScope(args: {
   let heldApply = false;
   const applyHeld = () => !!options?.holdApply?.();
   for (const adapter of adapters) {
-    const late = adapter.publishAfterPull && held ? new Set<string>() : await publishAdapter(state, adapter, clock, device, now(), options, stamps.get(adapter));
-    published += late.size;
-    for (const key of late) keys.delete(key);
+    const publishLate = async () => {
+      const late = adapter.publishAfterPull && held ? new Set<string>() : await publishAdapter(state, adapter, clock, device, now(), options, stamps.get(adapter));
+      published += late.size;
+      for (const key of late) keys.delete(key);
+      return late;
+    };
+    const late = await publishLate();
     for (const key of state.unapplied) if (key.startsWith(adapter.prefix) && !late.has(key)) keys.add(key);
     heldApply ||= applyHeld();
     const deferred = new Set<string>();
-    const applied = !heldApply && (await applyAdapter(state, adapter, keys, now(), 2 * (options?.tombstoneTTL ?? DEFAULTS.tombstoneTTL), applyHeld, deferred, options));
+    const ahead = heldApply ? null : await writeAhead(state, adapter.prefix, keys, now(), options);
+    if (ahead?.batch) await publishLate();
+    const applied = !heldApply && !ahead?.failed && (await applyAdapter(state, adapter, keys, now(), 2 * (options?.tombstoneTTL ?? DEFAULTS.tombstoneTTL), applyHeld, deferred));
+    finishBatch(ahead?.batch ?? null, options);
     heldApply ||= applyHeld();
     if (!applied) for (const key of keys) if (key.startsWith(adapter.prefix)) unapplied.push(key);
     if (applied) for (const key of deferred) unapplied.push(key);
