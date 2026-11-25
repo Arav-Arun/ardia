@@ -81,7 +81,7 @@ export const FaviconFallback = memo(function FaviconFallback({ url, size = 16, o
           justifyContent: "center",
         }}
       >
-        <CapCenteredLetter box={tile} fontSize={glyphSize.fontSize} lineShiftX={glyphSize.lineShiftX} pixelsPerPoint={pixelsPerPoint} fontWeight={weight.semibold} color={glyph}>
+        <CapCenteredLetter box={tile} fontSize={glyphSize.fontSize} lineShiftX={glyphSize.lineShiftX} pixelsPerPoint={glyphSize.onPixelGrid ? pixelsPerPoint : undefined} fontWeight={weight.semibold} color={glyph}>
           {initial}
         </CapCenteredLetter>
       </View>

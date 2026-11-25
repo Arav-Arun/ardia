@@ -24,17 +24,27 @@ function useLineMetrics(key: string) {
 
 const RETINA_PIXELS_PER_POINT = 2;
 
-const retinaPixelsPerPoint = () => RETINA_PIXELS_PER_POINT * currentInterfaceScale();
+const retinaSnapped = (points: number) => snappedToGrid(points, RETINA_PIXELS_PER_POINT * currentInterfaceScale());
 
-export function inkCentered(box: number, shiftX: number, inkRise: number, metrics: LineMetrics, inset = 0, pixelsPerPoint = retinaPixelsPerPoint()): ViewStyle {
+export function inkCentered(box: number, shiftX: number, inkRise: number, metrics: LineMetrics, inset = 0): ViewStyle {
   const top = box / 2 - Math.round(metrics.ascender) + inkRise;
-  const laidTop = Math.floor(top * pixelsPerPoint) / pixelsPerPoint;
   return {
     position: "absolute",
     left: -inset,
-    top: laidTop - inset,
+    top: Math.floor(top) - inset,
     width: box,
-    transform: [{ translateX: snappedToGrid(shiftX, pixelsPerPoint) }, { translateY: snappedToGrid(top, pixelsPerPoint) - laidTop }],
+    transform: [{ translateX: retinaSnapped(shiftX) }, { translateY: retinaSnapped(top - Math.floor(top)) }],
+  };
+}
+
+export function inkCenteredOnGrid(box: number, shiftX: number, inkRise: number, metrics: LineMetrics, pixelsPerPoint: number): ViewStyle {
+  const top = box / 2 - Math.round(metrics.ascender) + inkRise;
+  return {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    width: box,
+    transform: [{ translateX: snappedToGrid(shiftX, pixelsPerPoint) }, { translateY: snappedToGrid(top, pixelsPerPoint) }],
   };
 }
 
@@ -68,7 +78,7 @@ export function CapCenteredLetter({
   const snaps = PLATFORM_FEATURES.snapsTextBaselines;
   const metrics = line.metrics ?? { ascender: fontSize * SYSTEM_FONT.ascender, capHeight: fontSize * SYSTEM_FONT.capHeight };
   return (
-    <InkHolder style={snaps ? inkCentered(box, tracking / 2, metrics.capHeight / 2, metrics, inset, pixelsPerPoint) : null}>
+    <InkHolder style={!snaps ? null : pixelsPerPoint ? inkCenteredOnGrid(box, tracking / 2, metrics.capHeight / 2, metrics, pixelsPerPoint) : inkCentered(box, tracking / 2, metrics.capHeight / 2, metrics, inset)}>
       <Text
         numberOfLines={1}
         onTextLayout={snaps ? line.onTextLayout : undefined}
