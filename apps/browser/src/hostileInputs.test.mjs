@@ -30,6 +30,7 @@ const { readManifest } = await import("./lib/pluginManifest.ts");
 const { parseIntent, INTENT_SPECS } = await import("./state/plugins/stateIntents.ts");
 const { pluginStateUrl, redactedTabs } = await import("./state/plugins/pluginEventRedaction.ts");
 const { copyLinkFromPageMenu } = await import("./state/site/pageLinkCopy.ts");
+const { extensionSitePattern } = await import("./state/extensions/sitePatterns.ts");
 const { cleanUrl } = await import("@ardia/core");
 
 const S = () => useBrowser.getState();
@@ -821,4 +822,13 @@ test("a tab a page opened moves engines only when its page answers the opener ch
   assert.doesNotMatch(probe, /JSON|String|toString|valueOf|Object|Reflect|\.call|\.apply|Symbol/, "the probe calls nothing a page can replace");
   dropSwap(control);
   webviews.clear();
+});
+
+test("an Add Site entry reaches the engine only as an http(s) host pattern, whatever text it started as", () => {
+  const SITE = /^(\*|https?):\/\/(\*\.)?([a-z0-9_-]+(\.[a-z0-9_-]+)*\.?|\[[0-9a-f:.]+\])(:[1-9]\d{0,4})?\/\*$/;
+  assert.equal(extensionSitePattern("https://example.com/path"), "https://example.com/*", "the positive control runs");
+  for (const value of [...strings, ...strings.map((h) => `https://example.com/${h}`), ...strings.map((h) => `${h}example.com`), ...Object.values(URL_SCHEMES).flat().filter((x) => typeof x === "string")]) {
+    const site = extensionSitePattern(value);
+    assert.ok(site === null || (SITE.test(site) && !LINE_TERMINATORS.test(site) && site.length <= 2048), show(value));
+  }
 });
