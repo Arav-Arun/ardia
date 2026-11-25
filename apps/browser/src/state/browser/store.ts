@@ -1,5 +1,6 @@
 import { create, type StateCreator, type StoreApi, type UseBoundStore } from "zustand";
 import { withRetiredDefaults } from "../settings/retiredDefaults";
+import { withTabSwitcherModes } from "../settings/tabSwitcherUpgrade";
 import { setHeldReportsTransaction } from "../../platform/nativeEvents";
 import { createBookmarksSlice, ensureRoots, type BookmarksSlice } from "../bookmarks/bookmarks";
 import { changedIds } from "./changes";
@@ -126,7 +127,8 @@ const createdBrowser = create<BrowserState>()(actionsApart(transactions.middlewa
       ...(data.profileOrder ?? []).filter((id) => Object.hasOwn(profiles, id)),
       ...Object.keys(profiles).filter((id) => !data.profileOrder?.includes(id)),
     ];
-    const kept = withRetiredDefaults(data.settings, parseSettingsMeta(data.settingsMeta), { waitForSync: data.retiredDefaultsWaitForSync });
+    const retired = withRetiredDefaults(data.settings, parseSettingsMeta(data.settingsMeta), { waitForSync: data.retiredDefaultsWaitForSync });
+    const kept = withTabSwitcherModes(retired.settings, retired.settingsMeta);
     const settings = parseSettings(kept.settings);
     if (!Object.hasOwn(profiles, settings.defaultProfileId)) settings.defaultProfileId = profileOrder[0]!;
 
