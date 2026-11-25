@@ -3,6 +3,13 @@ import Foundation
 struct WebKitTransportSecurity: Codable, Equatable, Sendable {
   let expires: Double
   let subdomains: Bool
+  let observed: Double?
+
+  init(expires: Double, subdomains: Bool, observed: Double? = nil) {
+    self.expires = expires
+    self.subdomains = subdomains
+    self.observed = observed
+  }
 }
 
 struct WebKitCertificatePolicy: Sendable {
@@ -72,7 +79,7 @@ struct WebKitCertificatePolicy: Sendable {
     let name = Self.normalizedHost(host)
     guard !name.isEmpty else { return false }
     if parsed.maxAge <= 0 { return transportSecurity.removeValue(forKey: name) != nil }
-    let entry = WebKitTransportSecurity(expires: now.addingTimeInterval(parsed.maxAge).timeIntervalSince1970, subdomains: parsed.subdomains)
+    let entry = WebKitTransportSecurity(expires: now.addingTimeInterval(parsed.maxAge).timeIntervalSince1970, subdomains: parsed.subdomains, observed: now.timeIntervalSince1970)
     guard transportSecurity[name] != entry else { return false }
     transportSecurity[name] = entry
     trim(now: now)
@@ -87,6 +94,21 @@ struct WebKitCertificatePolicy: Sendable {
       if index == labels.startIndex || entry.subdomains { return true }
     }
     return false
+  }
+
+  mutating func forget(since: Date) {
+    let cutoff = since.timeIntervalSince1970
+    transportSecurity = transportSecurity.filter { ($0.value.observed ?? -.infinity) < cutoff }
+    for (host, byPrint) in exceptions {
+      let granted = byPrint.filter { $0.value.expires.addingTimeInterval(-Self.exceptionLifetime) >= since }
+      guard !granted.isEmpty else { continue }
+      for print in granted.keys {
+        exceptions[host]?.removeValue(forKey: print)
+        bypassed[host]?.removeValue(forKey: print)
+      }
+      if exceptions[host]?.isEmpty == true { exceptions.removeValue(forKey: host) }
+      if bypassed[host]?.isEmpty == true { bypassed.removeValue(forKey: host) }
+    }
   }
 
   func savedTransportSecurity(now: Date) -> [String: WebKitTransportSecurity] {

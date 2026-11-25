@@ -99,8 +99,12 @@ final class WebKitCertificates {
     policies.removeValue(forKey: store)
   }
 
-  func forgetTransportSecurity(profile: String) {
+  func forgetTransportSecurity(profile: String, since: Date? = nil) {
     let store = WebKitHub.shared.stores.id(of: profile)
+    if let since {
+      change(store) { $0.forget(since: since) }
+      return scheduleSave(store)
+    }
     policies[store] = WebKitCertificatePolicy(transportSecurity: [:])
     guard let file = Self.file(for: store) else { return }
     Self.files.async { try? FileManager.default.removeItem(at: file) }

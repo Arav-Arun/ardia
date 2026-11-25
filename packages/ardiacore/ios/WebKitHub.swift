@@ -158,14 +158,15 @@ final class WebKitHub: NSObject, WKScriptMessageHandler {
 
   func clearBrowsingData(profile: String, types: [String], since: Double, completion: @escaping () -> Void) {
     if types.contains("history") { WebKitTabHistory.cleared(profile: profile) }
-    if types.contains("siteData") { certificates.forgetTransportSecurity(profile: profile) }
+    let rangeStart = WebKitStoreState.rangeStart(sinceMilliseconds: since)
+    if types.contains("siteData") { certificates.forgetTransportSecurity(profile: profile, since: rangeStart) }
     guard stores.hasStore(for: profile) else { return completion() }
     var kinds = Set<String>()
     if types.contains("siteData") { kinds.formUnion(Self.siteDataTypes) }
     if types.contains("cache") { kinds.formUnion([WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeFetchCache]) }
-    if types.contains("siteData") { stores.forgetSitePermissions(of: profile) }
+    if types.contains("siteData") { stores.forgetSitePermissions(of: profile, since: rangeStart) }
     guard !kinds.isEmpty else { return completion() }
-    stores.dataStore(for: profile).removeData(ofTypes: kinds, modifiedSince: Date(timeIntervalSince1970: since / 1000), completionHandler: completion)
+    stores.dataStore(for: profile).removeData(ofTypes: kinds, modifiedSince: rangeStart ?? .distantPast, completionHandler: completion)
   }
 
   static func covers(_ domain: String, host: String) -> Bool {

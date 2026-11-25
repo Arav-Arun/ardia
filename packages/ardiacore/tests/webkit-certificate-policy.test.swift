@@ -97,6 +97,48 @@ struct DynamicTransportSecurity {
     #expect(policy.requiresHTTPS(host: "shop.example", now: now))
   }
 
+  @Test func `a ranged clear forgets only the hosts seen inside the range`() {
+    var policy = WebKitCertificatePolicy()
+    let lastWeek = now.addingTimeInterval(-7 * 86_400)
+    let oldPin = policy.noteHeader("max-age=31536000", host: "bank.example", now: lastWeek)
+    #expect(oldPin)
+    let newPin = policy.noteHeader("max-age=31536000", host: "shop.example", now: now)
+    #expect(newPin)
+    policy.forget(since: now.addingTimeInterval(-3_600))
+    #expect(policy.requiresHTTPS(host: "bank.example", now: now))
+    #expect(!policy.requiresHTTPS(host: "shop.example", now: now))
+  }
+
+  @Test func `a ranged clear keeps hosts saved before observation times were recorded`() throws {
+    let saved = try JSONDecoder().decode([String: WebKitTransportSecurity].self, from: Data(#"{"bank.example":{"expires":1900000000,"subdomains":true}}"#.utf8))
+    var policy = WebKitCertificatePolicy(transportSecurity: saved)
+    policy.forget(since: now.addingTimeInterval(-3_600))
+    #expect(policy.requiresHTTPS(host: "login.bank.example", now: now))
+  }
+
+  @Test func `seeing a header again moves the host into a recent range`() {
+    var policy = WebKitCertificatePolicy()
+    let lastWeek = now.addingTimeInterval(-7 * 86_400)
+    _ = policy.noteHeader("max-age=31536000", host: "bank.example", now: lastWeek)
+    _ = policy.noteHeader("max-age=31536000", host: "bank.example", now: now)
+    policy.forget(since: now.addingTimeInterval(-3_600))
+    #expect(!policy.requiresHTTPS(host: "bank.example", now: now))
+  }
+
+  @Test func `a ranged clear forgets only certificate proceeds granted inside the range`() {
+    var policy = WebKitCertificatePolicy()
+    let lastWeekish = now.addingTimeInterval(-5 * 86_400)
+    policy.allow(host: "old.example", fingerprint: "AA", errors: ["authorityInvalid"], now: lastWeekish)
+    policy.allow(host: "new.example", fingerprint: "BB", errors: ["authorityInvalid"], now: now)
+    _ = policy.admits(host: "new.example", fingerprint: "BB", errors: ["authorityInvalid"], now: now)
+    policy.forget(since: now.addingTimeInterval(-3_600))
+    let keptOld = policy.admits(host: "old.example", fingerprint: "AA", errors: ["authorityInvalid"], now: now)
+    #expect(keptOld)
+    let keptNew = policy.admits(host: "new.example", fingerprint: "BB", errors: ["authorityInvalid"], now: now)
+    #expect(!keptNew)
+    #expect(policy.bypassedErrors(host: "new.example", fingerprint: "BB") == nil)
+  }
+
   @Test func `max-age 0 removes the host and entries expire`() {
     var policy = WebKitCertificatePolicy()
     _ = policy.noteHeader("max-age=600", host: "a.example", now: now)
