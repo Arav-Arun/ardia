@@ -4,6 +4,7 @@
 
 #include <string>
 
+#include "base/auto_reset.h"
 #include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/single_thread_task_runner.h"
@@ -37,7 +38,10 @@ bool InCall(content::WebContents* contents) {
       ->IsCapturingUserMedia(contents);
 }
 
+bool g_reading_for_tab_dialogs = false;
+
 void UpdateTabDialogs(content::WebContents* contents) {
+  base::AutoReset<bool> for_dialogs(&g_reading_for_tab_dialogs, true);
   if (auto* tab = tabs::TabInterface::MaybeGetFromContents(contents)) {
     if (auto* features = tab->GetTabFeatures()) {
       if (auto* dialogs = features->tab_dialog_manager()) {
@@ -53,7 +57,9 @@ class HostVisibility : public content::WebContentsUserData<HostVisibility>,
                        public content::WebContentsObserver {
  public:
   bool shown() const { return shown_; }
-  bool shown_until_page_hidden() const { return shown_ || held_as_shown_; }
+  bool shown_until_page_hidden() const {
+    return shown_ || (g_reading_for_tab_dialogs ? held_as_shown_ : awaiting_hidden_page_);
+  }
 
   void Note(bool shown) {
     shown_ = shown;

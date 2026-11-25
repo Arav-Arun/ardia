@@ -1042,27 +1042,46 @@ try {
       const back = await pipState(call.t);
       const returned = { asked: back.asked.slice(before.asked.length), opened: back.pip - before.pip, open: back.open, visibility: back.visibility };
       if (returned.asked.length || returned.opened || returned.open) throw new Error(`coming back 500 ms after covering still asked the page or popped it out: ${JSON.stringify(returned)}`);
+      const coverAndWatch = async (what, during) => {
+        const base = await pipState(call.t);
+        await win("fakeOcclusion:occluded");
+        const extra = await during();
+        const popped = await until(`${what}: the call popped out`, async () => {
+          const p = await pipState(call.t);
+          return p.open ? p : null;
+        }, 6000).catch(async () => {
+          const p = await pipState(call.t);
+          throw new Error(`${what}: the call didn't pop out; the page was asked while: ${JSON.stringify(p.asked.slice(base.asked.length))}, now ${p.visibility}`);
+        });
+        const asked = popped.asked.slice(base.asked.length);
+        if (asked.includes("visible")) throw new Error(`${what}: the page was asked while still visible: ${JSON.stringify(asked)}`);
+        await win("fakeOcclusion:visible");
+        await until(`${what}: closed with the window back`, async () => !(await pipState(call.t)).open, 8000);
+        await sleep(1500);
+        return { asked, ...extra };
+      };
+      const unrelated = await openTab(`${origin()}/unrelated?t=Unrelated`, "Unrelated");
+      await show(call.tab);
+      await sleep(1500);
+      const stripChange = await coverAndWatch("an unrelated tab closed 600 ms after covering", async () => {
+        await sleep(600);
+        await closeTab(unrelated);
+        return { closedAfterMs: 600 };
+      });
       await js(call.t, "leave()");
       await sleep(2500);
-      const idle = await pipState(call.t);
-      await js(call.t, "window.__rejoined = join(); true");
-      const coveredAt = Date.now();
-      await win("fakeOcclusion:occluded");
-      const rejoined = await js(call.t, "window.__rejoined");
-      const liveAfterMs = Date.now() - coveredAt;
-      if (rejoined !== "ok") throw new Error(`rejoining while covered: ${rejoined}`);
-      const late = await until("the call that started while covered popped out", async () => {
-        const p = await pipState(call.t);
-        return p.open ? p : null;
-      }, 6000).catch(async () => {
-        const p = await pipState(call.t);
-        throw new Error(`a call that started while covered didn't pop out; the page was asked while: ${JSON.stringify(p.asked.slice(idle.asked.length))}, now ${p.visibility}`);
+      const lateCall = await coverAndWatch("a call that starts after the cover", async () => {
+        const before = (await pipState(call.t)).camera;
+        if (before === "live") throw new Error("the camera was still live when the window was covered");
+        await sleep(100);
+        const started = Date.now();
+        const rejoined = await js(call.t, "join()");
+        if (rejoined !== "ok") throw new Error(`rejoining while covered: ${rejoined}`);
+        const liveAtMs = 100 + Date.now() - started;
+        if (liveAtMs >= 400) throw new Error(`the camera went live ${liveAtMs} ms after the cover, past the 400 ms this phase tests`);
+        return { cameraBeforeJoin: before, liveAtMs };
       });
-      const startedCovered = late.asked.slice(idle.asked.length);
-      if (startedCovered.includes("visible")) throw new Error(`a call that started while covered was asked while still visible: ${JSON.stringify(startedCovered)}`);
-      await win("fakeOcclusion:visible");
-      await until("closed with the window back", async () => !(await pipState(call.t)).open, 8000);
-      return { rounds, returned, startedCovered, liveAfterMs };
+      return { rounds, returned, stripChange, lateCall };
     } finally {
       await win("fakeOcclusion:off").catch(() => null);
       await closeTab(call.tab);
