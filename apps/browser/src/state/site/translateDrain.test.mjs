@@ -214,3 +214,10 @@ test("only passages that got an answer count as applied", async () => {
   assert.equal(await drainPassages(page.port), true);
   assert.deepEqual(applied, [1]);
 });
+
+test("short passages are packed only up to the pack's characters, whatever one block hands over", () => {
+  const short = (id) => [id, [[id * 1000, "x".repeat(LONG_PASSAGE - 1)]]];
+  const packs = packsOf([1, 2, 3, 4, 5, 6].map(short));
+  assert.ok(packs.every((pack) => pack.reduce((n, [, pieces]) => n + pieces[0][1].length, 0) <= PACK_CHARS));
+  assert.deepEqual(packs.map((pack) => pack.map(([id]) => id)), [[1, 2, 3], [4, 5, 6]]);
+});

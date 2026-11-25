@@ -124,8 +124,13 @@ type BlockTranslator = Pick<NonNullable<typeof translation>, "translateBlocks">;
 const textsOf = ([, pieces]: Passage) => pieces.map(([, text]) => text);
 const nothing = ([, pieces]: Passage): Translated[] => pieces.map(([id]): Translated => [id, null]);
 
+const onLastTry = (passages: Passage[]) => passages.filter(([, , attempt = 0]) => attempt >= PASSAGE_RETRIES).length;
+
 export async function translatePack(model: BlockTranslator, source: string, target: string, pack: Passage[], token: string, progress: { unlinked: number; failed: number }, live: () => boolean): Promise<Translated[]> {
-  const answers = await model.translateBlocks(source, target, pack.map(textsOf), token);
+  const answers = await model.translateBlocks(source, target, pack.map(textsOf), token).catch((error: unknown) => {
+    if (live()) progress.failed += onLastTry(pack);
+    throw error;
+  });
   const out: Translated[] = [];
   const unlinked: Passage[] = [];
   pack.forEach((passage, i) => {
@@ -146,7 +151,7 @@ export async function translatePack(model: BlockTranslator, source: string, targ
   }
   const answered = new Set(out.filter(([, text]) => text !== null).map(([id]) => id));
   const unanswered = pack.filter(([, pieces]) => !pieces.some(([id]) => answered.has(id)));
-  if (live()) progress.failed += unanswered.filter(([, , attempt = 0]) => attempt >= PASSAGE_RETRIES).length;
+  if (live()) progress.failed += onLastTry(unanswered);
   if (live() && unanswered.length === pack.length) throw new Error("the Mac's translation model didn't answer");
   return out;
 }

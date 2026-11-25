@@ -34,13 +34,22 @@ const sizeOf = ([, pieces]: Passage) => pieces.reduce((n, [, text]) => n + text.
 export function packsOf(passages: Passage[]): Passage[][] {
   const packs: Passage[][] = [];
   let short: Passage[] = [];
+  let shortChars = 0;
   for (const passage of passages) {
-    if (sizeOf(passage) < LONG_PASSAGE) {
+    const size = sizeOf(passage);
+    if (size < LONG_PASSAGE) {
+      if (short.length && shortChars + size > PACK_CHARS) {
+        packs.push(short);
+        short = [];
+        shortChars = 0;
+      }
       short.push(passage);
+      shortChars += size;
       continue;
     }
     if (short.length) packs.push(short);
     short = [];
+    shortChars = 0;
     packs.push([passage]);
   }
   if (short.length) packs.push(short);

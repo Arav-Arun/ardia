@@ -79,3 +79,10 @@ test("a model that answers nothing in a pack fails that pack with an error", asy
   const model = { translateBlocks: async (_s, _t, blocks) => blocks.map(() => null) };
   await assert.rejects(translatePack(model, "en", "fr", [[1, [[10, "Hello"]]], [2, [[20, "World"]]]], "tok", progress(), () => true), /didn't answer/);
 });
+
+test("a model call that rejects counts the passages on their last try as failed, once", async () => {
+  const model = { translateBlocks: async () => Promise.reject(new Error("the model went away")) };
+  const counts = progress();
+  await assert.rejects(translatePack(model, "en", "fr", [[1, [[10, "a"]]], [2, [[20, "b"]], 2]], "tok", counts, () => true), /went away/);
+  assert.equal(counts.failed, 1);
+});
