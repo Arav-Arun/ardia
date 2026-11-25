@@ -14,6 +14,8 @@ import { linkDestination } from "../../lib/linkWrappers";
 import { navigationOf } from "../tabs/pageSession";
 import { liveOf, onLiveChange } from "../tabs/tabLive";
 import { notePageOverlay } from "../telemetry/usage";
+import { notePeekClosedByCloseKeyWithFind } from "../telemetry/peekMotion";
+import type { ConsentToken } from "../telemetry/choice";
 import { holdPeekDonor } from "./donors";
 import { PLATFORM_FEATURES } from "../../lib/platformFeatures";
 import { endPeekToolbarPreview, previewPeekToolbar } from "./toolbarPreview";
@@ -43,7 +45,14 @@ export function dismissPeek(windowId: string) {
   else finishPeek(peek.tabId);
 }
 
+let closingByKeyWithFind: { tabId: string; consent: ConsentToken | null } | null = null;
+
 export function finishPeek(tabId: string) {
+  if (closingByKeyWithFind?.tabId === tabId) {
+    const { consent } = closingByKeyWithFind;
+    closingByKeyWithFind = null;
+    notePeekClosedByCloseKeyWithFind(consent);
+  }
   const source = peekSourceOf(store(), tabId);
   if (source) store().closePeek(source);
 }
@@ -102,7 +111,7 @@ export function closePeekOnEscape(tabId: string): boolean {
   return true;
 }
 
-export function runPeekCommand(command: string, windowId: string): boolean {
+export function runPeekCommand(command: string, windowId: string, consent: ConsentToken | null = null): boolean {
   const s = store();
   const peek = shownPeek(s, windowId);
   if (!peek) return false;
@@ -111,7 +120,9 @@ export function runPeekCommand(command: string, windowId: string): boolean {
     return true;
   }
   if (command !== "closeTab" || s.windowUi[windowId]?.panel.open) return false;
-  if (s.find[peek.tabId]?.open) closeFind(peek.tabId, { refocus: false });
+  const findOpen = !!s.find[peek.tabId]?.open;
+  if (findOpen) closeFind(peek.tabId, { refocus: false });
+  closingByKeyWithFind = findOpen ? { tabId: peek.tabId, consent } : null;
   dismissPeek(windowId);
   return true;
 }
