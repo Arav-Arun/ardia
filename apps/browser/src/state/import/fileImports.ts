@@ -61,7 +61,7 @@ export async function importBookmarksHtml() {
   if (!path || signal.aborted) return;
   try {
     const root = await api.importBookmarksHTML(path);
-    const bookmarks = importBookmarks(importNow().target, root, "HTML File");
+    const bookmarks = importBookmarks(importNow().target, root, "HTML File", consent);
     noteUntitledBookmarks(untitledLinks(root), consent);
     patchImport({ source: null, step: { name: "done", counts: { ...emptyCounts(), bookmarks }, failures: [], notes: [], extensions: NO_EXTENSIONS } });
   } catch {

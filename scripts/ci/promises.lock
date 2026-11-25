@@ -104,6 +104,9 @@ issue	hash	file	test
 2245	73e18a6e4be80bc4	apps/browser/src/state/extensions/extensions.test.mjs	Add on an install prompt the engine no longer holds says so in the dialog, and Cancel on one rejects nothing
 2245	fe17442fdad3de61	apps/desktop/src/pageFocus.test.mjs	focusIfUnfocused gives the page the keyboard unless a shell field has it, and answers whether it did
 2260	cb2884a57b51a848	apps/browser/src/state/sync/scopeWrites.test.mjs	a sync record or base is written only through putRecord, dropRecord, putBase and dropBase, so the cycle's journal sees every change
+2389	b128328bd686f29c	apps/browser/src/state/import/repeatBookmarks.test.mjs	a repeat import brings only what's new, into the folders it made, and keeps what the person added or moved (#2389)
+2389	9bf1a8563dc099e2	apps/browser/src/state/import/repeatBookmarks.test.mjs	a repeat import of bookmarks that went straight onto an empty bar adds nothing (#2389)
+2389	9461387f532a44d8	apps/browser/src/state/import/repeatBookmarks.test.mjs	importing the same Dia bookmarks again adds no second Imported from Dia folder (#2389)
 2492	f666f5d810bba18b	apps/browser/src/state/tabs/tabs.test.mjs	tabs closed together come back to their places, from ⇧⌘T or Recently Closed in any order (#2492)
 2572	80a3ca73b2bdbcc1	apps/browser/src/state/commands/menuState.test.mjs	the menu state tells the shell whether links from other apps open in Little Ardia
 2695	382756f4c8c1feb5	apps/browser/src/components/ui/pressFeedback.test.mjs	a pressed glyph dips a little and comes back without a bounce
@@ -115,6 +118,7 @@ issue	hash	file	test
 2725	9ac4b2b0e43d971e	apps/browser/src/components/window/dockMotion.test.mjs	a peek's light moves that stay wholly off the window at one height aren't sent; the first visible one and the rest place are
 2772	acb0667a718a650c	apps/browser/src/state/import/importWithheld.test.mjs	an import the engine withheld for a secret says why on the done step and is counted
 2772	dd1a07cd2aaa81a4	apps/browser/src/state/import/importWithheld.test.mjs	with several profiles, the note names the one held back and the others still import
+2814	6660b329533a8a5e	apps/browser/src/state/import/arcProfilePins.test.mjs	Arc spaces imported as profiles keep their pinned tabs and pinned folders when ${name} (#2814)
 2862	4c9b8a5196785550	apps/browser/src/state/tabs/tabs.test.mjs	switching tabs in one profile keeps another profile's opener links in the same window
 2917	100e6018b1abfeeb	apps/browser/src/components/profiles/dotsRow.test.mjs	a row too wide to clear the button when centred starts just past it (#2917)
 2933	cbd652ee75784494	apps/browser/src/state/sync/adapters.test.mjs	history: a title Chrome reports while synced visits are being written stays in the list
