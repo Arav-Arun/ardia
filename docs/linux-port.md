@@ -1155,6 +1155,31 @@ caller: sync keys, sealing and opening files and passwords, and the recovery phr
     engines: a window that fills the work area without being maximized shows restore, and on Wayland, where
     `windowFrame` is null and the work area is the whole output, a maximized window beside a panel, a bar or gaps
     keeps the maximize glyph. Clicking toggles correctly either way.
+- **Tiling window managers.** Little Ardia, Settings and Import float over the main window on niri, sway and i3 with
+  no rule (tested on the Chromium 157 engine; other compositors that float fixed-size windows do the same), as the Mac
+  floats them since #1905. The host opens them with their own window class, the Wayland app id and the X11 `WM_CLASS`
+  instance `ardia-little`, `ardia-settings` and `ardia-import` (`linux_window::WindowClass`, through
+  `g_ardia_linux_window_class` in `chromium-linux-floating-windows.patch`, at the end of `GetWindowClass()`), and maps
+  them with their minimum size equal to their maximum (`g_ardia_linux_pins_window_size`,
+  `BrowserWidget::GetMinimumSize` and `GetMaximumSize`), which those compositors float by default. The host releases
+  the pin 400 ms after the window's first frame (3 s at most), so the window resizes like any other afterwards; a
+  window restored to full screen lets go of it first. The pin isn't released on tiled edges: niri sends them to
+  floating windows too when it draws their decorations. A window saved maximized opens unpinned. Main windows keep the
+  `ardia` class and tile. Hidden desktop entries (`NoDisplay=true`, `StartupWMClass` set to the class, `Icon=ardia`)
+  give the three classes Ardia's name and icon in bars and switchers; `install.sh` (so the tarball and the AUR
+  package), the `.deb` and the `.rpm` install them (`linux_formats.desktop_entries`), and the Flatpak exports them as
+  `dev.ardia.Ardia.little.desktop`, `.settings` and `.import`, since its entries must start with its app id; a bar
+  matches those by `StartupWMClass` alone, and GNOME Shell groups a Flatpak's windows under its app id. The AppImage
+  carries them but installs nothing, so there the bars show the bare class. Outside the Flatpak on GNOME, Little Ardia
+  now shows in docks and switchers as its own app rather than grouped with Ardia, as Settings and Import already did.
+  A compositor rule can still match the class, for niri
+  `window-rule { match app-id="^ardia-little$"; open-floating false; }` to tile it again; Chromium holds such a window
+  at its pinned size until the pin is released and the compositor configures it again (untested on the Chromium 158
+  engine). Settings' app id was `chrome-ArdiaSettings-Default` before, so an existing rule naming it needs the new id.
+  A window that the shell turns into Little Ardia after it opened, or back (`set_small`), keeps the class and the
+  tiling it opened with: the host answers the class hook with the class the window opened with.
+  `usage_counts.little_ardia_opened_floating` and `utility_windows_opened_floating` count windows that opened with
+  Chromium reading the pin, once per window, in the first shell that loads in it.
 - **Header drag and double-click.** Dragging the header moves the window (`DispatchHostWindowDragMovement`).
   Double-clicking it runs the desktop's titlebar action.
 - **Outer frame.** The host overlays Chromium's client view, and what happens to Chromium's frame around it depends on
