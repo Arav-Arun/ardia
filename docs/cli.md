@@ -42,7 +42,7 @@ the signed digest), and runs its after-update actions once per version (`ardia s
 (the sheet says so), unless you turned control off yourself. An Off you chose, with the control pill's Stop or the switch
 in Settings, stays off across launches. When the engine's control server stops itself (it couldn't
 start or listen, or its folder or file check failed), the setting turns off with it and Settings › Advanced shows why, but
-that Off isn't your choice: the next launch (once per launch, so a start that keeps failing doesn't loop) or enabling or approving Command Line again turns control back on. Both are counted, never the message:
+that Off isn't your choice: the next launch with an approved plugin that asks for control (one try per launch, so a start that keeps failing doesn't loop) or enabling or approving Command Line again asks for control again, and the socket is back unless the engine's start fails again. Both are counted, never the message:
 `usage_counts.cli_control_self_stop_<cause>` (`policy`, `listen`, `deadline`, `stopped`, `other`) and `cli_control_restored`.
 An install you approved moves to the version this Ardia pins by itself when the new version asks
 for nothing you hadn't approved (`docs/plugins.md` › Official plugins, #3868), and Command Line's page in Settings ›
