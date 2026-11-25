@@ -579,7 +579,6 @@ AC_PROFILE_CALL(ac_extensions_configure) {
   if (!extension) {
     return call.TakeReply().Error("No such extension");
   }
-  extension_sites_internal::ChangeSite(profile, *extension,
-                                       grant ? *grant : *revoke, !!grant,
-                                       call.TakeReply());
+  ardia::extension_sites_internal::ChangeSite(
+      profile, *extension, grant ? *grant : *revoke, !!grant, call.TakeReply());
 }
