@@ -121,22 +121,22 @@ export function finishReveal(token: number, flashId: string, missed: boolean): b
 
 export type RevealAnchor = { measure(found: (y: number, height: number) => void, failed: () => void): void; still(): boolean };
 
-const REVEAL_RETRY_MS = 20;
+const REVEAL_POLL_MS = 20;
 
 export function runReveal(request: RevealRequest, flashId: string, locate: () => RevealAnchor | null, place: (y: number, height: number) => void): () => void {
   let active = true;
-  let retry: ReturnType<typeof setTimeout> | null = null;
+  let poll: ReturnType<typeof setTimeout> | null = null;
   let sawAnchor = false;
-  const clearRetry = () => {
-    if (retry !== null) {
-      clearTimeout(retry);
-      retry = null;
+  const clearPoll = () => {
+    if (poll !== null) {
+      clearTimeout(poll);
+      poll = null;
     }
   };
   const wanted = () => active && revealWanted(request, useSettingsNav.getState());
   const end = (found: boolean, flash = flashId) => {
     active = false;
-    clearRetry();
+    clearPoll();
     clearTimeout(deadline);
     finishReveal(request.token, flash, !found);
   };
@@ -144,31 +144,31 @@ export function runReveal(request: RevealRequest, flashId: string, locate: () =>
     if (wanted()) end(false, sawAnchor ? flashId : "");
   }, REVEAL_MEASURE_MS);
   const attempt = () => {
-    clearRetry();
+    clearPoll();
     if (!wanted()) return;
     const anchor = locate();
     if (!anchor) {
-      retry = setTimeout(attempt, REVEAL_RETRY_MS);
+      poll = setTimeout(attempt, REVEAL_POLL_MS);
       return;
     }
     sawAnchor = true;
     let settled = false;
     const watch = () => {
-      retry = null;
+      poll = null;
       if (settled || !wanted()) return;
       if (!anchor.still()) {
         settled = true;
         attempt();
         return;
       }
-      retry = setTimeout(watch, REVEAL_RETRY_MS);
+      poll = setTimeout(watch, REVEAL_POLL_MS);
     };
-    retry = setTimeout(watch, REVEAL_RETRY_MS);
+    poll = setTimeout(watch, REVEAL_POLL_MS);
     anchor.measure(
       (y, height) => {
         if (settled || !wanted()) return;
         settled = true;
-        clearRetry();
+        clearPoll();
         if (!anchor.still()) return attempt();
         place(y, height);
         end(true);
@@ -176,7 +176,7 @@ export function runReveal(request: RevealRequest, flashId: string, locate: () =>
       () => {
         if (settled || !wanted()) return;
         settled = true;
-        clearRetry();
+        clearPoll();
         if (!anchor.still()) return attempt();
         end(false);
       },
@@ -186,7 +186,7 @@ export function runReveal(request: RevealRequest, flashId: string, locate: () =>
   else clearTimeout(deadline);
   return () => {
     active = false;
-    clearRetry();
+    clearPoll();
     clearTimeout(deadline);
   };
 }
