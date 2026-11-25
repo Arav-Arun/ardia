@@ -72,18 +72,18 @@ enum InlineKeep {
   }
 
   private static func settle(_ field: NSTextView, before replacement: NSRange) {
-    guard replacement.location != NSNotFound, suggestionShown(field), NSMaxRange(replacement) > typedLength else { return settle(field) }
-    if suggesting === field { suggesting = nil }
+    let reachesSuggestion = replacement.location != NSNotFound && NSMaxRange(replacement) > typedLength
+    _ = settle(field, typing: nil, keepingSuggestion: reachesSuggestion)
   }
 
-  private static func settle(_ field: NSTextView, typing: String?) -> Bool {
+  private static func settle(_ field: NSTextView, typing: String?, keepingSuggestion: Bool = false) -> Bool {
     guard suggesting === field else { return false }
     suggesting = nil
     guard field.string == text, !field.hasMarkedText() else { return false }
     let whole = field.string as NSString
     let selection = field.selectedRange()
     let suggestion = NSRange(location: typedLength, length: whole.length - typedLength)
-    let shown = selection == suggestion
+    let shown = selection == suggestion && !keepingSuggestion
     let unknown = NSRange(location: historyLength, length: whole.length - historyLength)
     let restored = whole.substring(with: NSRange(location: historyLength, length: (shown ? typedLength : whole.length) - historyLength)) + (shown ? typing ?? "" : "")
     watch(nil)

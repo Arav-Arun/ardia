@@ -1315,20 +1315,20 @@ index 137d0ee9f51616ea27c397a8bf595fe2c0ff5e91..b3f5f2a9c35804253f5a5d82c6cb03b1
 -                                                          attributes:[self defaultTextAttributes]]];
 +  NSAttributedString *styledText = [[NSAttributedString alloc] initWithString:[self text]
 +                                                                   attributes:[self defaultTextAttributes]];
-+  if (![self ardia_restyleEditorKeepingUndo:styledText]) { // [Ardia Ardia]
++  if (![self ardia_restyleEditorKeepingUndo:styledText]) {
 +    [self setAttributedText:styledText];
 +  }
    if([[self text] length] == 0) {
 -    self.font = [[self defaultTextAttributes] objectForKey:NSFontAttributeName];
 +    NSFont *font = [[self defaultTextAttributes] objectForKey:NSFontAttributeName];
-+    if (![self.font isEqual:font]) { // [Ardia Ardia]
++    if (![self.font isEqual:font]) {
 +      self.font = font;
 +    }
    }
  #endif // macOS]
  }
  
-+#if TARGET_OS_OSX // [Ardia
++#if TARGET_OS_OSX
 +- (BOOL)ardia_restyleEditorKeepingUndo:(NSAttributedString *)styledText
 +{
 +  NSDictionary<NSAttributedStringKey, id> *attributes = [self defaultTextAttributes];
@@ -1344,7 +1344,7 @@ index 137d0ee9f51616ea27c397a8bf595fe2c0ff5e91..b3f5f2a9c35804253f5a5d82c6cb03b1
 +  }
 +  return YES;
 +}
-+#endif // Ardia]
++#endif
 +
  #if TARGET_OS_OSX // [macOS
  - (BOOL)hasMarkedText

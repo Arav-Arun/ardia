@@ -284,11 +284,37 @@ scenario("replacedWithinTyping") { editor, note in
   note("replaced")
   undoAll(editor, note)
 }
+func undoToEmpty(_ editor: NSTextView, _ note: (String) -> Void) {
+  var steps = 0
+  while editor.undoManager?.canUndo == true && steps < 8 {
+    InlineKeep.settle(editor)
+    editor.undoManager?.undo()
+    steps += 1
+  }
+  note("undone")
+  while editor.undoManager?.canRedo == true && steps > 0 {
+    InlineKeep.settle(editor)
+    editor.undoManager?.redo()
+    steps -= 1
+  }
+  note("redone")
+}
 scenario("replacedIntoSuggestion") { editor, note in
   type(editor, "g")
   suggest(editor, "g", "oogle")
+  editor.breakUndoCoalescing()
   editor.insertText("x", replacementRange: NSRange(location: 1, length: 3))
   note("replaced")
+  undoToEmpty(editor, note)
+}
+scenario("composedIntoSuggestion") { editor, note in
+  type(editor, "g")
+  suggest(editor, "g", "oogle")
+  editor.breakUndoCoalescing()
+  editor.setMarkedText("x", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: 1, length: 3))
+  editor.insertText("x", replacementRange: NSRange(location: NSNotFound, length: 0))
+  note("replaced")
+  undoToEmpty(editor, note)
 }
 scenario("composedWithoutSuggestion") { editor, note in
   type(editor, "ab")
@@ -327,7 +353,12 @@ test("the command bar's inline suggestion stays out of Undo and Redo: ⌘Z undoe
     assert.deepEqual(got.lineDeleted, { deleted: "exa", undo: "", redo: "exa", changes: 5 }, "deleting to the end of the line put the suggestion in the undo history");
     assert.deepEqual(got.composed, { marked: "exaへんかん", committed: "exa変換", undo: "", redo: "exa変換", changes: 6 }, "an input method's composition replaced the suggestion inside the undo history");
     assert.deepEqual(got.replacedWithinTyping, { replaced: "G", undo: "", redo: "G", changes: 4 }, "an input method's explicit replacement range inside the typing was moved by taking the suggestion out");
-    assert.equal(got.replacedIntoSuggestion.replaced, "gxle", "a replacement range reaching into the suggestion must replace what it named, not land past the end of a field shortened by taking the suggestion out");
+    for (const name of ["replacedIntoSuggestion", "composedIntoSuggestion"]) {
+      const run = got[name];
+      assert.equal(run.replaced, "gxle", `${name}: a replacement range reaching into the suggestion must replace what it named, not land past the end of a field shortened by taking the suggestion out`);
+      assert.equal(run.undone, "", `${name}: Undo left suggestion text behind that no Undo can remove`);
+      assert.equal(run.redone, "gxle", name);
+    }
     assert.equal(got.composedWithoutSuggestion.undoableWhileMarked, "abか", "composing with an input method emptied the typing undo");
     assert.equal(got.composedWithoutSuggestion.committed, "ab家");
     assert.equal(got.accepted.typed, "sidebar.example.com/a");
