@@ -6,7 +6,6 @@
 #include <map>
 #include <set>
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,6 +17,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
+#include "chrome/browser/ardia/ac_extension_sites_internal.h"
 #include "chrome/browser/ardia/ac_scripts_policy.h"
 #include "chrome/browser/extensions/api/developer_private/extension_info_generator.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
@@ -40,7 +40,6 @@
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/management_policy.h"
 #include "extensions/browser/permissions_manager.h"
-#include "extensions/browser/permissions/permissions_updater.h"
 #include "extensions/browser/permissions/scripting_permissions_modifier.h"
 #include "extensions/browser/requirements_checker.h"
 #include "extensions/browser/uninstall_reason.h"
@@ -48,9 +47,6 @@
 #include "extensions/browser/user_script_manager.h"
 #include "extensions/browser/disable_reason.h"
 #include "extensions/common/extension.h"
-#include "extensions/common/permissions/permission_set.h"
-#include "extensions/common/url_pattern.h"
-#include "extensions/common/url_pattern_set.h"
 
 namespace ardia {
 namespace {
@@ -121,24 +117,6 @@ base::DictValue Entry(const developer::ExtensionInfo& info) {
       .Set("mayModify", info.user_may_modify)
       .Set("blockedByPolicy", info.disable_reasons.blocked_by_policy)
       .Set("errors", std::move(errors));
-}
-
-std::optional<URLPattern> RuntimeSitePattern(const std::string& site) {
-  URLPattern pattern(URLPattern::SCHEME_HTTP | URLPattern::SCHEME_HTTPS |
-                     URLPattern::SCHEME_FILE);
-  if (pattern.Parse(site) != URLPattern::ParseResult::kSuccess ||
-      pattern.path() != "/*") {
-    return std::nullopt;
-  }
-  return pattern;
-}
-
-extensions::PermissionSet HostPermissions(const URLPattern& pattern) {
-  extensions::URLPatternSet hosts({pattern});
-  extensions::URLPatternSet scriptable = hosts.Clone();
-  return extensions::PermissionSet(extensions::APIPermissionSet(),
-                                   extensions::ManifestPermissionSet(),
-                                   std::move(hosts), std::move(scriptable));
 }
 
 content::WebContents* PromptTab(Profile* profile) {
@@ -598,31 +576,10 @@ AC_PROFILE_CALL(ac_extensions_configure) {
     return call.TakeReply().Error("Grant or revoke one site at a time");
   }
   const extensions::Extension* extension = ardia::Find(profile, id);
-  extensions::PermissionsManager* manager =
-      extensions::PermissionsManager::Get(profile);
-  if (!extension || !manager->CanAffectExtension(*extension)) {
-    return call.TakeReply().Error("Can't change this extension's site access");
+  if (!extension) {
+    return call.TakeReply().Error("No such extension");
   }
-  std::optional<URLPattern> pattern =
-      ardia::RuntimeSitePattern(grant ? *grant : *revoke);
-  if (!pattern) {
-    return call.TakeReply().Error("That isn't a site an extension can be given");
-  }
-  auto replied = base::BindOnce([](Reply reply) { reply.Ok(); },
-                                call.TakeReply());
-  if (grant) {
-    extensions::PermissionsUpdater(profile).GrantRuntimePermissions(
-        *extension, ardia::HostPermissions(*pattern), std::move(replied));
-    return;
-  }
-  std::unique_ptr<const extensions::PermissionSet> granted =
-      extensions::PermissionSet::CreateIntersection(
-          ardia::HostPermissions(*pattern),
-          *manager->GetRevokablePermissions(*extension),
-          extensions::URLPatternSet::IntersectionBehavior::kDetailed);
-  if (granted->IsEmpty()) {
-    return std::move(replied).Run();
-  }
-  extensions::PermissionsUpdater(profile).RevokeRuntimePermissions(
-      *extension, *granted, std::move(replied));
+  extension_sites_internal::ChangeSite(profile, *extension,
+                                       grant ? *grant : *revoke, !!grant,
+                                       call.TakeReply());
 }
