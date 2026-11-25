@@ -6,6 +6,7 @@
 #include <map>
 #include <set>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -39,6 +40,7 @@
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/management_policy.h"
 #include "extensions/browser/permissions_manager.h"
+#include "extensions/browser/permissions/permissions_updater.h"
 #include "extensions/browser/permissions/scripting_permissions_modifier.h"
 #include "extensions/browser/requirements_checker.h"
 #include "extensions/browser/uninstall_reason.h"
@@ -46,6 +48,9 @@
 #include "extensions/browser/user_script_manager.h"
 #include "extensions/browser/disable_reason.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/permissions/permission_set.h"
+#include "extensions/common/url_pattern.h"
+#include "extensions/common/url_pattern_set.h"
 
 namespace ardia {
 namespace {
@@ -116,6 +121,24 @@ base::DictValue Entry(const developer::ExtensionInfo& info) {
       .Set("mayModify", info.user_may_modify)
       .Set("blockedByPolicy", info.disable_reasons.blocked_by_policy)
       .Set("errors", std::move(errors));
+}
+
+std::optional<URLPattern> RuntimeSitePattern(const std::string& site) {
+  URLPattern pattern(URLPattern::SCHEME_HTTP | URLPattern::SCHEME_HTTPS |
+                     URLPattern::SCHEME_FILE);
+  if (pattern.Parse(site) != URLPattern::ParseResult::kSuccess ||
+      pattern.path() != "/*") {
+    return std::nullopt;
+  }
+  return pattern;
+}
+
+extensions::PermissionSet HostPermissions(const URLPattern& pattern) {
+  URLPatternSet hosts({pattern});
+  URLPatternSet scriptable = hosts.Clone();
+  return extensions::PermissionSet(extensions::APIPermissionSet(),
+                                   extensions::ManifestPermissionSet(),
+                                   std::move(hosts), std::move(scriptable));
 }
 
 content::WebContents* PromptTab(Profile* profile) {
@@ -502,7 +525,9 @@ AC_PROFILE_CALL(ac_extensions_configure) {
   if (!ardia::Find(profile, id)) {
     return call.TakeReply().Error("No such extension");
   }
-  if (std::optional<bool> pinned = call.args().FindBool("pinned")) {
+  const base::DictValue* nested = call.args().FindDict("options");
+  const base::DictValue& options = nested ? *nested : call.args();
+  if (std::optional<bool> pinned = options.FindBool("pinned")) {
     ToolbarActionsModel* model = ToolbarActionsModel::Get(profile);
     if (!model->HasAction(id)) {
       return call.TakeReply().Error(
@@ -512,7 +537,7 @@ AC_PROFILE_CALL(ac_extensions_configure) {
       model->SetActionVisibility(id, *pinned);
     }
   }
-  if (std::optional<int> index = call.args().FindInt("pinnedIndex")) {
+  if (std::optional<int> index = options.FindInt("pinnedIndex")) {
     ToolbarActionsModel* model = ToolbarActionsModel::Get(profile);
     if (profile->IsOffTheRecord()) {
       return call.TakeReply().Error(
@@ -524,13 +549,13 @@ AC_PROFILE_CALL(ac_extensions_configure) {
     const int last = static_cast<int>(model->pinned_action_ids().size()) - 1;
     model->MovePinnedAction(id, static_cast<size_t>(std::clamp(*index, 0, last)));
   }
-  if (std::optional<bool> allow = call.args().FindBool("fileAccess")) {
+  if (std::optional<bool> allow = options.FindBool("fileAccess")) {
     extensions::util::SetAllowFileAccess(id, profile, *allow);
   }
-  if (std::optional<bool> allow = call.args().FindBool("incognito")) {
+  if (std::optional<bool> allow = options.FindBool("incognito")) {
     extensions::util::SetIsIncognitoEnabled(id, profile, *allow);
   }
-  if (std::optional<bool> allow = call.args().FindBool("userScripts")) {
+  if (std::optional<bool> allow = options.FindBool("userScripts")) {
     const extensions::Extension* extension = ardia::Find(profile, id);
     extensions::UserScriptManager* manager =
         extensions::ExtensionSystem::Get(profile)->user_script_manager();
@@ -542,7 +567,7 @@ AC_PROFILE_CALL(ac_extensions_configure) {
     }
     manager->SetUserScriptPrefEnabled(id, *allow);
   }
-  if (const std::string* access = call.args().FindString("siteAccess")) {
+  if (const std::string* access = options.FindString("siteAccess")) {
     const extensions::Extension* extension = ardia::Find(profile, id);
     extensions::PermissionsManager* manager =
         extensions::PermissionsManager::Get(profile);
@@ -564,5 +589,39 @@ AC_PROFILE_CALL(ac_extensions_configure) {
       return call.TakeReply().Error("unknown site access");
     }
   }
-  call.TakeReply().Ok();
+  const std::string* grant = options.FindString("grantSite");
+  const std::string* revoke = options.FindString("revokeSite");
+  if (!grant && !revoke) {
+    return call.TakeReply().Ok();
+  }
+  if (grant && revoke) {
+    return call.TakeReply().Error("Grant or revoke one site at a time");
+  }
+  const extensions::Extension* extension = ardia::Find(profile, id);
+  extensions::PermissionsManager* manager =
+      extensions::PermissionsManager::Get(profile);
+  if (!extension || !manager->CanAffectExtension(*extension)) {
+    return call.TakeReply().Error("Can't change this extension's site access");
+  }
+  std::optional<URLPattern> pattern = RuntimeSitePattern(grant ? *grant : *revoke);
+  if (!pattern) {
+    return call.TakeReply().Error("That isn't a site an extension can be given");
+  }
+  auto replied = base::BindOnce([](Reply reply) { reply.Ok(); },
+                                call.TakeReply());
+  if (grant) {
+    extensions::PermissionsUpdater(profile).GrantRuntimePermissions(
+        *extension, HostPermissions(*pattern), std::move(replied));
+    return;
+  }
+  std::unique_ptr<const extensions::PermissionSet> granted =
+      extensions::PermissionSet::CreateIntersection(
+          HostPermissions(*pattern),
+          *manager->GetRevokablePermissions(*extension),
+          URLPatternSet::IntersectionBehavior::kDetailed);
+  if (granted->IsEmpty()) {
+    return std::move(replied).Run();
+  }
+  extensions::PermissionsUpdater(profile).RevokeRuntimePermissions(
+      *extension, *granted, std::move(replied));
 }
