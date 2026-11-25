@@ -192,7 +192,7 @@ function PeekCard({
     if (!started || !shown || donor) return;
     return registerPeekMotion(windowId, {
       tabId: peek.tabId,
-      close: () => stage.current?.close(generation) ?? Promise.resolve(false),
+      close: () => (pendingPromote.current ? Promise.resolve(false) : (stage.current?.close(generation) ?? Promise.resolve(false))),
       promote: () => {
         if (toTabNow.current) return promoteNow();
         return new Promise<boolean>((resolve) => {
