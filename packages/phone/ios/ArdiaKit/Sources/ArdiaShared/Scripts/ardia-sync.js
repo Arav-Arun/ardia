@@ -441,6 +441,7 @@ async function applyAdapter(state            , adapter         , keys           
       settle(key);
       keys.delete(key);
     }
+    countReapplied(state, [...landed].filter((key) => mine.has(key)), deferred);
     return false;
   }
   applyAs[adapter.prefix] = "joined";
@@ -563,7 +564,7 @@ async function syncScope(args
     journalFailed ||= !!ahead?.failed;
     heldApply ||= !!ahead?.failed;
     const applied = !heldApply && !cancelled && (await applyAdapter(state, adapter, keys, now(), 2 * (options?.tombstoneTTL ?? DEFAULTS.tombstoneTTL), applyHeld, deferred));
-    finishBatch(ahead?.batch ?? null, options);
+    finishBatch(ahead?.batch ?? null, applied, options);
     heldApply ||= applyHeld();
     if (!applied) for (const key of keys) if (key.startsWith(adapter.prefix)) unapplied.push(key);
     if (applied) for (const key of deferred) unapplied.push(key);
@@ -863,7 +864,7 @@ function isApplyBatch(v         )                  {
   const b = v                           ;
   if (!isFiniteNumber(b.id) || typeof b.p !== "string" || typeof b.l !== "string" || !isFiniteNumber(b.at)) return false;
   if (b.done !== undefined && !isFiniteNumber(b.done)) return false;
-  if (b.r !== undefined && b.r !== 1) return false;
+  if ((b.r !== undefined && b.r !== 1) || (b.f !== undefined && b.f !== 1)) return false;
   if (b.cut !== undefined && !(Array.isArray(b.cut) && b.cut.every((key) => typeof key === "string"))) return false;
   return typeof b.k === "object" && b.k !== null && !Array.isArray(b.k) && Object.values(b.k).every(isStep);
 }
@@ -922,8 +923,10 @@ async function cancelIfRaced(state            , batch                   , raced 
   return true;
 }
 
-function finishBatch(batch                   , options               = {}) {
-  if (batch) batch.done = monotonicOf(options);
+function finishBatch(batch                   , applied         , options               = {}) {
+  if (!batch) return;
+  batch.done = monotonicOf(options);
+  if (!applied) batch.f = 1;
 }
 
 function startApplying(state            , now        , options               = {}) {
@@ -985,7 +988,7 @@ const { ABSENT, launchOf, queueRecovered } = __require("packages/sync/src/applyB
 const { dropBase, putBase, visible } = __require("packages/sync/src/scopeKeys.ts");
                                                                                         
 
-                                                     
+                                                                       
                                                                                                         
 
 const nativeJson = (extraction            , key        ) => {
@@ -1006,7 +1009,7 @@ function chainsOf(batches              , skip                          ) {
       if (skip(key)) continue;
       let chain = chains.get(key);
       if (!chain) chains.set(key, (chain = []));
-      chain.push({ at, from: from ?? ABSENT, to: to ?? ABSENT });
+      chain.push({ at, from: from ?? ABSENT, to: to ?? ABSENT, partial: !!batch.f });
     }
   });
   return chains;
@@ -1019,6 +1022,7 @@ function valueAt(chain        , hypothesis        )         {
 }
 
 const holds = (chain                    , json        ) => !!chain?.some((s) => s.to === json || s.from === json);
+const leftByPartialApply = (chain        , json        ) => chain.some((s) => s.partial) && holds(chain, json);
 
                                                                                                                             
 
@@ -1080,7 +1084,7 @@ async function recoverBatches(state            , prefix        , first          
     if (extraction.ignore?.(key)) continue;
     resolved.add(key);
     const actual = nativeJson(extraction, key);
-    if (actual !== valueAt(chain, hypothesis) && !holds(chain, actual) && !holds(sinceRestart.get(key), actual)) {
+    if (actual !== valueAt(chain, hypothesis) && !leftByPartialApply(chain, actual) && !holds(sinceRestart.get(key), actual)) {
       setBase(state, key, baseJson(key) ?? ABSENT);
       continue;
     }
@@ -1117,7 +1121,7 @@ __define("packages/sync/src/scopeState.ts", function (exports, __require) {
   
                                               
 
-                                                                                                                                                                             
+                                                                                                                                                                                    
 
                                                                                                                               
 

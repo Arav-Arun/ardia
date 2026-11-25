@@ -255,6 +255,7 @@ async function applyAdapter(state: ScopeState, adapter: Adapter, keys: Set<strin
       settle(key);
       keys.delete(key);
     }
+    countReapplied(state, [...landed].filter((key) => mine.has(key)), deferred);
     return false;
   }
   applyAs[adapter.prefix] = "joined";
@@ -377,7 +378,7 @@ export async function syncScope(args: {
     journalFailed ||= !!ahead?.failed;
     heldApply ||= !!ahead?.failed;
     const applied = !heldApply && !cancelled && (await applyAdapter(state, adapter, keys, now(), 2 * (options?.tombstoneTTL ?? DEFAULTS.tombstoneTTL), applyHeld, deferred));
-    finishBatch(ahead?.batch ?? null, options);
+    finishBatch(ahead?.batch ?? null, applied, options);
     heldApply ||= applyHeld();
     if (!applied) for (const key of keys) if (key.startsWith(adapter.prefix)) unapplied.push(key);
     if (applied) for (const key of deferred) unapplied.push(key);

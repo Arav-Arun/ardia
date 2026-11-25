@@ -36,7 +36,7 @@ class Folder {
 }
 
 type Saved = { kind: "state"; json: string; clock: string | null } | { kind: "batch"; json: string } | { kind: "journal"; json: string };
-type Mode = { replaces?: boolean; throttled?: boolean; failsAfter?: string; ignores?: (key: string) => boolean; slowApplyMs?: number; quitting?: boolean; onePerCycle?: boolean; republishes?: string; journalFails?: boolean; killedBeforeCycleRecord?: boolean };
+type Mode = { replaces?: boolean; throttled?: boolean; failsAfter?: string; ignores?: (key: string) => boolean; slowApplyMs?: number; quitting?: boolean; onePerCycle?: boolean; republishes?: string; journalFails?: boolean; killedBeforeCycleRecord?: boolean; landsBeforeFailing?: boolean };
 
 class Mac {
   memory = new Map<string, unknown>();
@@ -74,7 +74,7 @@ class Mac {
         const republishes = this.mode.republishes;
         return { values: new Map([...this.memory].filter(([key]) => !ignores?.(key))), ignore: ignores, republish: republishes ? (key: string) => key === republishes : undefined };
       },
-      apply: (visible, changed) => {
+      apply: (visible, changed, _base, records) => {
         this.applies++;
         if (this.mode.slowApplyMs) this.tick(this.mode.slowApplyMs);
         if (this.mode.replaces) {
@@ -84,6 +84,7 @@ class Mac {
         for (const key of [...changed].sort()) {
           if (key === this.mode.failsAfter) return false;
           visible.has(key) ? this.memory.set(key, visible.get(key)) : this.memory.delete(key);
+          if (this.mode.landsBeforeFailing) records.landed(key);
         }
       },
     };
@@ -488,4 +489,30 @@ test("a change Chrome saved whose record was lost in the crash isn't reverted wh
   await settle([b, a], 2);
   assert.equal(b.memory.get("b:t1"), "B");
   assert.equal(a.memory.get("b:t1"), "B");
+});
+
+test("an offline edit back to the value a saved batch replaced is published, not taken for a crash leftover", async () => {
+  const { a, b } = await pairWith({ "b:a": "A0", "b:b": "B0", "b:c": "C0" });
+  await remoteChange(a, b, () => (a.memory.set("b:a", "A1"), a.memory.set("b:b", "B1"), a.memory.set("b:c", "C1")));
+  b.chromeSaves();
+  b.killed();
+  b.memory.set("b:a", "A0");
+  b.tick(60_000);
+  await settle([b, a], 3);
+  assert.equal(b.memory.get("b:a"), "A0");
+  assert.equal(a.memory.get("b:a"), "A0");
+  assert.equal(a.memory.get("b:b"), "B1");
+});
+
+test("a recovered key that lands before a later key fails is counted once", async () => {
+  const { a, b } = await pairWith({ "b:a": "A0", "b:z": "Z0" });
+  await remoteChange(a, b, () => (a.memory.set("b:a", "A1"), a.memory.set("b:z", "Z1")));
+  b.killed();
+  b.mode = { failsAfter: "b:z", landsBeforeFailing: true };
+  b.tick(60_000);
+  const first = await b.sync();
+  b.mode = {};
+  b.tick(1_000);
+  const second = await b.sync();
+  assert.equal(first.reapplied + second.reapplied, 2);
 });

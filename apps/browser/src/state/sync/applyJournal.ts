@@ -2,7 +2,7 @@ import { emptyScope, validBatches, type ApplyBatch, type ScopeState } from "../.
 import { isFields } from "../../lib/decode";
 import type { SyncDoc } from "./syncDoc";
 
-type Trimmed = { k?: string[]; e?: string[]; r?: 1 };
+type Trimmed = { k?: string[]; e?: string[]; r?: 1; f?: 1 };
 export type ScopeRest = Partial<ScopeState> & { applyingIds?: number[]; applyingTrimmed?: Record<string, Trimmed> };
 type Chunk = ApplyBatch & { n: number; i: number };
 export type Assembly = Map<string, Map<number, { n: number; chunks: Map<number, ApplyBatch> }>>;
@@ -11,7 +11,7 @@ export const APPLYING_PART_CHARS = 1_000_000;
 
 const isIdList = (v: unknown): v is number[] => Array.isArray(v) && v.every((id) => typeof id === "number" && Number.isFinite(id));
 const isKeyList = (v: unknown): v is string[] => Array.isArray(v) && v.every((key) => typeof key === "string");
-const isTrimmed = (v: unknown): v is Trimmed => isFields(v) && (isKeyList(v.k) || isKeyList(v.e)) && (v.r === undefined || v.r === 1);
+const isTrimmed = (v: unknown): v is Trimmed => isFields(v) && (isKeyList(v.k) || isKeyList(v.e)) && (v.r === undefined || v.r === 1) && (v.f === undefined || v.f === 1);
 const isCount = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v > 0;
 
 function batchOnly(batch: ApplyBatch): ApplyBatch {
@@ -25,9 +25,9 @@ export function restOf(state: ScopeState): ScopeRest {
   const trimmedOf = (b: ApplyBatch): Trimmed => {
     const kept = Object.keys(b.k);
     const cut = b.cut ?? [];
-    return { ...(cut.length < kept.length ? { e: cut } : { k: kept }), ...(b.r ? { r: 1 as const } : {}) };
+    return { ...(cut.length < kept.length ? { e: cut } : { k: kept }), ...(b.r ? { r: 1 as const } : {}), ...(b.f ? { f: 1 as const } : {}) };
   };
-  const trimmed = Object.fromEntries(applying.filter((b) => b.cut?.length || b.r).map((b) => [String(b.id), trimmedOf(b)]));
+  const trimmed = Object.fromEntries(applying.filter((b) => b.cut?.length || b.r || b.f).map((b) => [String(b.id), trimmedOf(b)]));
   return { ...rest, applyingIds: applying.map((b) => b.id), ...(Object.keys(trimmed).length ? { applyingTrimmed: trimmed } : {}) };
 }
 
@@ -38,7 +38,7 @@ function trimmedTo(batch: ApplyBatch, trim: Trimmed | undefined): ApplyBatch | n
   const k = Object.fromEntries(Object.entries(batch.k).filter(([key]) => (kept ? kept.has(key) : !cut.has(key))));
   if (!Object.keys(k).length) return null;
   const allCut = [...new Set([...(batch.cut ?? []), ...Object.keys(batch.k).filter((key) => !(key in k))])];
-  return { ...batch, k, ...(allCut.length ? { cut: allCut } : {}), ...(trim.r ? { r: 1 as const } : {}) };
+  return { ...batch, k, ...(allCut.length ? { cut: allCut } : {}), ...(trim.r ? { r: 1 as const } : {}), ...(trim.f ? { f: 1 as const } : {}) };
 }
 
 export function scopeFromRest(rest: unknown, records: ScopeState["records"], base: ScopeState["base"], before: ScopeState | undefined): ScopeState {

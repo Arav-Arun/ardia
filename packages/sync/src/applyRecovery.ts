@@ -3,7 +3,7 @@ import { ABSENT, launchOf, queueRecovered } from "./applyBatches.ts";
 import { dropBase, putBase, visible } from "./scopeKeys.ts";
 import type { ApplyBatch, Extraction, ScopeOptions, ScopeState } from "./scopeState.ts";
 
-type Step = { at: number; from: string; to: string };
+type Step = { at: number; from: string; to: string; partial: boolean };
 export type ExtractWith = (baseJson: (key: string) => string | undefined) => Promise<Extraction | null>;
 
 const nativeJson = (extraction: Extraction, key: string) => {
@@ -24,7 +24,7 @@ function chainsOf(batches: ApplyBatch[], skip: (key: string) => boolean) {
       if (skip(key)) continue;
       let chain = chains.get(key);
       if (!chain) chains.set(key, (chain = []));
-      chain.push({ at, from: from ?? ABSENT, to: to ?? ABSENT });
+      chain.push({ at, from: from ?? ABSENT, to: to ?? ABSENT, partial: !!batch.f });
     }
   });
   return chains;
@@ -37,6 +37,7 @@ function valueAt(chain: Step[], hypothesis: number): string {
 }
 
 const holds = (chain: Step[] | undefined, json: string) => !!chain?.some((s) => s.to === json || s.from === json);
+const leftByPartialApply = (chain: Step[], json: string) => chain.some((s) => s.partial) && holds(chain, json);
 
 type Trial = { hypothesis: number; extraction: Extraction; matches: number; baseJson: (key: string) => string | undefined };
 
@@ -98,7 +99,7 @@ export async function recoverBatches(state: ScopeState, prefix: string, first: E
     if (extraction.ignore?.(key)) continue;
     resolved.add(key);
     const actual = nativeJson(extraction, key);
-    if (actual !== valueAt(chain, hypothesis) && !holds(chain, actual) && !holds(sinceRestart.get(key), actual)) {
+    if (actual !== valueAt(chain, hypothesis) && !leftByPartialApply(chain, actual) && !holds(sinceRestart.get(key), actual)) {
       setBase(state, key, baseJson(key) ?? ABSENT);
       continue;
     }
