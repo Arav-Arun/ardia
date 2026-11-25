@@ -2365,6 +2365,17 @@
     "scripts/mac/webui-engine/tests/hostile_corpus_test.cc#bridge_documents"
    ],
    "detected": false
+  },
+  {
+   "id": "pasteboard:addressFieldPaste",
+   "source": "other-app",
+   "guard": "The address and command bar field editor pastes only text: the pasteboard's plain string or URL, else the first item's file: URL (any other scheme under public.file-url is ignored) or the plain text of its RTFD, RTF or HTML with attachment characters removed; RCTUISingleLinePastedText folds every line terminator (CR, LF, VT, FF, NEL, U+2028, U+2029) into one line before the text reaches the field, an image alone beeps, and nothing is opened until the user presses Return through the omnibox's own resolve",
+   "checks": [
+    "patches/react-native-macos@0.81.9.patch#RCTUIPlainTextOfRichPasteboard",
+    "patches/react-native-macos@0.81.9.patch#RCTUISingleLinePastedText",
+    "apps/browser/src/hostileInputs.test.mjs#a clipboard another app filled reaches the address field"
+   ],
+   "detected": false
   }
  ]
 }
