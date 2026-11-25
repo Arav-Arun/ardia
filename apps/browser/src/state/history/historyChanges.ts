@@ -7,25 +7,28 @@ export type ListChange = Exclude<HistoryChange, { kind: "deleted"; all: true }>;
 export type HistoryGap = `${HistoryChange["kind"]}-${"unloaded" | "moving"}` | "modified-unknown" | "visit-untitled";
 export type NoteGap = (gap: HistoryGap, count?: number) => void;
 
-type Touched = { entry: HistoryEntry | undefined; first: HistoryEntry | undefined; index: number; moved: boolean; seq: number };
+type Entry = Readonly<HistoryEntry>;
+type UrlIndex = Map<string, Entry>;
+type Touched = { entry: Entry | undefined; first: Entry | undefined; index: number; moved: boolean; seq: number };
 
 const MAX_INDEXED_TOUCHES = 64;
 const UNKNOWN_INDEX = -2;
+const INDEX_WHEN_QUIET_MS = 2000;
 
 export const isListChange = (change: HistoryChange): change is ListChange => change.kind !== "deleted" || !change.all;
 
 const urlsOf = (change: ListChange): string[] =>
   change.kind === "visit" ? [change.url] : change.kind === "modified" ? change.rows.map((r) => r.url) : change.urls;
 
-const urlIndexes = new WeakMap<readonly HistoryEntry[], Map<string, HistoryEntry> | null>();
+const urlIndexes = new WeakMap<readonly Entry[], UrlIndex | null>();
 
 export const historyApplyStats = { indexed: 0, scanned: 0, indexBuilds: 0 };
 
-function urlIndexOf(list: readonly HistoryEntry[]): Map<string, HistoryEntry> | null {
+export function indexHistoryList(list: readonly Entry[]): boolean {
   let index = urlIndexes.get(list);
-  if (index !== undefined) return index;
+  if (index !== undefined) return index !== null;
   historyApplyStats.indexBuilds++;
-  const byUrl = new Map<string, HistoryEntry>();
+  const byUrl: UrlIndex = new Map();
   let newestFirst = true;
   for (let i = 0; i < list.length; i++) {
     const h = list[i]!;
@@ -34,10 +37,25 @@ function urlIndexOf(list: readonly HistoryEntry[]): Map<string, HistoryEntry> | 
   }
   index = newestFirst && byUrl.size === list.length ? byUrl : null;
   urlIndexes.set(list, index);
-  return index;
+  return index !== null;
 }
 
-function touchedBy(list: readonly HistoryEntry[], wanted: Set<string>, byUrl: Map<string, HistoryEntry> | null): Map<string, Touched> {
+let unindexed: readonly Entry[] | null = null;
+let indexTimer: ReturnType<typeof setTimeout> | null = null;
+
+function indexWhenQuiet(list: readonly Entry[]) {
+  if (urlIndexes.has(list)) return;
+  unindexed = list;
+  if (indexTimer !== null) clearTimeout(indexTimer);
+  indexTimer = setTimeout(() => {
+    indexTimer = null;
+    const latest = unindexed;
+    unindexed = null;
+    if (latest) indexHistoryList(latest);
+  }, INDEX_WHEN_QUIET_MS);
+}
+
+function touchedBy(list: readonly Entry[], wanted: Set<string>, byUrl: UrlIndex | null): Map<string, Touched> {
   const touched = new Map<string, Touched>();
   if (byUrl) {
     for (const url of wanted) {
@@ -110,7 +128,7 @@ function applyToTouched(changes: readonly ListChange[], touched: Map<string, Tou
 
 const newestMovedFirst = (a: Touched, b: Touched) => b.entry!.lastVisit - a.entry!.lastVisit || b.seq - a.seq;
 
-function mergedByScan(list: readonly HistoryEntry[], touched: Map<string, Touched>): HistoryEntry[] {
+function mergedByScan(list: readonly Entry[], touched: Map<string, Touched>): HistoryEntry[] {
   const replaced: Touched[] = [];
   const moved: Touched[] = [];
   for (const state of touched.values()) {
@@ -123,7 +141,7 @@ function mergedByScan(list: readonly HistoryEntry[], touched: Map<string, Touche
   let m = 0;
   let r = 0;
   for (let i = 0; i < list.length && next.length < MAX_HISTORY; i++) {
-    let h: HistoryEntry | undefined = list[i]!;
+    let h: Entry | undefined = list[i]!;
     if (r < replaced.length && replaced[r]!.index === i) {
       const state = replaced[r++]!;
       h = state.moved ? undefined : state.entry;
@@ -137,7 +155,7 @@ function mergedByScan(list: readonly HistoryEntry[], touched: Map<string, Touche
   return next;
 }
 
-function firstAtOrBefore(list: readonly HistoryEntry[], lastVisit: number): number {
+function firstAtOrBefore(list: readonly Entry[], lastVisit: number): number {
   let lo = 0;
   let hi = list.length;
   while (lo < hi) {
@@ -148,15 +166,20 @@ function firstAtOrBefore(list: readonly HistoryEntry[], lastVisit: number): numb
   return lo;
 }
 
-type Merged = { next: HistoryEntry[]; dropped: HistoryEntry[] };
+function positionOf(list: readonly Entry[], entry: Entry): number {
+  for (let i = firstAtOrBefore(list, entry.lastVisit); i < list.length && list[i]!.lastVisit === entry.lastVisit; i++) if (list[i] === entry) return i;
+  return list.indexOf(entry);
+}
 
-function mergedByIndex(list: readonly HistoryEntry[], touched: Map<string, Touched>): Merged | null {
-  const slots = new Map<number, HistoryEntry | null>();
+type Merged = { next: HistoryEntry[]; dropped: readonly Entry[] };
+
+function mergedByIndex(list: readonly Entry[], touched: Map<string, Touched>): Merged | null {
+  const slots = new Map<number, Entry | null>();
   const moved: Touched[] = [];
   for (const state of touched.values()) {
     if (state.moved && state.entry) moved.push(state);
     if (!state.first || (state.entry === state.first && !state.moved)) continue;
-    const index = list.indexOf(state.first);
+    const index = positionOf(list, state.first);
     if (index < 0) return null;
     state.index = index;
     slots.set(index, state.moved ? null : (state.entry ?? null));
@@ -164,7 +187,7 @@ function mergedByIndex(list: readonly HistoryEntry[], touched: Map<string, Touch
   moved.sort(newestMovedFirst);
   const inserts = moved.map((state) => firstAtOrBefore(list, state.entry!.lastVisit));
   const cuts = [...new Set([...slots.keys(), ...inserts])].sort((a, b) => a - b);
-  const parts: (HistoryEntry | readonly HistoryEntry[])[] = [];
+  const parts: (Entry | readonly Entry[])[] = [];
   let from = 0;
   let m = 0;
   for (const cut of cuts) {
@@ -183,7 +206,7 @@ function mergedByIndex(list: readonly HistoryEntry[], touched: Map<string, Touch
   return { next, dropped };
 }
 
-function carryIndex(byUrl: Map<string, HistoryEntry>, list: readonly HistoryEntry[], { next, dropped }: Merged, touched: Map<string, Touched>) {
+function carryIndex(byUrl: UrlIndex, list: readonly Entry[], { next, dropped }: Merged, touched: Map<string, Touched>) {
   urlIndexes.delete(list);
   for (const [url, state] of touched) {
     if (state.entry) byUrl.set(url, state.entry);
@@ -194,10 +217,14 @@ function carryIndex(byUrl: Map<string, HistoryEntry>, list: readonly HistoryEntr
 }
 
 export function applyHistoryChanges(list: HistoryEntry[], changes: readonly ListChange[], note?: NoteGap): HistoryEntry[] {
+  if (!changes.length) return list;
   const wanted = new Set(changes.flatMap(urlsOf));
-  const byUrl = wanted.size <= MAX_INDEXED_TOUCHES ? urlIndexOf(list) : null;
+  const byUrl = wanted.size <= MAX_INDEXED_TOUCHES ? (urlIndexes.get(list) ?? null) : null;
   const touched = touchedBy(list, wanted, byUrl);
-  if (!applyToTouched(changes, touched, note)) return list;
+  if (!applyToTouched(changes, touched, note)) {
+    if (!byUrl) indexWhenQuiet(list);
+    return list;
+  }
   if (byUrl) {
     const merged = mergedByIndex(list, touched);
     if (merged) {
@@ -208,5 +235,7 @@ export function applyHistoryChanges(list: HistoryEntry[], changes: readonly List
     for (const state of touched.values()) if (state.first && state.index === UNKNOWN_INDEX) state.index = list.indexOf(state.first);
   }
   historyApplyStats.scanned++;
-  return mergedByScan(list, touched);
+  const next = mergedByScan(list, touched);
+  indexWhenQuiet(next);
+  return next;
 }

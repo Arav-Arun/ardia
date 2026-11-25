@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 
 globalThis.__DEV__ = false;
-const { applyHistoryChanges, historyApplyStats } = await import("./historyChanges.ts");
+const { applyHistoryChanges, historyApplyStats, indexHistoryList } = await import("./historyChanges.ts");
 const { MAX_HISTORY, MAX_VISIT_TIMES } = await import("./history.ts");
 const { isWebPageUrl } = await import("../../lib/url.ts");
 const urlsOf = (change) => (change.kind === "visit" ? [change.url] : change.kind === "modified" ? change.rows.map((r) => r.url) : change.urls);
@@ -137,6 +137,7 @@ test("lists with one entry per address take the indexed path and give the same l
     const r = rng(seed * 7919);
     const n = seed % 40 === 0 ? MAX_HISTORY : 1 + r(150);
     let list = listOf(r, n, true);
+    assert.equal(indexHistoryList(list), true);
     let notesA = [], notesB = [];
     for (let step = 0; step < 10; step++) {
       const changes = changesOf(r, n, 2_000_000 - r(n * 3) + step * 50);
@@ -159,4 +160,50 @@ test("a list that falls out of newest-first order is merged by the scan, as befo
   ];
   const changes = [{ kind: "visit", profile: "", url: "https://d.example/", title: "D", visits: 1, at: 250 }];
   assert.deepEqual(applyHistoryChanges(list, changes), referenceApply(list, changes));
+});
+
+const pages = (n, from = 0) => Array.from({ length: n }, (_, i) => ({ url: `https://p${from + i}.example/`, title: `P${from + i}`, favicon: null, visits: 1, lastVisit: 10_000_000 - (from + i) * 10, visitTimes: [10_000_000 - (from + i) * 10] }));
+
+test("an empty batch returns the list as it was and builds no index", () => {
+  const list = pages(5000);
+  const builds = historyApplyStats.indexBuilds;
+  assert.equal(applyHistoryChanges(list, []), list);
+  assert.equal(historyApplyStats.indexBuilds, builds);
+});
+
+test("64 title changes near the tail of an indexed 100,000-page list take the indexed path and match the scan", () => {
+  const list = pages(MAX_HISTORY);
+  assert.equal(indexHistoryList(list), true);
+  const rows = Array.from({ length: 64 }, (_, i) => ({ url: `https://p${MAX_HISTORY - 1 - i * 7}.example/`, title: `renamed ${i}`, visits: 3 }));
+  const changes = [{ kind: "modified", profile: "", rows }];
+  const indexed = historyApplyStats.indexed;
+  const got = applyHistoryChanges(list, changes);
+  assert.equal(historyApplyStats.indexed, indexed + 1);
+  assert.deepEqual(got, referenceApply(list, changes));
+  const again = [{ kind: "modified", profile: "", rows: rows.map((r) => ({ ...r, title: `${r.title}!` })) }];
+  assert.deepEqual(applyHistoryChanges(got, again), referenceApply(got, again));
+  assert.equal(historyApplyStats.indexed, indexed + 2);
+});
+
+test("a list the scan made gets its index once batches have been quiet for 2 s, and the next batch uses it", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const list = pages(3000);
+    const visit = (i) => [{ kind: "visit", profile: "", url: `https://new${i}.example/`, title: "N", visits: 1, at: 20_000_000 + i }];
+    const scanned = historyApplyStats.scanned;
+    const first = applyHistoryChanges(list, visit(1));
+    const second = applyHistoryChanges(first, visit(2));
+    assert.equal(historyApplyStats.scanned, scanned + 2);
+    const builds = historyApplyStats.indexBuilds;
+    mock.timers.tick(1999);
+    assert.equal(historyApplyStats.indexBuilds, builds);
+    mock.timers.tick(1);
+    assert.equal(historyApplyStats.indexBuilds, builds + 1);
+    const indexed = historyApplyStats.indexed;
+    const third = applyHistoryChanges(second, visit(3));
+    assert.equal(historyApplyStats.indexed, indexed + 1);
+    assert.deepEqual(third, referenceApply(second, visit(3)));
+  } finally {
+    mock.timers.reset();
+  }
 });
