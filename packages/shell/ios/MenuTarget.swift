@@ -93,10 +93,7 @@ final class MenuTarget: NSObject, NSMenuItemValidation {
 
   private func forwardEdit(_ action: Selector, from sender: Any?) {
     if Self.pageIsCovered { return }
-    if FocusHandoff.shared.defers(action) {
-      PasteRefusal.reportMenuPaste(action, .deferred)
-      return
-    }
+    if FocusHandoff.shared.defers(action) { return }
     FocusHandoff.shared.noteForwarded(action)
     if !NSApp.sendAction(action, to: nil, from: sender) { PasteRefusal.reportMenuPaste(action, .refused) }
   }
@@ -158,10 +155,7 @@ final class MenuTarget: NSObject, NSMenuItemValidation {
     let web = Selector(("pasteAndMatchStyle:"))
     FocusHandoff.shared.countPasteAndMatchStyleKey(NSApp.currentEvent)
     if Self.pageIsCovered { return }
-    if FocusHandoff.shared.defers(web) {
-      PasteRefusal.reportMenuPaste(web, .deferred)
-      return
-    }
+    if FocusHandoff.shared.defers(web) { return }
     let handled =
       NSApp.target(forAction: web) != nil
       ? NSApp.sendAction(web, to: nil, from: sender)

@@ -651,6 +651,119 @@ test("windows webui native update policy keeps every hostile input and call argu
   }
 });
 
+test("#650: a clipboard another app filled reaches the address field only as one line of plain text, and a file address only as a file: URL", async (t) => {
+  const { spawnSync } = process.getBuiltinModule("node:child_process");
+  const { mkdtempSync, rmSync, writeFileSync } = process.getBuiltinModule("node:fs");
+  const { tmpdir } = process.getBuiltinModule("node:os");
+  const { join } = process.getBuiltinModule("node:path");
+  const { fileURLToPath } = process.getBuiltinModule("node:url");
+  if (process.platform !== "darwin") return t.skip("AppKit pasteboards are macOS only");
+  const repo = fileURLToPath(new URL("../../../", import.meta.url));
+  const field = readFileSync(join(repo, "node_modules/react-native-macos/Libraries/Text/TextInput/Singleline/RCTUITextField.mm"), "utf8");
+  const from = field.indexOf("static NSString *RCTUISingleLinePastedText(");
+  const to = field.indexOf("@interface RCTUIPlainPasteFieldEditor");
+  assert.ok(from > 0 && to > from && field.slice(from, to).includes("RCTUIPlainTextOfRichPasteboard"), "the patched field editor's paste helpers");
+  const scratch = mkdtempSync(join(tmpdir(), "ardia-paste-"));
+  const { createServer } = process.getBuiltinModule("node:net");
+  let fetched = 0;
+  const server = createServer((socket) => {
+    fetched++;
+    socket.destroy();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    const probe = join(scratch, "probe.mm");
+    writeFileSync(
+      probe,
+      `#import <AppKit/AppKit.h>
+${field.slice(from, to)}
+int main(int argc, char **argv) {
+  @autoreleasepool {
+    NSArray<NSString *> *values = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:@(argv[1])] options:0 error:nil];
+    NSMutableArray *answers = [NSMutableArray array];
+    for (NSString *value in values) {
+      for (NSString *kind in @[ @"html", @"rtf", @"file" ]) {
+        NSPasteboard *board = [NSPasteboard pasteboardWithUniqueName];
+        [board clearContents];
+        NSPasteboardItem *item = [NSPasteboardItem new];
+        if ([kind isEqualToString:@"html"]) {
+          NSString *escaped = [[value stringByReplacingOccurrencesOfString:@"&" withString:@"&amp;"] stringByReplacingOccurrencesOfString:@"<" withString:@"&lt;"];
+          [item setData:[[NSString stringWithFormat:@"<p>%@</p>", escaped] dataUsingEncoding:NSUTF8StringEncoding] forType:NSPasteboardTypeHTML];
+        } else if ([kind isEqualToString:@"rtf"]) {
+          NSAttributedString *rich = [[NSAttributedString alloc] initWithString:value];
+          [item setData:[rich RTFFromRange:NSMakeRange(0, rich.length) documentAttributes:@{}] forType:NSPasteboardTypeRTF];
+        } else {
+          [item setString:value forType:NSPasteboardTypeFileURL];
+        }
+        [board writeObjects:@[ item ]];
+        NSString *text = RCTUIPlainTextOfRichPasteboard(board);
+        [answers addObject:@{@"kind" : kind, @"out" : text ? RCTUISingleLinePastedText(text) : NSNull.null}];
+        [board releaseGlobally];
+      }
+    }
+    NSMutableArray *encoded = [NSMutableArray array];
+    NSArray *declared = @[
+      @[ @"<meta charset=\\"iso-2022-jp\\"><p>日本語のテキスト</p>", @(NSISO2022JPStringEncoding) ],
+      @[ @"<meta http-equiv=\\"Content-Type\\" content=\\"text/html; charset=windows-1252\\"><p>Â£ café</p>", @(NSWindowsCP1252StringEncoding) ],
+      @[ @"<p>charset café 日本 🙂</p>", @(NSUTF8StringEncoding) ],
+      @[ @"<link rel=\\"stylesheet\\" href=\\"http://127.0.0.1:${port}/c\\"><img src=\\"http://127.0.0.1:${port}/i\\"><p style=\\"background:url(http://127.0.0.1:${port}/b)\\">offline</p><script>never</script>", @(NSUTF8StringEncoding) ],
+    ];
+    for (NSArray *fixture in declared) {
+      NSPasteboard *board = [NSPasteboard pasteboardWithUniqueName];
+      [board clearContents];
+      NSPasteboardItem *item = [NSPasteboardItem new];
+      [item setData:[fixture[0] dataUsingEncoding:[fixture[1] unsignedIntegerValue]] forType:NSPasteboardTypeHTML];
+      [board writeObjects:@[ item ]];
+      NSString *text = RCTUIPlainTextOfRichPasteboard(board);
+      [encoded addObject:text ? RCTUISingleLinePastedText(text) : NSNull.null];
+      [board releaseGlobally];
+    }
+    NSData *json = [NSJSONSerialization dataWithJSONObject:@{@"answers" : answers, @"encoded" : encoded} options:0 error:nil];
+    fwrite(json.bytes, 1, json.length, stdout);
+  }
+  return 0;
+}
+`,
+    );
+    const binary = join(scratch, "probe");
+    const build = spawnSync("xcrun", ["clang++", "-std=c++20", "-fobjc-arc", "-w", "-framework", "AppKit", probe, "-o", binary], { encoding: "utf8" });
+    if (build.error?.code === "ENOENT") return t.skip("no clang here");
+    assert.equal(build.status, 0, build.stderr);
+    const controls = ["café 日本 🙂", "file:///tmp/report%20final.pdf", "javascript:alert(1)", "https://ardia-fixture.invalid/"];
+    const hostile = HOSTILE_STRINGS.map(({ value }) => value).filter((value) => value.isWellFormed());
+    assert.ok(hostile.length >= HOSTILE_STRINGS.length - 4, "lone surrogates are the only strings a pasteboard can't hold");
+    const values = [...controls, ...hostile];
+    const corpus = join(scratch, "values.json");
+    writeFileSync(corpus, JSON.stringify(values));
+    const run = spawnSync(binary, [corpus], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    assert.equal(run.status, 0, run.stderr);
+    const { answers, encoded } = JSON.parse(run.stdout);
+    assert.deepEqual(encoded, ["日本語のテキスト", "Â£ café", "charset café 日本 🙂", "offline"], "HTML keeps the charset it declares, UTF-8 is the fallback, and script text is dropped");
+    for (let turn = 0; turn < 3; turn++) await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(fetched, 0, "turning pasted HTML into text loads nothing it names");
+    assert.equal(answers.length, values.length * 3);
+    const answer = (i, kind) => answers[i * 3 + ["html", "rtf", "file"].indexOf(kind)].out;
+    assert.equal(answer(0, "html"), "café 日本 🙂");
+    assert.equal(answer(0, "rtf"), "café 日本 🙂");
+    assert.equal(answer(1, "file"), "file:///tmp/report%20final.pdf");
+    assert.equal(answer(2, "file"), null);
+    assert.equal(answer(3, "file"), null);
+    for (const [i, value] of values.entries()) {
+      for (const kind of ["html", "rtf", "file"]) {
+        const out = answer(i, kind);
+        if (out === null) continue;
+        assert.equal(typeof out, "string", `${kind} ${show(value)}`);
+        assert.doesNotMatch(out, /[\r\n\u000b\u000c\u0085\u2028\u2029\ufffc]/, `${kind} ${show(value)} pastes one line with no attachment: ${JSON.stringify(out)}`);
+        if (kind === "file") assert.match(out, /^file:/, `${show(value)} as a file address`);
+      }
+    }
+  } finally {
+    server.close();
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
 test("a synced pinned tile's letters are at most two visible characters, whatever the record holds", async () => {
   const { pinnedLettersAdapter } = await import("./state/sync/pinnedLettersAdapter.ts");
   const { cleanTileLetters, TILE_LETTERS_MAX, TILE_LETTERS_MAX_LENGTH } = await import("./lib/tileLetter.ts");
