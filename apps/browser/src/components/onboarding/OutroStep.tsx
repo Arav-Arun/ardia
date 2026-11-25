@@ -6,13 +6,13 @@ import { finishOnboarding, QUESTION_ORDER, useOnboarding } from "../../state/onb
 import { SecondaryButton } from "./Buttons";
 import { useOnboardingColors } from "./Parts";
 import { keyText } from "../../state/commands/keyText";
+import { useShortcutHint } from "../../state/commands/commandShortcuts";
 import { StepActions, StepLayout } from "./StepLayout";
 import { onboardingType } from "./tokens";
 
 const SHORTCUTS = [
-  ["⌘T", "Open a new tab"],
-  ["⌘L", "Go anywhere from the command bar"],
-  ["⌘S", "Hide the sidebar for more room"],
+  [keyText("⌘T"), "Open a new tab"],
+  [keyText("⌘L"), "Go anywhere from the command bar"],
 ] as const;
 
 export function OutroStep() {
@@ -20,6 +20,8 @@ export function OutroStep() {
   const picked = useOnboarding((s) => s.picked);
   const redo = useOnboarding((s) => s.redo);
   const lines = QUESTION_ORDER.flatMap((q) => picked[q] ?? []);
+  const sidebarKeys = useShortcutHint("toggleSidebar");
+  const shortcuts = sidebarKeys ? [...SHORTCUTS, [sidebarKeys, "Hide the sidebar for more room"] as const] : SHORTCUTS;
   return (
     <StepLayout
       title={"Welcome to your new\nhome on the internet"}
@@ -33,9 +35,9 @@ export function OutroStep() {
       preview={<Postcard lines={lines} />}
     >
       <View style={{ gap: space.ml }}>
-        {SHORTCUTS.map(([keys, label]) => (
+        {shortcuts.map(([keys, label]) => (
           <View key={keys} style={{ flexDirection: "row", alignItems: "center", gap: space.l }}>
-            <KeyCap keys={[keyText(keys)]} />
+            <KeyCap keys={[keys]} />
             <Text color={colors.subtitle}>{label}</Text>
           </View>
         ))}

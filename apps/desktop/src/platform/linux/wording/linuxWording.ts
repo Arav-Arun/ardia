@@ -195,7 +195,6 @@ export const LINUX_WORDING: readonly Wording[] = [
     file: "state/onboarding/tour.ts",
     replacements: [
       ["${keyText(\"⌘L\")} brings the command bar up from any page, and ${keyText(\"⌘T\")} opens a new tab.", "Ctrl+L brings the command bar up from any page, and Ctrl+T opens a new tab."],
-      ["${keyText(\"⌘S\")} hides the sidebar.", "Ctrl+S hides the sidebar."],
       ["or press ${keyText(\"⌃⇧=\")}. ${keyText(\"⌃⇧]\")} and ${keyText(\"⌃⇧[\")} move between the panes.", "or press Super+Shift+=. Super+Shift+] and Super+Shift+[ move between the panes."],
       ["Everything else is in the menu bar and in Settings (⌘,).", "Everything else is in the menu button's menus and in Settings (Ctrl+,)."],
       ["`Everything else is in Settings (${keyText(\"⌘,\")}).`", "\"Everything else is in Settings (Ctrl+,).\""],

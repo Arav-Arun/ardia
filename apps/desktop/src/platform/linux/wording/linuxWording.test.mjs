@@ -65,7 +65,7 @@ const EXPECTED = [
   ["state/downloads/downloadMenu.ts", ["title: \"Show in Folder\""], ["Show in ${PLATFORM_TERMS.fileManager}"]],
   ["state/bookmarks/exportHtml.ts", ["title: \"Show in Folder\""], ["Show in ${PLATFORM_TERMS.fileManager}"]],
   ["state/browser/actions.ts", ["stay installed on this computer, turned off."], ["on this ${PLATFORM_TERMS.computer}"]],
-  ["state/onboarding/tour.ts", ["Ctrl+S hides the sidebar.", "press Super+Shift+=.", "Settings (Ctrl+,)."], ["menu bar", "⌘"]],
+  ["state/onboarding/tour.ts", ["Hide Tabs hides the sidebar", "press Super+Shift+=.", "Settings (Ctrl+,)."], ["menu bar", "⌘"]],
   ["state/presets/setupCode.ts", ["Appearance follows your desktop", "Ctrl+T opens the command bar"], ["your ${PLATFORM_TERMS.computer}", "⌘T"]],
   ["state/releaseNotes/releaseNotes.ts", ["from any page with Ctrl+L."], ["⌘L"]],
   ["state/sync/scopeAdapters.ts", ["`This Computer`"], ["This ${PLATFORM_TERMS.computerTitle}"]],
