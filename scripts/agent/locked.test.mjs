@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, constants, existsSync, lstatSync, mkdtempSync, openSync, rmSync, writeSync } from "node:fs";
+import { closeSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, rmSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -42,6 +42,21 @@ function lockRoot(t) {
   return { root, env, kernel: join(root, "ac-pod.lockf"), cleanup: (step) => before.push(step) };
 }
 
+function signalGroup(pid, sig) {
+  try {
+    process.kill(-pid, sig);
+  } catch {}
+}
+
+function groupAlive(pid) {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+
 function openGate(gate) {
   const fd = openSync(gate, constants.O_WRONLY | constants.O_NONBLOCK);
   try {
@@ -55,7 +70,7 @@ async function holdLock({ root, env, cleanup }) {
   const ready = join(root, "ready");
   const gate = join(root, "gate");
   assert.equal(spawnSync("mkfifo", [gate]).status, 0);
-  const holder = spawn(locked, ["pod", "--wait", "10", "--", "bash", "-c", `touch "${ready}"; read -r _ < "${gate}"`], { env, stdio: "ignore" });
+  const holder = spawn(locked, ["pod", "--wait", "10", "--", "bash", "-c", `touch "${ready}"; read -r _ < "${gate}"`], { env, stdio: "ignore", detached: true });
   const exited = new Promise((resolve) => holder.once("exit", (code, signal) => resolve(code ?? signal)));
   let released;
   const release = () =>
@@ -64,14 +79,15 @@ async function holdLock({ root, env, cleanup }) {
         try {
           openGate(gate);
         } catch {
-          holder.kill("SIGTERM");
+          signalGroup(holder.pid, "SIGTERM");
         }
       }
-      const fallback = setTimeout(() => holder.kill("SIGKILL"), 10_000);
+      const fallback = setTimeout(() => signalGroup(holder.pid, "SIGKILL"), 10_000);
       try {
         return await exited;
       } finally {
         clearTimeout(fallback);
+        await until(() => !groupAlive(holder.pid), 5_000, "the holder's process group to exit").catch(() => signalGroup(holder.pid, "SIGKILL"));
       }
     })());
   cleanup(release);
@@ -122,4 +138,15 @@ test("a nested call doesn't trust a lock record that is a symlink", { skip: !can
   assert.equal(nested.status, 0, nested.stderr);
   assert.doesNotMatch(nested.stdout, /NESTED/);
   assert.match(nested.stdout, /nested=75/);
+});
+
+test("a lock record path taken by a directory is left alone, and the nested call takes the lock itself", { skip: !canLock && "needs lockf or flock" }, (t) => {
+  const { root, env } = lockRoot(t);
+  mkdirSync(join(root, "ac-pod.held"));
+  const nested = spawnSync(locked, ["pod", "--wait", "10", "--", "bash", "-c", `"${locked}" pod --wait 1 -- echo NESTED; echo "nested=$?"`], { env, encoding: "utf8", timeout: 30_000 });
+  assert.equal(nested.status, 0, nested.stderr);
+  assert.doesNotMatch(nested.stdout, /NESTED/);
+  assert.match(nested.stdout, /nested=75/);
+  assert.deepEqual(readdirSync(join(root, "ac-pod.held")), []);
+  assert.deepEqual(readdirSync(root).filter((name) => name.startsWith("ac-pod.held.")), []);
 });

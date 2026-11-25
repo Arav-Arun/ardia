@@ -173,7 +173,7 @@ release_held() { own_record "$held" && [[ "$(cat "$held" 2>/dev/null)" == "$$ $n
 write_held() {
   local staged
   staged=$(umask 077 && mktemp "$held.XXXXXX" 2>/dev/null) || return 1
-  if printf '%s %s\n' "$$" "$nonce" >"$staged" && mv -f "$staged" "$held"; then return 0; fi
+  if printf '%s %s\n' "$$" "$nonce" >"$staged" && perl -e 'rename($ARGV[0], $ARGV[1]) or exit 1' -- "$staged" "$held"; then return 0; fi
   rm -f "$staged"
   return 1
 }
@@ -181,9 +181,12 @@ write_held() {
 run() {
   held=$(held_file "$kernel")
   nonce=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
-  write_held 2>/dev/null
-  AC_LOCKED_HELD="${AC_LOCKED_HELD:+$AC_LOCKED_HELD
-}$$ $nonce $kernel" AC_LOCKED_AS="$as" "$@" &
+  local held_list=${AC_LOCKED_HELD:-}
+  if write_held 2>/dev/null; then
+    held_list="${held_list:+$held_list
+}$$ $nonce $kernel"
+  fi
+  AC_LOCKED_HELD="$held_list" AC_LOCKED_AS="$as" "$@" &
   child=$!
   trap 'kill -INT "$child" 2>/dev/null; wait "$child"; release_held; exit 130' INT
   trap 'kill -TERM "$child" 2>/dev/null; wait "$child"; release_held; exit 143' TERM
