@@ -42,7 +42,8 @@ export const settingsAdapter: Adapter = {
   apply: (visible, changed) => applySettingRecords(visible, changed),
 };
 
-function applySettingRecords(visible: ReadonlyMap<string, unknown>, changed: Iterable<string>) {
+function applySettingRecords(visible: ReadonlyMap<string, unknown>, changedKeys: Iterable<string>) {
+  const changed = [...changedKeys];
   const patch: Record<string, unknown> = {};
   for (const key of changed) {
     const name = settingOf(key);
@@ -51,7 +52,11 @@ function applySettingRecords(visible: ReadonlyMap<string, unknown>, changed: Ite
     const value = fromRecord(name, record.v);
     if (validSettingValue(name as SettingKey, value)) patch[name] = value;
   }
-  if (Object.keys(patch).length) store().updateSettings(withSyncedTabSwitcherModes(patch as Partial<Settings>), { fromSync: true });
+  const modeKeys = [recordKey("tabSwitcherOrder"), recordKey("tabSwitcherView")];
+  const modesSynced = modeKeys.some((key) => visible.has(key));
+  const shortcutsRecord = visible.get(recordKey("shortcuts")) as { v: unknown } | undefined;
+  if (modesSynced && !("shortcuts" in patch) && modeKeys.some((key) => changed.includes(key)) && shortcutsRecord && validSettingValue("shortcuts", shortcutsRecord.v)) patch.shortcuts = shortcutsRecord.v;
+  if (Object.keys(patch).length) store().updateSettings(withSyncedTabSwitcherModes(patch as Partial<Settings>, modesSynced), { fromSync: true });
 }
 
 export const settingSyncedIn = (records: Record<string, SyncRecord>, name: SettingKey) => records[recordKey(name)] !== undefined;

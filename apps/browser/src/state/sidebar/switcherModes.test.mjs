@@ -133,3 +133,31 @@ test("both orders skip closed pinned tabs and tabs Memory Saver put to sleep", (
   S().cycle(w, 1);
   assert.equal(shown(w), "a", "Next Tab skips them too");
 });
+
+test("in order, ⌃Tab walks A, a collapsed group of B and C, then D, and around again without sticking or repeating a row", () => {
+  const [w, a, b, c] = setup("inOrder", "none", "a", "b", "c", "d");
+  const group = S().createGroup([b, c]);
+  S().activate(b);
+  S().activate(c);
+  S().activate(a);
+  S().updateGroup(group, { collapsed: true });
+  const visited = [];
+  for (let i = 0; i < 8; i++) {
+    switcherStep(w, false);
+    visited.push(shown(w));
+    const ids = inOrderTabIds(S(), w);
+    assert.equal(new Set(ids).size, ids.length, `no row twice after ${visited.join(" ")}`);
+  }
+  assert.ok(visited.includes("d") && visited.filter((x) => x === "a").length >= 2, visited.join(" "));
+  assert.ok(visited.every((x, i) => i === 0 || x !== visited[i - 1]), `every press moves: ${visited.join(" ")}`);
+});
+
+test("in order with a switcher picked, the only other tab is still reached when the shown tab isn't in the list", () => {
+  const [w, a, b] = setup("inOrder", "thumbnails", "a", "b");
+  S().activate(a);
+  S().updateTab(a, { liveItem: { folderId: "f", itemId: "i" } });
+  assert.deepEqual(inOrderTabIds(S(), w), [b]);
+  switcherStep(w, false);
+  assert.equal(shown(w), "b");
+  assert.equal(sidebarUi().switcher, null, "a single destination needs no switcher");
+});

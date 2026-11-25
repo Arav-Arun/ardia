@@ -28,6 +28,6 @@ export function withTabSwitcherModes<S extends object>(saved: S | undefined, met
   return { settings: fields as S, settingsMeta: stepped ? { ...settingsMeta, chosen: [...new Set([...meta.chosen, ...Object.keys(STEPPED)])] } : settingsMeta };
 }
 
-export function withSyncedTabSwitcherModes(patch: Partial<Settings>): Partial<Settings> {
-  return upgradedFields(patch, false).fields as Partial<Settings>;
+export function withSyncedTabSwitcherModes(patch: Partial<Settings>, modesSynced: boolean): Partial<Settings> {
+  return modesSynced ? patch : (upgradedFields(patch, false).fields as Partial<Settings>);
 }

@@ -53,9 +53,11 @@ test("a fresh install only marks the upgrade done", () => {
 });
 
 test("a synced patch from an older Ardia that steps with ⌃Tab turns into stepping here, and one from a newer Ardia is left alone", () => {
-  assert.deepEqual(withSyncedTabSwitcherModes({ shortcuts: { ...STEP } }), { shortcuts: {}, tabSwitcherOrder: "inOrder", tabSwitcherView: "none" });
+  assert.deepEqual(withSyncedTabSwitcherModes({ shortcuts: { ...STEP } }, false), { shortcuts: {}, tabSwitcherOrder: "inOrder", tabSwitcherView: "none" });
   const newer = { shortcuts: { ...STEP }, tabSwitcherOrder: "recent" };
-  assert.equal(withSyncedTabSwitcherModes(newer), newer);
+  assert.equal(withSyncedTabSwitcherModes(newer, false), newer);
+  const alongside = { shortcuts: { ...STEP } };
+  assert.equal(withSyncedTabSwitcherModes(alongside, true), alongside, "a mode record already in sync means the shortcuts are someone's own");
 });
 
 test("a legacy shortcuts record that sync applies after launch keeps ⌃Tab and the settings in agreement", () => {
@@ -66,4 +68,23 @@ test("a legacy shortcuts record that sync applies after launch keeps ⌃Tab and 
   assert.equal(S().settings.tabSwitcherView, "none");
   assert.deepEqual(S().settings.shortcuts, {});
   assert.equal(ctrlTabKeys(), "switcher");
+});
+
+test("the same records give the same result whichever order sync delivers them in", () => {
+  const modes = [["set:tabSwitcherOrder", { v: "recent" }], ["set:tabSwitcherView", { v: "compactList" }]];
+  const keys = [["set:shortcuts", { v: { ...STEP } }]];
+  const outcome = (batches) => {
+    S().hydrate({});
+    const visible = new Map();
+    for (const batch of batches) {
+      for (const [key, record] of batch) visible.set(key, record);
+      settingsAdapter.apply(visible, batch.map(([key]) => key));
+    }
+    const { tabSwitcherOrder, tabSwitcherView, shortcuts } = S().settings;
+    return { tabSwitcherOrder, tabSwitcherView, shortcuts };
+  };
+  const together = outcome([[...modes, ...keys]]);
+  assert.deepEqual(together, { tabSwitcherOrder: "recent", tabSwitcherView: "compactList", shortcuts: { ...STEP } });
+  assert.deepEqual(outcome([modes, keys]), together, "modes first, shortcuts second");
+  assert.deepEqual(outcome([keys, modes]), together, "shortcuts first, modes second");
 });

@@ -120,3 +120,14 @@ test("with the switcher on keys of its own, both ⌃Tab directions keep stepping
   assert.deepEqual(linux1, { shortcuts: linuxStepped, stepped: false });
   assert.ok(stepsLinux(linux(linux1.shortcuts)), "Linux's explicit step overrides stay put");
 });
+
+test("each ⌃Tab direction that stepped keeps working on its own when the other one belongs to something else", () => {
+  const before = { "tabSwitcher:forward": ["\t", "option"], "tabSwitcher:backward": ["\t", "option", "shift"], newTab: ["\t", "control", "shift"] };
+  const { shortcuts, stepped } = upgradeMac(before);
+  assert.equal(stepped, false);
+  const resolved = mac(shortcuts);
+  assert.deepEqual(resolved.holdersOf(parseShortcut("⌃⇥")), ["nextTab"]);
+  assert.deepEqual(resolved.holdersOf(parseShortcut("⌃⇧⇥")), ["newTab"]);
+  assert.deepEqual(hints(resolved, "tabSwitcher:forward"), ["⌥⇥"]);
+  assert.equal("previousTab" in shortcuts, false);
+});

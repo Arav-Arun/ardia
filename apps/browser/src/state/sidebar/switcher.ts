@@ -40,8 +40,12 @@ export function switcherStep(windowId: string, backward: boolean) {
     return s.activate(next);
   }
   const ids = order === "recent" ? sessionTabIds(s, windowId, SESSION_START) : inOrderTabIds(s, windowId);
-  if (ids.length < 2) return;
   const from = activeTabId(s, windowId);
+  if (ids.length === 1 && ids[0] !== from) {
+    noteTabSwitcherMode(order, view, consent);
+    return s.activate(ids[0]!);
+  }
+  if (ids.length < 2) return;
   noteTabSwitcherOpened(viewTabIds(s, windowId).filter((id) => isAsleep(s.tabs[id])).length, ids.slice(0, 2).filter((id) => s.tabs[id]!.unseen).length);
   noteTabSwitcherMode(order, view, consent);
   if (from && view === "thumbnails") void rememberPicture(from);

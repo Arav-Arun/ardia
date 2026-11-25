@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { useBrowser } from "../browser/store.ts";
 import { DEFAULT_SETTINGS } from "../settings/settings.ts";
-import { activeSteps, cancelOnboarding, chooseSource, confirmAnswer, finishOnboarding, goToStep, questionsFor, QUESTIONS, redoOnboarding, resolveDraft, skipStep, startOnboarding, useOnboarding, draftPreset } from "./onboarding.ts";
+import { activeSteps, cancelOnboarding, chooseSource, confirmAnswer, finishOnboarding, goToStep, previewLive, questionsFor, QUESTIONS, redoOnboarding, resolveDraft, setOnboardingDraft, skipStep, startOnboarding, useOnboarding, draftPreset } from "./onboarding.ts";
 import { ctrlTabAnswerOf, ctrlTabAnswerPatch } from "../../components/settings/ctrlTabChoices.ts";
 import { usePlugins } from "../plugins/store.ts";
 
@@ -28,8 +28,8 @@ function atCtrlTab(id) {
 
 function pick(choice) {
   const patch = ctrlTabAnswerPatch(choice, shown().tabSwitcherView);
-  useOnboarding.setState((o) => ({ draft: { ...o.draft, ...patch } }));
-  S().updateSettings(patch, { fromSync: true });
+  setOnboardingDraft(patch);
+  previewLive(patch);
 }
 
 test("the tabs step asks what ⌃Tab does, whichever browser you come from, and answers with the switcher's order and look", () => {
@@ -99,6 +99,8 @@ test("Skip and cancelling a redo put the switcher back", () => {
   startOnboarding(id, "source");
   chooseSource("chrome");
   atCtrlTab("skip");
+  pick("step");
+  assert.deepEqual(live(), { tabSwitcherOrder: "inOrder", tabSwitcherView: "none" }, "the pick is live while onboarding is open");
   skipStep();
   assert.deepEqual(live(), { tabSwitcherOrder: "recent", tabSwitcherView: "thumbnails" });
   settle();
@@ -108,6 +110,8 @@ test("Skip and cancelling a redo put the switcher back", () => {
   chooseSource(O().redoSource);
   atCtrlTab("redo");
   assert.deepEqual(shown(), { tabSwitcherOrder: "inOrder", tabSwitcherView: "compactList" }, "a redo starts from your current choice");
+  pick("switcher");
+  assert.deepEqual(live(), { tabSwitcherOrder: "recent", tabSwitcherView: "compactList" }, "the redo's pick is live");
   cancelOnboarding();
   assert.deepEqual(live(), { tabSwitcherOrder: "inOrder", tabSwitcherView: "compactList" });
   settle();
