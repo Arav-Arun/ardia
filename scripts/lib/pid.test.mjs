@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { groupAlive, isAlive, signalProbe } from "./pid.mjs";
+import { groupAlive, isAlive, signalable, signalableFrom, signalState, trySignal } from "./pid.mjs";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const failing = (code) => () => {
@@ -12,10 +13,10 @@ const failing = (code) => () => {
 };
 
 test("EPERM from signal 0 means the process exists, ESRCH means it's gone", () => {
-  assert.equal(signalProbe(() => true)(42), true);
-  assert.equal(signalProbe(failing("EPERM"))(42), true);
-  assert.equal(signalProbe(failing("ESRCH"))(42), false);
-  assert.equal(signalProbe(failing("EINVAL"))(42), false);
+  assert.equal(signalState(42, () => true), "running");
+  assert.equal(signalState(42, failing("EPERM")), "unsignalable");
+  assert.equal(signalState(42, failing("ESRCH")), "gone");
+  assert.equal(signalState(42, failing("EINVAL")), "gone");
 });
 
 test("isAlive answers for real pids and refuses ones that would signal a group", () => {
@@ -23,6 +24,40 @@ test("isAlive answers for real pids and refuses ones that would signal a group",
   assert.equal(isAlive(2 ** 30), false);
   for (const pid of [0, -1, -process.pid, NaN, 1.5, String(process.pid), null, undefined]) assert.equal(isAlive(pid), false, String(pid));
   for (const pgid of [0, 1, -5, NaN, null]) assert.equal(groupAlive(pgid), false, String(pgid));
+});
+
+const otherUsersPid = process.platform !== "win32" && process.getuid?.() !== 0 ? 1 : null;
+
+test("signalable and signalableFrom trust only a pid this process may signal, so a recycled pid isn't taken for ours", { skip: otherUsersPid === null && "needs a non-root user" }, (t) => {
+  assert.equal(signalable(process.pid), true);
+  assert.equal(signalable(otherUsersPid), false);
+  assert.equal(isAlive(otherUsersPid), true);
+  assert.equal(signalable(2 ** 30), false);
+  for (const pid of [0, -1, NaN, null]) assert.equal(signalable(pid), false, String(pid));
+  const dir = mkdtempSync(join(tmpdir(), "pid-test-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = (name, text) => (writeFileSync(join(dir, name), text), join(dir, name));
+  assert.equal(signalableFrom(file("own", `${process.pid}\n`)), true);
+  assert.equal(signalableFrom(file("other", `${otherUsersPid}\n`)), false);
+  assert.equal(signalableFrom(file("junk", "not a pid")), false);
+  assert.equal(signalableFrom(file("zero", "0")), false);
+  assert.equal(signalableFrom(join(dir, "missing")), false);
+});
+
+test("trySignal reports a refused signal instead of throwing", { skip: otherUsersPid === null && "needs a non-root user" }, () => {
+  const said = [];
+  assert.equal(trySignal(otherUsersPid, "SIGTERM", (text) => said.push(text)), false);
+  assert.match(said[0], /couldn't send SIGTERM to pid 1: EPERM/);
+  assert.equal(trySignal(process.pid, 0, (text) => said.push(text)), true);
+  assert.equal(said.length, 1);
+});
+
+test("await refuses a --pid that isn't a positive process id", () => {
+  for (const pid of ["Operation not permitted", "0", "-1", "12x", ""]) {
+    const result = spawnSync(join(repo, "scripts/agent/await"), ["--timeout", "2", "--every", "0.2", "--pid", pid, "--", "false"], { encoding: "utf8", timeout: 10_000 });
+    assert.equal(result.status, 64, `${pid}: ${result.stderr}`);
+    assert.match(result.stderr, /--pid needs a positive process id/);
+  }
 });
 
 const PROFILE = [

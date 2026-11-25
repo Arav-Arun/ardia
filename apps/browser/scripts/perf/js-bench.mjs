@@ -59,6 +59,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { prepareApp } from "../../../../scripts/lib/app-copy.mjs";
 import { appEnv, binaryOf, isAlive, sleep } from "../../../../scripts/lib/instance.mjs";
+import { trySignal } from "../../../../scripts/lib/pid.mjs";
 import { writeSeed } from "./seed.mjs";
 import { medianOrNull as median } from "./median.mjs";
 
@@ -277,10 +278,10 @@ function quitOnSignals(...closers) {
 
 export async function quit(pid) {
   launched.delete(pid);
-  if (!isAlive(pid)) return;
-  process.kill(pid, "SIGTERM");
+  const warn = (text) => process.stderr.write(`js-bench: ${text}\n`);
+  if (!isAlive(pid) || !trySignal(pid, "SIGTERM", warn)) return;
   for (let i = 0; i < 150 && isAlive(pid); i++) await sleep(100);
-  if (isAlive(pid)) process.kill(pid, "SIGKILL");
+  if (isAlive(pid)) trySignal(pid, "SIGKILL", warn);
 }
 
 let evalSeq = 0;

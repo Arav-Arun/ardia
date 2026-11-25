@@ -68,7 +68,7 @@ staged="$target/lib/ardia.new-$$"
 retired="$target/lib/ardia.old-$$"
 launcher=""
 
-pid_alive() { local why; why=$(LC_ALL=C; kill -0 "$1" 2>&1) || [[ "$why" == *"Operation not permitted"* ]]; }
+pid_alive() { local why; [[ "$1" =~ ^[1-9][0-9]*$ ]] || return 1; why=$(LC_ALL=C; kill -0 "$1" 2>&1) || [[ "$why" == *"Operation not permitted"* ]]; }
 
 finish() {
   if [[ -e "$retired" && ! -e "$installed" && ! -L "$installed" ]]; then

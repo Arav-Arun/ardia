@@ -109,7 +109,7 @@ kernel=$root/ac-$lock.lockf
 legacy=$root/ac-$lock.lock
 holder=$root/ac-$lock.holder
 now() { date +%s; }
-pid_alive() { local why; why=$(LC_ALL=C; kill -0 "$1" 2>&1) || [[ "$why" == *"Operation not permitted"* ]]; }
+pid_alive() { local why; [[ "$1" =~ ^[1-9][0-9]*$ ]] || return 1; why=$(LC_ALL=C; kill -0 "$1" 2>&1) || [[ "$why" == *"Operation not permitted"* ]]; }
 
 field() { awk -v n="$1" '{print $n; exit}' "$holder" 2>/dev/null; }
 taken_by() { [[ "$(field 1)" == take && "$(field 3)" == "$1" ]]; }
@@ -125,10 +125,23 @@ describe() {
   fi
 }
 
+is_ancestor() {
+  local want=$1 at=$$ parent hops=0
+  [[ "$want" =~ ^[1-9][0-9]*$ ]] || return 1
+  while [[ "$at" =~ ^[1-9][0-9]*$ && "$at" != 1 && $hops -lt 64 ]]; do
+    parent=$(ps -o ppid= -p "$at" 2>/dev/null) || return 1
+    parent=${parent//[[:space:]]/}
+    [[ "$parent" == "$want" ]] && return 0
+    at=$parent
+    hops=$((hops + 1))
+  done
+  return 1
+}
+
 held_by_caller() {
   local pid path want=${1:-$kernel}
   while read -r pid path; do
-    [[ -n "$pid" && "$path" == "$want" ]] && pid_alive "$pid" && { echo "$pid"; return 0; }
+    [[ -n "$pid" && "$path" == "$want" ]] && is_ancestor "$pid" && { echo "$pid"; return 0; }
   done <<<"${AC_LOCKED_HELD:-}"
   return 1
 }
