@@ -5,15 +5,21 @@ import XCTest
 final class PackedFollowUpTests: XCTestCase {
   private final class Gate {
     var continuations: [CheckedContinuation<Void, Never>] = []
-    func wait() async { await withCheckedContinuation { continuations.append($0) } }
+    var opened = false
+    func wait() async {
+      if opened { return }
+      await withCheckedContinuation { continuations.append($0) }
+    }
     func open() {
+      opened = true
       continuations.forEach { $0.resume() }
       continuations = []
     }
   }
 
-  private func settle() async {
-    for _ in 0..<5 { await Task.yield() }
+  private func untilWaiting(_ gate: Gate, file: StaticString = #filePath, line: UInt = #line) async {
+    for _ in 0..<10_000 where gate.continuations.isEmpty { await Task.yield() }
+    XCTAssertFalse(gate.continuations.isEmpty, "the retry never reached the gate", file: file, line: line)
   }
 
   func testAnswersThatChangedNeedNoFollowUp() async {
@@ -66,7 +72,7 @@ final class PackedFollowUpTests: XCTestCase {
         if Task.isCancelled { cancelled.append(key) }
         return Task.isCancelled ? nil : ["\(key) again"]
       })
-    await settle()
+    await untilWaiting(gate)
     XCTAssertEqual(started, ["a"])
     work.cancel(owner: "tab")
     retries.cancel(owner: "tab")
@@ -94,7 +100,7 @@ final class PackedFollowUpTests: XCTestCase {
         await gate.wait()
         return parts
       })
-    await settle()
+    await untilWaiting(gate)
     let second = await PackedFollowUp.settle(
       ["x"], packed: [nil], owner: "b", work: work, retries: retries,
       unchanged: { key, parts in parts == [key] },
