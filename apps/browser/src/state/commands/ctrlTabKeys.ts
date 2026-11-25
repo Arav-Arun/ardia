@@ -76,13 +76,25 @@ function without(overrides: ShortcutOverrides, pair: Pair, combos: CtrlTabCombos
   return dropped.length ? Object.fromEntries(Object.entries(overrides).filter(([id]) => !dropped.includes(id))) : overrides;
 }
 
-export function ctrlTabUpgrade(overrides: ShortcutOverrides, sources: readonly ShortcutSource[], { usedToStep, choseShortcuts }: { usedToStep: boolean; choseShortcuts: boolean }): CtrlTabUpgrade {
-  const now = resolveShortcuts(sources, {});
-  const combos = ctrlTabCombos(now);
-  if (!combos) return { shortcuts: overrides, stepped: false };
+const boundToStep = (overrides: ShortcutOverrides, combos: CtrlTabCombos) => isOverride(overrides[STEP.forward], combos.forward) && isOverride(overrides[STEP.backward], combos.backward);
+
+export function ctrlTabUpgrade(overrides: ShortcutOverrides, sources: readonly ShortcutSource[], { usedToStep }: { usedToStep: boolean }): CtrlTabUpgrade {
+  const unchanged = { shortcuts: overrides, stepped: false };
+  const combos = ctrlTabCombos(resolveShortcuts(sources, {}));
+  if (!combos) return unchanged;
   const before = resolveShortcuts(usedToStep ? sourcesBeforeSwitcherDefault(sources, combos) : sources, overrides);
-  if (pairHolds(before, combos, SWITCHER)) return { shortcuts: without(overrides, SWITCHER, combos), stepped: false };
-  if (!pairHolds(before, combos, STEP)) return { shortcuts: overrides, stepped: false };
+  const keeps = (candidate: ShortcutOverrides, pair: Pair) => pairHolds(resolveShortcuts(sources, candidate), combos, pair);
+  if (pairHolds(before, combos, SWITCHER)) {
+    const shortcuts = without(overrides, SWITCHER, combos);
+    return keeps(shortcuts, SWITCHER) ? { shortcuts, stepped: false } : unchanged;
+  }
+  if (!pairHolds(before, combos, STEP)) return unchanged;
   const switcherElsewhere = !!overrides[SWITCHER.forward]?.[0] || !!overrides[SWITCHER.backward]?.[0];
-  return { shortcuts: without(overrides, STEP, combos), stepped: !switcherElsewhere && (choseShortcuts || !usedToStep) };
+  if (switcherElsewhere) {
+    const shortcuts = boundToStep(overrides, combos) ? overrides : { ...overrides, [STEP.forward]: stored(combos.forward), [STEP.backward]: stored(combos.backward) };
+    return keeps(shortcuts, STEP) ? { shortcuts, stepped: false } : unchanged;
+  }
+  if (!boundToStep(overrides, combos)) return unchanged;
+  const shortcuts = without(overrides, STEP, combos);
+  return keeps(shortcuts, SWITCHER) ? { shortcuts, stepped: true } : unchanged;
 }

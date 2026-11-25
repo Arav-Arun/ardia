@@ -86,14 +86,17 @@ test("holding shows the picked switcher, in order lists the tabs as the sidebar 
   assert.equal(shown(w), "b");
 });
 
-test("⌃W closes the selected row while a switcher shows, and does nothing when none is shown", async () => {
+test("⌃W closes the selected row only once the switcher shows, and never when none is shown", async () => {
   const [w, a, b, c] = setup("recent", "thumbnails", "a", "b", "c");
   S().activate(a);
   S().activate(b);
   S().activate(c);
   switcherStep(w, false);
   await closeSwitcherRow();
-  assert.ok(!S().tabs[b], "the highlighted tab closed");
+  assert.ok(S().tabs[b], "nothing closes in the 140 ms before the switcher shows");
+  pastShow();
+  await closeSwitcherRow();
+  assert.ok(!S().tabs[b], "the highlighted tab closes once it shows");
   assert.ok(sidebarUi().switcher, "the switcher stays up");
   cancelSwitcher();
 
@@ -101,8 +104,22 @@ test("⌃W closes the selected row while a switcher shows, and does nothing when
   S().activate(x);
   S().activate(y);
   switcherStep(w2, false);
+  pastShow();
   await closeSwitcherRow();
   assert.ok(S().tabs[x], "an unseen row is never closed");
+});
+
+test("a collapsed group is reached through its newest open tab when its newest tab is asleep", () => {
+  const [w, a, b, c] = setup("inOrder", "none", "a", "b", "c");
+  const group = S().createGroup([b, c]);
+  S().activate(b);
+  S().activate(c);
+  S().activate(a);
+  S().updateGroup(group, { collapsed: true });
+  useLifecycle.setState({ discarded: { [c]: true } });
+  assert.deepEqual(inOrderTabIds(S(), w), [a, b]);
+  switcherStep(w, false);
+  assert.equal(shown(w), "b");
 });
 
 test("both orders skip closed pinned tabs and tabs Memory Saver put to sleep", () => {

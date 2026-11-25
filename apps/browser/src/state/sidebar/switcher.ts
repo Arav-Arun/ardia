@@ -156,7 +156,7 @@ function pointedRow(s: NonNullable<ReturnType<typeof sidebarUi>["switcher"]>) {
 
 export async function closeSwitcherRow() {
   const s = sidebarUi().switcher;
-  if (!s || s.view === "none") return;
+  if (!s || !s.visible) return;
   const id = s.ids[pointedRow(s) ?? s.index];
   if (!id) return;
   const consent = consentToken();

@@ -61,11 +61,13 @@ test("Show in Shortcuts searches for the key that left the switcher, or the swit
   assert.equal(ctrlTabCustomQuery({ settings: { shortcuts: { "tabSwitcher:forward": [""] } }, profileOrder: [] }), "Tab Switcher (forward)");
 });
 
-const upgradeMac = (overrides, choseShortcuts = false) => ctrlTabUpgrade(overrides, macSources, { usedToStep: true, choseShortcuts });
-const upgradeLinux = (overrides, choseShortcuts = false) => ctrlTabUpgrade(overrides, linuxSources, { usedToStep: false, choseShortcuts });
+const upgradeMac = (overrides) => ctrlTabUpgrade(overrides, macSources, { usedToStep: true });
+const upgradeLinux = (overrides) => ctrlTabUpgrade(overrides, linuxSources, { usedToStep: false });
+const steps = (resolved) => ["nextTab", "previousTab"].every((id, i) => resolved.holdersOf(parseShortcut(i ? "⌃⇧⇥" : "⌃⇥")).join() === id);
+const stepsLinux = (resolved) => ["nextTab", "previousTab"].every((id, i) => resolved.holdersOf(parseShortcut(i ? "⇧⌘⇥" : "⌘⇥")).join() === id);
 
 test("upgrading a Mac that picked the recent tabs switcher drops the overrides it no longer needs", () => {
-  const { shortcuts, stepped } = upgradeMac({ ...SWITCHER, closeTab: ["w", "command"] }, true);
+  const { shortcuts, stepped } = upgradeMac({ ...SWITCHER, closeTab: ["w", "command"] });
   assert.deepEqual(shortcuts, { closeTab: ["w", "command"] });
   assert.equal(stepped, false);
   assert.equal(ctrlTabKeysOf(mac(shortcuts)), "switcher");
@@ -73,20 +75,24 @@ test("upgrading a Mac that picked the recent tabs switcher drops the overrides i
 
 test("upgrading a Mac that stepped only because that was the default moves to the new default", () => {
   const before = {};
-  const { shortcuts, stepped } = upgradeMac(before);
-  assert.equal(shortcuts, before);
-  assert.equal(stepped, false);
+  assert.deepEqual(upgradeMac(before), { shortcuts: before, stepped: false });
 });
 
-test("upgrading a Mac where someone chose their shortcuts keeps stepping through tabs", () => {
+test("an unrelated shortcut edit is never read as choosing to step through tabs", () => {
   const before = { closeTab: ["w", "command", "shift"] };
-  const { shortcuts, stepped } = upgradeMac(before, true);
-  assert.equal(shortcuts, before);
+  assert.deepEqual(upgradeMac(before), { shortcuts: before, stepped: false });
+  assert.deepEqual(upgradeLinux(before), { shortcuts: before, stepped: false });
+});
+
+test("Next Tab and Previous Tab bound to ⌃Tab by hand on a Mac become stepping, without the overrides", () => {
+  const { shortcuts, stepped } = upgradeMac({ nextTab: ["\t", "control"], previousTab: ["\t", "control", "shift"], closeTab: ["w", "command"] });
+  assert.deepEqual(shortcuts, { closeTab: ["w", "command"] });
   assert.equal(stepped, true);
+  assert.equal(ctrlTabKeysOf(mac(shortcuts)), "switcher");
 });
 
 test("upgrading Linux's step card drops its single-key Next Tab overrides and keeps stepping", () => {
-  const { shortcuts, stepped } = upgradeLinux({ nextTab: ["\t", "command"], previousTab: ["\t", "shift", "command"], closeTab: ["w", "command"] }, true);
+  const { shortcuts, stepped } = upgradeLinux({ nextTab: ["\t", "command"], previousTab: ["\t", "shift", "command"], closeTab: ["w", "command"] });
   assert.deepEqual(shortcuts, { closeTab: ["w", "command"] });
   assert.equal(stepped, true);
   assert.equal(ctrlTabKeysOf(linux(shortcuts)), "switcher");
@@ -98,9 +104,19 @@ test("upgrading Linux's default leaves everything alone", () => {
   assert.deepEqual(upgradeLinux(before), { shortcuts: before, stepped: false });
 });
 
-test("custom keys survive an upgrade, and a switcher bound elsewhere is never turned into stepping", () => {
+test("custom keys survive an upgrade", () => {
   const custom = { newTab: ["\t", "control"] };
-  assert.deepEqual(upgradeMac(custom, true), { shortcuts: custom, stepped: false });
+  assert.deepEqual(upgradeMac(custom), { shortcuts: custom, stepped: false });
+});
+
+test("with the switcher on keys of its own, both ⌃Tab directions keep stepping and the switcher keeps its keys", () => {
   const elsewhere = { "tabSwitcher:forward": ["\t", "option"], "tabSwitcher:backward": ["\t", "option", "shift"] };
-  assert.deepEqual(upgradeMac(elsewhere, true), { shortcuts: elsewhere, stepped: false });
+  const mac1 = upgradeMac(elsewhere);
+  assert.equal(mac1.stepped, false);
+  assert.ok(steps(mac(mac1.shortcuts)), "⌃Tab and ⌃⇧Tab still step on a Mac that stepped by default");
+  assert.deepEqual(hints(mac(mac1.shortcuts), "tabSwitcher:forward"), ["⌥⇥"]);
+  const linuxStepped = { ...elsewhere, nextTab: ["\t", "command"], previousTab: ["\t", "shift", "command"] };
+  const linux1 = upgradeLinux(linuxStepped);
+  assert.deepEqual(linux1, { shortcuts: linuxStepped, stepped: false });
+  assert.ok(stepsLinux(linux(linux1.shortcuts)), "Linux's explicit step overrides stay put");
 });

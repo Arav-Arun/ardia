@@ -12,7 +12,8 @@ export function isSwitchableTab(s: BrowserState, id: string): boolean {
 
 export function inOrderTabIds(s: BrowserState, windowId: string): string[] {
   const active = activeTabId(s, windowId);
-  return numberedTabs(s, windowId).filter((id) => id === active || isSwitchableTab(s, id));
+  const eligible = (id: string) => id === active || isSwitchableTab(s, id);
+  return numberedTabs(s, windowId, eligible).filter(eligible);
 }
 
 export function stepFrom(ids: readonly string[], from: string | undefined, delta: 1 | -1): number {

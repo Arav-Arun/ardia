@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS, SETTING_KEYS, SETTING_SPECS, validSettingValue, type 
 import { fromLegacy } from "../../lib/legacy";
 import { chosenHere, retiredDefaultsWaiting } from "../settings/retiredDefaults";
 import { settleRetiredDefaults } from "../settings/settleRetiredDefaults";
+import { withSyncedTabSwitcherModes } from "../settings/tabSwitcherUpgrade";
 import { CLEAN_UP_KEY, hoursFromMinutes, LEGACY_CLEAN_UP_KEY, minutesFromHours } from "../settings/cleanUpAfter";
 
 const store = () => useBrowser.getState();
@@ -50,7 +51,7 @@ function applySettingRecords(visible: ReadonlyMap<string, unknown>, changed: Ite
     const value = fromRecord(name, record.v);
     if (validSettingValue(name as SettingKey, value)) patch[name] = value;
   }
-  if (Object.keys(patch).length) store().updateSettings(patch as Partial<Settings>, { fromSync: true });
+  if (Object.keys(patch).length) store().updateSettings(withSyncedTabSwitcherModes(patch as Partial<Settings>), { fromSync: true });
 }
 
 export const settingSyncedIn = (records: Record<string, SyncRecord>, name: SettingKey) => records[recordKey(name)] !== undefined;
