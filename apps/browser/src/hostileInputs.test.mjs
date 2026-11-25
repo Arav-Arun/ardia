@@ -375,6 +375,8 @@ test("C5: a synced pinned group home or a recent-device tab with a non-web addre
     if (home !== undefined) assert.match(home, /^(https?:\/\/[^\s/]|ardia:\/\/(history|bookmarks|downloads|settings)\b)/i, `${id}: a synced home is a web address or a listed Ardia page`);
   }
   assert.equal(syncedHome(`https://long.example/${"a".repeat(8_192)}`), undefined, "an overlong home");
+  assert.equal(syncedHome(`https://long.example/${"é".repeat(4_100)}`), undefined, "a home over 8 KB once encoded");
+  assert.equal(syncedHome(`https://long.example/${"é".repeat(4_000)}`), `https://long.example/${"é".repeat(4_000)}`, "a long non-ASCII home under 8 KB");
   for (const home of ["https://start.example/", "HTTP://LOCALHOST:3000/a?b#c", "ardia://history", "ardia://bookmarks?q=x", "ardia://downloads", "ardia://settings"]) assert.equal(syncedHome(home), home, home);
   for (const home of ["ardia://newtab", "ardia://game", "ardia://plugins/x", "about:blank", ""]) assert.equal(syncedHome(home), undefined, home);
   assert.deepEqual(deviceTabs({ n: "d", tabs: [] }), { n: "d", tabs: [] }, "a device with no open tabs is still a device");

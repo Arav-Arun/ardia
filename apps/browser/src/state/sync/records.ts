@@ -37,8 +37,9 @@ export const shareRecord = decoder<ShareRecord>((v) => isString(v.o));
 export const deviceRecord = decoder<DeviceRecord>((v) => isString(v.n));
 
 const MAX_SYNCED_URL = 8_192;
+const utf8 = new TextEncoder();
 
-export const syncedWebUrl = (url: unknown): url is string => typeof url === "string" && url.length <= MAX_SYNCED_URL && webUrl(url) !== null;
+export const syncedWebUrl = (url: unknown): url is string => typeof url === "string" && url.length <= MAX_SYNCED_URL && utf8.encode(url).length <= MAX_SYNCED_URL && webUrl(url) !== null;
 
 export function deviceTabs(v: unknown): DeviceTabs | null {
   if (!isFields(v) || !isString(v.n) || !Array.isArray(v.tabs)) return null;
