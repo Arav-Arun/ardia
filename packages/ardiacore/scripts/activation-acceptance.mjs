@@ -50,6 +50,7 @@ const conference = `
   window.join = () => navigator.mediaDevices.getUserMedia({ video: true }).then((s) => {
     window.__stream = s; const v = document.querySelector("video"); v.srcObject = s; v.play(); return "ok";
   }, (e) => e.name);
+  window.leave = () => { window.__stream?.getTracks().forEach((t) => t.stop()); window.__stream = null; document.querySelector("video").srcObject = null; return true; };
   window.state = () => ({ pip: __pip, open: !!documentPictureInPicture.window, closed: __pipClosed, error: __pipError,
     camera: window.__stream?.getVideoTracks()[0]?.readyState ?? null, visibility: document.visibilityState, asked: __asked });`;
 const asks = `
@@ -1041,7 +1042,27 @@ try {
       const back = await pipState(call.t);
       const returned = { asked: back.asked.slice(before.asked.length), opened: back.pip - before.pip, open: back.open, visibility: back.visibility };
       if (returned.asked.length || returned.opened || returned.open) throw new Error(`coming back 500 ms after covering still asked the page or popped it out: ${JSON.stringify(returned)}`);
-      return { rounds, returned };
+      await js(call.t, "leave()");
+      await sleep(2500);
+      const idle = await pipState(call.t);
+      await js(call.t, "window.__rejoined = join(); true");
+      const coveredAt = Date.now();
+      await win("fakeOcclusion:occluded");
+      const rejoined = await js(call.t, "window.__rejoined");
+      const liveAfterMs = Date.now() - coveredAt;
+      if (rejoined !== "ok") throw new Error(`rejoining while covered: ${rejoined}`);
+      const late = await until("the call that started while covered popped out", async () => {
+        const p = await pipState(call.t);
+        return p.open ? p : null;
+      }, 6000).catch(async () => {
+        const p = await pipState(call.t);
+        throw new Error(`a call that started while covered didn't pop out; the page was asked while: ${JSON.stringify(p.asked.slice(idle.asked.length))}, now ${p.visibility}`);
+      });
+      const startedCovered = late.asked.slice(idle.asked.length);
+      if (startedCovered.includes("visible")) throw new Error(`a call that started while covered was asked while still visible: ${JSON.stringify(startedCovered)}`);
+      await win("fakeOcclusion:visible");
+      await until("closed with the window back", async () => !(await pipState(call.t)).open, 8000);
+      return { rounds, returned, startedCovered, liveAfterMs };
     } finally {
       await win("fakeOcclusion:off").catch(() => null);
       await closeTab(call.tab);
