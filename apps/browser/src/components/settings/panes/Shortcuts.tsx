@@ -20,7 +20,8 @@ import { jumpToSetting, keySearchConsent, noteShortcutsKeySearch, setShortcutsQu
 import { bindsCombo, parseCombo } from "../../../state/commands/comboQuery";
 import { commandBarKeywords } from "../../../state/omnibox/barActions";
 import { noteShortcutsKeywordFind } from "../../../state/telemetry/settingsPickerCounts";
-import { applyRecordedShortcut, clearShortcut, NO_SHORTCUT, ShortcutField, useResolvedShortcuts } from "../ShortcutField";
+import { ShortcutConflict, ShortcutField, useResolvedShortcuts } from "../ShortcutField";
+import { applyRecordedShortcut, clearShortcut, NO_SHORTCUT } from "../../../state/settings/recordedShortcut";
 
 type Filter = "all" | "customized" | "conflicts";
 
@@ -139,9 +140,7 @@ function KeyboardSection() {
         title={item.title}
         description={
           others.length ? (
-            <Text size="caption" tone="warning" style={CONFLICT}>
-              {`${others.length === 1 ? "This shortcut conflicts with another shortcut:" : "This shortcut conflicts with other shortcuts:"} ${others.map((o) => o.title).join(", ")}`}
-            </Text>
+            <ShortcutConflict titles={others.map((o) => o.title)} />
           ) : item.path.length > 1 ? (
             item.path.slice(1).join(" › ")
           ) : undefined
@@ -251,4 +250,3 @@ const TOOLBAR = { flexDirection: "row", alignItems: "center", gap: space.m } as 
 const FILL = { flex: 1 } as const;
 const NO_MATCH = { marginTop: space.huge } as const;
 const EXTENSIONS = { marginTop: space.xxxl } as const;
-const CONFLICT = { marginTop: space.xxs } as const;

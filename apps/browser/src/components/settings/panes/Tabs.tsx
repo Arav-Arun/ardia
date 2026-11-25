@@ -17,7 +17,7 @@ import { useSettingsColors } from "../useSettingsColors";
 import { keyText } from "../../../state/commands/keyText";
 import { useShortcutHint } from "../../../state/commands/commandShortcuts";
 import { noteSettingsPick } from "../../../state/telemetry/settingsPickerCounts";
-import { CommandKeyField } from "../ShortcutField";
+import { CommandKeyField, ShortcutConflict, useCommandConflicts } from "../ShortcutField";
 import { PLATFORM_TERMS } from "../../../lib/platformTerms";
 import type { SettingsPlace } from "../../../state/settings/settingsWindows";
 
@@ -97,6 +97,7 @@ function LayoutSection() {
   const top = useTabLayout() === "top";
   const sidebarSide = useSettings((s) => s.sidebarSide);
   const autoHideKeys = useShortcutHint("toggleSidebar");
+  const autoHideConflicts = useCommandConflicts("toggleSidebar");
   return (
     <>
       <SectionHeader title="Layout" />
@@ -108,7 +109,7 @@ function LayoutSection() {
           </Box>
         </Anchor>
         <Group>
-          <SettingToggle anchor="tabs.autoHideTabs" description={autoHideDescription(top, autoHideKeys)}>
+          <SettingToggle anchor="tabs.autoHideTabs" description={autoHideConflicts.length ? <ShortcutConflict titles={autoHideConflicts} /> : autoHideDescription(top, autoHideKeys)}>
             <CommandKeyField command="toggleSidebar" onChange={(change) => change !== "mouse" && noteSettingsPick("autoHideTabsKeys", change)} />
           </SettingToggle>
           <Row anchor="tabs.sidebarSide">

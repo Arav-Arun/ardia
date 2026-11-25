@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 const PATCH = new URL("../../../../patches/react-native-macos@0.81.9.patch", import.meta.url);
 const patch = readFileSync(PATCH, "utf8");
@@ -48,7 +49,7 @@ test("a single-line field's own change handler restyles its text without emptyin
   assert.match(restyle(), /hasMarkedText/, "an input method's marked text must still take the old path");
 });
 
-const HARNESS = `
+const FIELD_CLASSES = `
 @interface HarnessCell : NSTextFieldCell
 @property (nonatomic, copy) NSArray<NSPasteboardType> *pasteTypes;
 @end
@@ -80,7 +81,14 @@ FIELD_EDITOR_FOR_VIEW
 TEXT_DID_CHANGE
 RESTYLE
 @end
+`;
 
+const fieldSource = () =>
+  "#import <AppKit/AppKit.h>\n\n" +
+  plainPasteEditor() +
+  FIELD_CLASSES.replace("FIELD_EDITOR_FOR_VIEW", fieldEditorForView()).replace("TEXT_DID_CHANGE", textDidChange()).replace("RESTYLE", restyle());
+
+const OBJC_MAIN = `
 static NSMutableDictionary *out;
 static id flag(BOOL value) { return value ? @YES : @NO; }
 static NSWindow *window;
@@ -139,11 +147,7 @@ int main(void)
 test("typing in a single-line field can be undone and redone in AppKit's shared field editor and in the command bar's own", { skip: !clang && "needs clang" }, () => {
   const dir = mkdtempSync(join(tmpdir(), "text-field-undo-"));
   try {
-    const source =
-      "#import <AppKit/AppKit.h>\n\n" +
-      plainPasteEditor() +
-      HARNESS.replace("FIELD_EDITOR_FOR_VIEW", fieldEditorForView()).replace("TEXT_DID_CHANGE", textDidChange()).replace("RESTYLE", restyle());
-    writeFileSync(join(dir, "main.m"), source);
+    writeFileSync(join(dir, "main.m"), fieldSource() + OBJC_MAIN);
     execFileSync("xcrun", ["clang", "-fobjc-arc", "-Wno-objc-method-access", "-framework", "AppKit", join(dir, "main.m"), "-o", join(dir, "run")], { stdio: "pipe" });
     const got = JSON.parse(execFileSync(join(dir, "run"), { encoding: "utf8", timeout: 30_000 }).trim());
     assert.notEqual(got.shared.editorClass, "RCTUIPlainPasteFieldEditor");
@@ -158,6 +162,127 @@ test("typing in a single-line field can be undone and redone in AppKit's shared 
       assert.equal(run.afterRedo, "sidebar", editor);
       assert.equal(run.canUndoAfterOutsideText, false, `${editor}: text set from JS must empty the typing undo, whose ranges no longer fit`);
     }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const INLINE_KEEP = fileURLToPath(new URL("../../../../packages/shell/ios/InlineKeepCore/InlineKeep.swift", import.meta.url));
+
+const BRIDGE = `#import <AppKit/AppKit.h>
+@interface RCTUITextField : NSTextField
+@property (nonatomic, copy) NSDictionary<NSAttributedStringKey, id> *defaultTextAttributes;
+- (void)setAttributedText:(NSAttributedString *)attributedText;
+@end
+@interface HarnessCell : NSTextFieldCell
+@property (nonatomic, copy) NSArray<NSPasteboardType> *pasteTypes;
+@end
+`;
+
+const SUGGESTION_DRIVER = `
+import AppKit
+
+_ = NSApplication.shared
+let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [.titled], backing: .buffered, defer: true)
+window.isReleasedWhenClosed = false
+InlineKeep.install()
+InlineKeep.fields.insert(7)
+var out: [String: [String: Any]] = [:]
+
+func scenario(_ name: String, _ steps: (NSTextView, (String) -> Void) -> Void) {
+  let field = RCTUITextField(frame: NSRect(x: 0, y: 0, width: 280, height: 22))
+  field.defaultTextAttributes = [.font: NSFont.systemFont(ofSize: 13)]
+  (field.cell as! HarnessCell).pasteTypes = [.string]
+  window.contentView!.addSubview(field)
+  window.makeFirstResponder(field)
+  let editor = field.currentEditor() as! NSTextView
+  var changes = 0
+  let observer = NotificationCenter.default.addObserver(forName: NSControl.textDidChangeNotification, object: field, queue: nil) { _ in changes += 1 }
+  var got: [String: Any] = [:]
+  steps(editor) { got[$0] = editor.string }
+  got["changes"] = changes
+  NotificationCenter.default.removeObserver(observer)
+  window.makeFirstResponder(nil)
+  field.removeFromSuperview()
+  out[name] = got
+}
+
+func type(_ editor: NSTextView, _ text: String) {
+  for c in text { editor.insertText(String(c), replacementRange: NSRange(location: NSNotFound, length: 0)) }
+}
+
+func undoAll(_ editor: NSTextView, _ note: (String) -> Void) {
+  InlineKeep.settle(editor)
+  editor.undoManager?.undo()
+  note("undo")
+  InlineKeep.settle(editor)
+  editor.undoManager?.redo()
+  note("redo")
+}
+
+func suggest(_ editor: NSTextView, _ typed: String, _ completion: String) {
+  _ = InlineKeep.complete(editor, tag: 7, typed: typed, completion: completion)
+}
+
+scenario("shown") { editor, note in
+  type(editor, "sidebar")
+  suggest(editor, "sidebar", ".example.com")
+  note("suggested")
+  undoAll(editor, note)
+}
+scenario("typedOver") { editor, note in
+  type(editor, "sidebar")
+  suggest(editor, "sidebar", ".example.com")
+  type(editor, "x")
+  note("typed")
+  undoAll(editor, note)
+}
+scenario("keptThenTyped") { editor, note in
+  type(editor, "sidebar")
+  suggest(editor, "sidebar", ".example.com")
+  type(editor, ".ex")
+  note("kept")
+  type(editor, "q")
+  note("typed")
+  undoAll(editor, note)
+}
+scenario("deleted") { editor, note in
+  type(editor, "sidebar")
+  suggest(editor, "sidebar", ".example.com")
+  type(editor, ".ex")
+  editor.deleteBackward(nil)
+  note("deleted")
+  undoAll(editor, note)
+}
+scenario("accepted") { editor, note in
+  type(editor, "sidebar")
+  suggest(editor, "sidebar", ".example.com")
+  editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+  type(editor, "/a")
+  note("typed")
+  undoAll(editor, note)
+}
+
+let json = try! JSONSerialization.data(withJSONObject: out, options: [.sortedKeys])
+print(String(data: json, encoding: .utf8)!)
+`;
+
+test("the command bar's inline suggestion stays out of Undo and Redo: ⌘Z undoes your typing, ⇧⌘Z gives it back without the suggestion", { skip: !clang && "needs clang" }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "inline-suggestion-undo-"));
+  try {
+    writeFileSync(join(dir, "fields.m"), fieldSource());
+    writeFileSync(join(dir, "bridge.h"), BRIDGE);
+    writeFileSync(join(dir, "main.swift"), SUGGESTION_DRIVER);
+    execFileSync("xcrun", ["clang", "-fobjc-arc", "-Wno-objc-method-access", "-c", join(dir, "fields.m"), "-o", join(dir, "fields.o")], { stdio: "pipe" });
+    execFileSync("xcrun", ["swiftc", "-import-objc-header", join(dir, "bridge.h"), join(dir, "main.swift"), INLINE_KEEP, join(dir, "fields.o"), "-o", join(dir, "run")], { stdio: "pipe" });
+    const got = JSON.parse(execFileSync(join(dir, "run"), { encoding: "utf8", timeout: 30_000 }).trim());
+    assert.deepEqual(got.shown, { suggested: "sidebar.example.com", undo: "", redo: "sidebar", changes: 9 }, "Undo with a suggestion shown removed only the suggestion, or Redo brought it back as typed text");
+    assert.deepEqual(got.typedOver, { typed: "sidebarx", undo: "", redo: "sidebarx", changes: 9 }, "typing over a suggestion recorded the suggestion in the undo history");
+    assert.deepEqual(got.keptThenTyped, { kept: "sidebar.example.com", typed: "sidebar.exq", undo: "", redo: "sidebar.exq", changes: 9 }, "letters typed ahead into a suggestion were left out of Undo and Redo");
+    assert.deepEqual(got.deleted, { deleted: "sidebar.ex", undo: "", redo: "sidebar.ex", changes: 9 }, "deleting a suggestion recorded it in the undo history");
+    assert.equal(got.accepted.typed, "sidebar.example.com/a");
+    assert.equal(got.accepted.undo, "");
+    assert.equal(got.accepted.redo, "sidebar.example.com/a", "an accepted suggestion is part of what Redo gives back");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
