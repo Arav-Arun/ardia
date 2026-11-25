@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 globalThis.__DEV__ = false;
-const { applyHistoryChanges } = await import("./engineSync.ts");
+const { applyHistoryChanges, historyApplyStats } = await import("./historyChanges.ts");
 const { MAX_HISTORY, MAX_VISIT_TIMES } = await import("./history.ts");
 const { isWebPageUrl } = await import("../../lib/url.ts");
 const urlsOf = (change) => (change.kind === "visit" ? [change.url] : change.kind === "modified" ? change.rows.map((r) => r.url) : change.urls);
@@ -91,13 +91,13 @@ function rng(seed) {
   return (n) => ((x = (x * 1103515245 + 12345) >>> 0) % n);
 }
 
-function listOf(r, n) {
+function listOf(r, n, unique = false) {
   const list = [];
   let t = 2_000_000;
   for (let i = 0; i < n; i++) {
     t -= r(3);
     const times = [t - 500, t].slice(r(2));
-    const site = r(25) ? i : r(i + 1);
+    const site = unique || r(25) ? i : r(i + 1);
     list.push({ url: `https://s${site}.example/`, title: `T${i}`, favicon: null, visits: 1 + r(5), lastVisit: t, visitTimes: times });
   }
   return list;
@@ -129,4 +129,34 @@ test("one pass over the list gives exactly the list the two-copy merge gave, ove
       list = got;
     }
   }
+});
+
+test("lists with one entry per address take the indexed path and give the same lists as the scan, batch after batch, at and past the cap", () => {
+  const before = historyApplyStats.indexed;
+  for (let seed = 1; seed <= 400; seed++) {
+    const r = rng(seed * 7919);
+    const n = seed % 40 === 0 ? MAX_HISTORY : 1 + r(150);
+    let list = listOf(r, n, true);
+    let notesA = [], notesB = [];
+    for (let step = 0; step < 10; step++) {
+      const changes = changesOf(r, n, 2_000_000 - r(n * 3) + step * 50);
+      const want = referenceApply(list, changes, (g) => notesA.push(g));
+      const got = applyHistoryChanges(list, changes, (g) => notesB.push(g));
+      assert.deepEqual(got, want, `seed ${seed} step ${step}`);
+      assert.equal(got === list, want === list, `seed ${seed} step ${step}: unchanged lists are returned as they were`);
+      assert.deepEqual(notesB, notesA);
+      list = got;
+    }
+  }
+  assert.ok(historyApplyStats.indexed - before > 2000, `indexed applies: ${historyApplyStats.indexed - before}`);
+});
+
+test("a list that falls out of newest-first order is merged by the scan, as before", () => {
+  const list = [
+    { url: "https://a.example/", title: "A", favicon: null, visits: 1, lastVisit: 100, visitTimes: [100] },
+    { url: "https://b.example/", title: "B", favicon: null, visits: 1, lastVisit: 300, visitTimes: [300] },
+    { url: "https://c.example/", title: "C", favicon: null, visits: 1, lastVisit: 200, visitTimes: [200] },
+  ];
+  const changes = [{ kind: "visit", profile: "", url: "https://d.example/", title: "D", visits: 1, at: 250 }];
+  assert.deepEqual(applyHistoryChanges(list, changes), referenceApply(list, changes));
 });

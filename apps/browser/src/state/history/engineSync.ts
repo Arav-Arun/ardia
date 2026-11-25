@@ -4,6 +4,7 @@ import { readDocument } from "../../platform/documents";
 import { useBrowser, type BrowserState } from "../browser/store";
 import { afterFirstWindow } from "../../lib/afterFirstWindow";
 import { MAX_HISTORY, MAX_VISIT_TIMES } from "./history";
+import { applyHistoryChanges, isListChange, type HistoryGap, type ListChange, type NoteGap } from "./historyChanges";
 import { engineProfile, isIncognitoProfile } from "../browser/model";
 import type { HistoryEntry } from "../browser/types";
 import { isWebPageUrl } from "../../lib/url";
@@ -24,8 +25,6 @@ const MAX_GAP_REPORTS = 10;
 const store = () => useBrowser.getState();
 const profileLabel = (engine: string) => (engine ? "another profile" : "the default profile");
 
-type HistoryGap = `${HistoryChange["kind"]}-${"unloaded" | "moving"}` | "modified-unknown" | "visit-untitled";
-type NoteGap = (gap: HistoryGap, count?: number) => void;
 
 const gaps = new Map<string, Map<HistoryGap, number>>();
 let gapTimer: ReturnType<typeof setTimeout> | null = null;
@@ -89,100 +88,6 @@ function setView(engine: string, list: HistoryEntry[], floor?: number) {
 }
 
 const byLastVisit = (a: HistoryEntry, b: HistoryEntry) => b.lastVisit - a.lastVisit;
-
-type ListChange = Exclude<HistoryChange, { kind: "deleted"; all: true }>;
-type Touched = { entry: HistoryEntry | undefined; index: number; moved: boolean; seq: number };
-
-const isListChange = (change: HistoryChange): change is ListChange => change.kind !== "deleted" || !change.all;
-
-const urlsOf = (change: ListChange): string[] =>
-  change.kind === "visit" ? [change.url] : change.kind === "modified" ? change.rows.map((r) => r.url) : change.urls;
-
-export function applyHistoryChanges(list: HistoryEntry[], changes: readonly ListChange[], note?: NoteGap): HistoryEntry[] {
-  const wanted = new Set(changes.flatMap(urlsOf));
-  const touched = new Map<string, Touched>();
-  for (let i = 0; i < list.length; i++) {
-    const h = list[i]!;
-    if (wanted.has(h.url) && !touched.has(h.url)) touched.set(h.url, { entry: h, index: i, moved: false, seq: 0 });
-  }
-  const stateOf = (url: string) => {
-    let state = touched.get(url);
-    if (!state) touched.set(url, (state = { entry: undefined, index: -1, moved: false, seq: 0 }));
-    return state;
-  };
-  let seq = 0;
-  let dirty = false;
-  for (const change of changes) {
-    switch (change.kind) {
-      case "visit": {
-        if (!isWebPageUrl(change.url)) break;
-        const state = stateOf(change.url);
-        const old = state.entry;
-        if (old?.visitTimes?.includes(change.at)) break;
-        const times = [...(old?.visitTimes ?? []), change.at].sort((a, b) => a - b).slice(-MAX_VISIT_TIMES);
-        state.entry = {
-          url: change.url,
-          title: change.title || old?.title || "",
-          favicon: null,
-          visits: Math.max(change.visits, 1),
-          lastVisit: times[times.length - 1]!,
-          visitTimes: times,
-        };
-        if (!state.entry.title) note?.("visit-untitled");
-        state.moved = true;
-        state.seq = ++seq;
-        dirty = true;
-        break;
-      }
-      case "modified": {
-        for (const row of new Map(change.rows.map((r) => [r.url, r])).values()) {
-          const state = touched.get(row.url);
-          const h = state?.entry;
-          if (!h && isWebPageUrl(row.url)) note?.("modified-unknown");
-          if (!state || !h || ((row.title === h.title || !row.title) && row.visits === h.visits)) continue;
-          state.entry = { ...h, title: row.title || h.title, visits: row.visits };
-          dirty = true;
-        }
-        break;
-      }
-      case "deleted": {
-        for (const url of change.urls) {
-          const state = touched.get(url);
-          if (!state?.entry) continue;
-          state.entry = undefined;
-          dirty = true;
-        }
-        break;
-      }
-    }
-  }
-  if (!dirty) return list;
-
-  const replaced: Touched[] = [];
-  const moved: Touched[] = [];
-  for (const state of touched.values()) {
-    if (state.moved && state.entry) moved.push(state);
-    if (state.index >= 0) replaced.push(state);
-  }
-  replaced.sort((a, b) => a.index - b.index);
-  moved.sort((a, b) => b.entry!.lastVisit - a.entry!.lastVisit || b.seq - a.seq);
-  const next: HistoryEntry[] = [];
-  let m = 0;
-  let r = 0;
-  for (let i = 0; i < list.length && next.length < MAX_HISTORY; i++) {
-    let h: HistoryEntry | undefined = list[i]!;
-    if (r < replaced.length && replaced[r]!.index === i) {
-      const state = replaced[r++]!;
-      h = state.moved ? undefined : state.entry;
-    }
-    if (!h) continue;
-    while (m < moved.length && moved[m]!.entry!.lastVisit >= h.lastVisit) next.push(moved[m++]!.entry!);
-    next.push(h);
-  }
-  while (m < moved.length) next.push(moved[m++]!.entry!);
-  if (next.length > MAX_HISTORY) next.length = MAX_HISTORY;
-  return next;
-}
 
 type Load = { running: Promise<void>; again: boolean; queued: HistoryChange[] };
 const loads = new Map<string, Load>();
