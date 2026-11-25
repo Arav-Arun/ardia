@@ -649,9 +649,13 @@ try {
       assert.ok(seen.down && seen.up, "the page saw the press and its release");
       assert.deepEqual([seen.up.x, seen.up.y], [seen.down.x, seen.down.y], "the release lands where the press did");
       assert.equal(seen.clicks, 1, "the page got one click");
-      record.viewport = viewport;
-      near(seen.down.x, viewport.w / 2, 3, "the press reached the point under the pointer (x)");
-      near(seen.down.y, viewport.h / 2, 3, "the press reached the point under the pointer (y)");
+      const settledAt = done.events.find((e) => e.event === "settled")?.t;
+      const shown = done.trace.filter((f) => f.t < settledAt && f.phase === "entering").at(-1);
+      const expected = shown && { x: (at.x - o.x - shown.page[1]) / shown.page[0] - g.x, y: (at.y - o.y - shown.page[2]) / shown.page[0] - g.y };
+      Object.assign(record, { viewport, shownAtPress: shown?.page ?? null, expected });
+      assert.ok(expected, "the frame on screen at the press was traced");
+      near(seen.down.x, expected.x, 3, "the press reached the point under the pointer (x)");
+      near(seen.down.y, expected.y, 3, "the press reached the point under the pointer (y)");
     });
   }
   if (wanted("chrome-press-mid-pinch") || wanted("chrome-hidden-mid-spread") || wanted("chrome-press-held-into-spread") || wanted("chrome-press-held-into-pinch-in") || wanted("side-press-on-invisible-dim")) {
