@@ -44,6 +44,10 @@ enum PackedPassages {
   static func parts(of translated: AttributedString, over passages: [[String]]) -> [[String]?] {
     var parts = passages.map { Array(repeating: "", count: $0.count) }
     var tagged = passages.map { Array(repeating: false, count: $0.count) }
+    var broken = Array(repeating: false, count: passages.count)
+    var left: Set<Int> = []
+    var current: Int?
+    var gapSince = false
     var last: (passage: Int, piece: Int)?
     var lead = ""
     for run in translated.runs {
@@ -55,11 +59,22 @@ enum PackedPassages {
       if link.scheme == "ac-gap" {
         last = nil
         lead = ""
+        gapSince = true
         continue
       }
       guard link.scheme == "ac-piece", let (p, i) = index(link), passages.indices.contains(p), passages[p].indices.contains(i) else {
         return passages.map { _ in nil }
       }
+      if let current, current != p {
+        if !gapSince {
+          broken[current] = true
+          broken[p] = true
+        }
+        left.insert(current)
+        if left.contains(p) { broken[p] = true }
+      }
+      current = p
+      gapSince = false
       if last == nil {
         parts[p][i] += lead
         lead = ""
@@ -70,7 +85,7 @@ enum PackedPassages {
     }
     let mark = separator.trimmingCharacters(in: .whitespaces)
     return passages.indices.map { p in
-      guard !tagged[p].contains(false), !parts[p].contains(where: { $0.allSatisfy(\.isWhitespace) }) else { return nil }
+      guard !broken[p], !tagged[p].contains(false), !parts[p].contains(where: { $0.allSatisfy(\.isWhitespace) }) else { return nil }
       if !passages[p].joined().contains(mark), parts[p].contains(where: { $0.contains(mark) }) { return nil }
       return withSourceEdges(parts[p], of: passages[p])
     }

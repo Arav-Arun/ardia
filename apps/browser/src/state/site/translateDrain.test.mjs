@@ -187,3 +187,30 @@ test("a long passage goes to the model alone so paragraphs still show one by one
   const packs = packsOf([passage(1), passage(2), long(3), passage(4), long(5), long(6), passage(7)]);
   assert.deepEqual(packs.map((pack) => pack.map(([id]) => id)), [[1, 2], [3], [4], [5], [6], [7]]);
 });
+
+test("a pack of retries that fails again never ends the drain, however many in a row", async () => {
+  const retry = (id) => [id, [[id * 1000, `text ${id}`]], 1];
+  const batches = Array.from({ length: 6 }, (_, i) => ({ passages: [retry(i + 1)], more: i < 5, gone: false, done: i + 1, total: 6 }));
+  const page = fakePage([{ passages: [passage(100)], more: true, gone: false, done: 1, total: 7 }, ...batches]);
+  page.port.inFlight = 1;
+  const translate = page.port.translate;
+  page.port.translate = async (pack) => {
+    if (pack[0][2]) throw new Error("rejected again");
+    return translate(pack);
+  };
+  assert.equal(await drainPassages(page.port), true);
+  assert.ok(page.asked.length >= 7);
+  assert.equal(page.applied.filter(([, text]) => text === null).length, 6);
+});
+
+test("only passages that got an answer count as applied", async () => {
+  const page = fakePage([{ passages: [passage(1), passage(2)], more: false, gone: false, done: 2, total: 2 }]);
+  page.port.translate = async () => [
+    [1000, "ONE"],
+    [2000, null],
+  ];
+  const applied = [];
+  page.port.onApplied = (n) => applied.push(n);
+  assert.equal(await drainPassages(page.port), true);
+  assert.deepEqual(applied, [1]);
+});

@@ -59,17 +59,15 @@ enum TranslationSessions {
   private static func translateGroup(_ keys: [PassageKey], owner: String) async -> [(PassageKey, [String]?)] {
     guard keys.count > 1 else { return [(keys[0], await passage(keys[0], owner: owner))] }
     let packed = await packWork.value(for: keys, owner: owner) { await translatePack(keys) } ?? keys.map { _ in nil }
-    var out: [(PassageKey, [String]?)] = []
-    for (key, parts) in zip(keys, packed) {
-      guard let parts else {
-        out.append((key, await passage(key, owner: owner)))
-        continue
-      }
-      let answer = TranslateModule.isUnchanged(parts, from: key.pieces) ? await askAgain(key, parts) : parts
+    let answers = await PackedFollowUp.settle(
+      keys, packed: packed, owner: owner, work: work,
+      unchanged: { key, parts in TranslateModule.isUnchanged(parts, from: key.pieces) },
+      alone: { key in await translateFresh(key) },
+      again: { key, parts in await askAgain(key, parts) })
+    for (key, answer) in zip(keys, answers) {
       if let answer, !TranslateModule.isUnchanged(answer, from: key.pieces) { remember(key, answer) }
-      out.append((key, answer))
     }
-    return out
+    return Array(zip(keys, answers))
   }
 
   private static func translatePack(_ keys: [PassageKey]) async -> [[String]?]? {

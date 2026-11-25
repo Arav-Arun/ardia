@@ -8,7 +8,7 @@ import { incognitoOriginal, isIncognitoProfile } from "../browser/model";
 import { hideKeyedToast, showToast } from "../app/toasts";
 import { translatorCall } from "./pageTranslator";
 import { stopDocumentWatch, watchDocument } from "./documentWatch";
-import { drainPassages, PACK_PASSAGES, type PageBatch, type Passage, type Translated } from "./translateDrain";
+import { drainPassages, PACK_PASSAGES, PASSAGE_RETRIES, type PageBatch, type Passage, type Translated } from "./translateDrain";
 import { errorText } from "../../lib/errors";
 import { capture, consentToken, type ConsentToken } from "../telemetry/client";
 import { noteWebKitCount } from "../telemetry/engineSwitchCounts";
@@ -131,7 +131,7 @@ export async function translatePack(model: BlockTranslator, source: string, targ
   pack.forEach((passage, i) => {
     const [, pieces] = passage;
     const parts = answers[i];
-    if (parts && parts.length === pieces.length) out.push(...pieces.map(([id], j): Translated => [id, parts[j] ?? ""]));
+    if (Array.isArray(parts) && parts.length === pieces.length && parts.every((part) => typeof part === "string")) out.push(...pieces.map(([id], j): Translated => [id, parts[j]!]));
     else if (pieces.length > 1 && live()) unlinked.push(passage);
     else out.push(...nothing(passage));
   });
@@ -139,12 +139,15 @@ export async function translatePack(model: BlockTranslator, source: string, targ
     progress.unlinked += unlinked.length;
     const pieces = unlinked.flatMap(([, p]) => p);
     const single = await model.translateBlocks(source, target, pieces.map(([, text]) => [text]), token);
-    out.push(...pieces.map(([id], i): Translated => [id, single[i]?.[0] ?? null]));
+    out.push(...pieces.map(([id], i): Translated => {
+      const text = Array.isArray(single[i]) ? single[i]![0] : null;
+      return [id, typeof text === "string" ? text : null];
+    }));
   }
   const answered = new Set(out.filter(([, text]) => text !== null).map(([id]) => id));
-  const failed = pack.filter(([, pieces]) => !pieces.some(([id]) => answered.has(id))).length;
-  if (live()) progress.failed += failed;
-  if (live() && failed === pack.length) throw new Error("the Mac's translation model didn't answer");
+  const unanswered = pack.filter(([, pieces]) => !pieces.some(([id]) => answered.has(id)));
+  if (live()) progress.failed += unanswered.filter(([, , attempt = 0]) => attempt >= PASSAGE_RETRIES).length;
+  if (live() && unanswered.length === pack.length) throw new Error("the Mac's translation model didn't answer");
   return out;
 }
 

@@ -1,85 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import vm from "node:vm";
-const { translatorCall } = await import("./pageTranslator.ts");
-
-class FakeNode {
-  parentNode = null;
-  childNodes = [];
-  get parentElement() {
-    return this.parentNode?.nodeType === 1 ? this.parentNode : null;
-  }
-  get isConnected() {
-    let node = this;
-    while (node.parentNode) node = node.parentNode;
-    return node.isRoot === true;
-  }
-}
-class FakeText extends FakeNode {
-  nodeType = 3;
-  constructor(value) {
-    super();
-    this.nodeValue = value;
-  }
-}
-class FakeElement extends FakeNode {
-  nodeType = 1;
-  constructor(tag, children = []) {
-    super();
-    this.tagName = tag.toUpperCase();
-    for (const child of children) {
-      child.parentNode = this;
-      this.childNodes.push(child);
-    }
-  }
-  closest(selector) {
-    const tags = selector.split(",").map((s) => s.trim().toUpperCase()).filter((s) => /^[A-Z0-9]+$/.test(s));
-    for (let node = this; node && node.nodeType === 1; node = node.parentNode) if (tags.includes(node.tagName)) return node;
-    return null;
-  }
-  getBoundingClientRect() {
-    return { top: 0, bottom: 20, left: 0, right: 100, width: 100, height: 20 };
-  }
-}
-
-function fakePage(body, { whiteSpace = "normal" } = {}) {
-  const html = new FakeElement("html", [body]);
-  html.isRoot = true;
-  const descendants = (root) => root.childNodes.flatMap((child) => [child, ...descendants(child)]);
-  const results = [];
-  const context = {
-    NodeFilter: { SHOW_ELEMENT: 1, SHOW_TEXT: 4 },
-    innerHeight: 800,
-    innerWidth: 1200,
-    getComputedStyle: () => ({ whiteSpace }),
-    IntersectionObserver: class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-    MutationObserver: class {
-      observe() {}
-      disconnect() {}
-    },
-    document: {
-      body,
-      documentElement: html,
-      createTreeWalker(root, show) {
-        const nodes = descendants(root).filter((n) => (n.nodeType === 3 ? show & 4 : show & 1));
-        let i = 0;
-        return { nextNode: () => nodes[i++] ?? null };
-      },
-    },
-    post: (_kind, json) => results.push(JSON.parse(json)),
-  };
-  context.window = context;
-  vm.createContext(context);
-  const call = (op, ...args) => {
-    vm.runInContext(`{\n${translatorCall(op, ...args)}\n}`, context);
-    return results.pop();
-  };
-  return { call };
-}
+import { FakeElement, FakeText, fakePage } from "./fixtures/translatorPage.mjs";
+const { drainPassages } = await import("./translateDrain.ts");
+const { translatePack } = await import("./translate.ts");
 
 test("the page hands over no more passages than asked for and keeps the rest of a big block queued", () => {
   const texts = Array.from({ length: 360 }, (_, i) => new FakeText(`Sentence number ${i}. `));
@@ -133,4 +56,60 @@ test("preformatted text keeps its line breaks inside but not at its edges", () =
   page.call("start", "t");
   const [[, [[, sent]]]] = page.call("next", "t", 24, 600).passages;
   assert.equal(sent, "Erste Zeile\nZweite Zeile");
+});
+
+test("preformatted inline text inside a normal paragraph keeps its line breaks and indentation", () => {
+  const pre = new FakeElement("span", [new FakeText("Erste Zeile\n    Zweite Zeile")]);
+  pre.whiteSpace = "pre-wrap";
+  const page = fakePage(new FakeElement("body", [new FakeElement("p", [new FakeText("Vorher\n  kommt "), pre])]));
+  page.call("start", "t");
+  const [[, pieces]] = page.call("next", "t", 24, 600).passages;
+  assert.deepEqual(pieces.map(([, text]) => text), ["Vorher kommt ", "Erste Zeile\n    Zweite Zeile"]);
+});
+
+const drainPage = (page, model, progress, applied = []) =>
+  drainPassages({
+    inFlight: 2,
+    holds: () => true,
+    released: new Promise(() => {}),
+    next: async (maxChars) => page.call("next", "t", 24, maxChars),
+    translate: (pack) => translatePack(model, "de", "en", pack, "t", progress, () => true),
+    apply: async (results) => page.call("apply", "t", results),
+    onApplied: (passages) => applied.push(passages),
+  });
+
+test("a paragraph the model always rejects is retried without ending the translation, and the one it translated stays", async () => {
+  const one = new FakeText("Absatz eins ist ein ganz normaler Satz, der ohne Probleme übersetzt wird.");
+  const two = new FakeText("Absatz zwei ist ein Satz, den das Modell bei jedem Versuch ablehnen wird.");
+  const page = fakePage(new FakeElement("body", [new FakeElement("p", [one]), new FakeElement("p", [two])]));
+  page.call("start", "t");
+  const asked = [];
+  const model = {
+    translateBlocks: async (_s, _t, blocks) => {
+      asked.push(...blocks.map((b) => b.join("")));
+      return blocks.map((b) => (b.join("").includes("zwei") ? null : b.map((piece) => piece.toUpperCase())));
+    },
+  };
+  assert.equal(await drainPage(page, model, { unlinked: 0, failed: 0 }), true);
+  assert.equal(one.nodeValue, "ABSATZ EINS IST EIN GANZ NORMALER SATZ, DER OHNE PROBLEME ÜBERSETZT WIRD.");
+  assert.equal(two.nodeValue, "Absatz zwei ist ein Satz, den das Modell bei jedem Versuch ablehnen wird.");
+  assert.equal(asked.filter((text) => text.includes("zwei")).length, 3);
+});
+
+test("a pack that translates one passage of two counts one translated passage and one failed, once, after its retries", async () => {
+  const page = fakePage(new FakeElement("body", [new FakeElement("li", [new FakeText("Hauptseite")]), new FakeElement("li", [new FakeText("Kaputt")])]));
+  page.call("start", "t");
+  const packs = [];
+  const model = {
+    translateBlocks: async (_s, _t, blocks) => {
+      packs.push(blocks.length);
+      return blocks.map((b) => (b[0] === "Kaputt" ? null : ["Main page"]));
+    },
+  };
+  const progress = { unlinked: 0, failed: 0 };
+  const applied = [];
+  assert.equal(await drainPage(page, model, progress, applied), true);
+  assert.equal(packs[0], 2);
+  assert.equal(applied.reduce((a, b) => a + b, 0), 1);
+  assert.equal(progress.failed, 1);
 });

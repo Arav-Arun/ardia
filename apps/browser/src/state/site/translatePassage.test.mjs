@@ -62,7 +62,7 @@ test("a released translation doesn't fall back to more requests", async () => {
   assert.equal(model.calls.length, 1);
 });
 
-test("a passage the model can't answer stays as it was while the rest of its pack is translated", async () => {
+test("a passage the model can't answer stays as it was while the rest of its pack is translated, and counts as failed only on its last try", async () => {
   const model = { translateBlocks: async (_s, _t, blocks) => blocks.map((pieces) => (pieces[0] === "bad" ? null : pieces.map((p) => p.toUpperCase()))) };
   const counts = progress();
   const out = await translatePack(model, "en", "fr", [[1, [[10, "good"]]], [2, [[20, "bad"]]]], "tok", counts, () => true);
@@ -70,6 +70,8 @@ test("a passage the model can't answer stays as it was while the rest of its pac
     [10, "GOOD"],
     [20, null],
   ]);
+  assert.equal(counts.failed, 0);
+  await translatePack(model, "en", "fr", [[1, [[10, "good"]]], [3, [[30, "bad"]], 2]], "tok", counts, () => true);
   assert.equal(counts.failed, 1);
 });
 

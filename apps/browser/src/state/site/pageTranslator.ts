@@ -1,3 +1,4 @@
+import { PASSAGE_RETRIES } from "./translateDrain";
 
 const INSTALL = String.raw`
 const KEY = Symbol.for("ardia.translator");
@@ -8,7 +9,7 @@ if (!window[KEY]) {
   const MAX_WATCHED = 20000;
   const MAX_TEXT = 20000;
   const MAX_PIECES = 40;
-  const MAX_RETRIES = 2;
+  const MAX_RETRIES = ${PASSAGE_RETRIES};
   const MARGIN = 300;
   const MAX_SORTED = 2000;
   const ENDS_IN_SPACE = /\s$/;
@@ -20,6 +21,13 @@ if (!window[KEY]) {
     if (!el) return true;
     let v = skipCache.get(el);
     if (v === undefined) skipCache.set(el, (v = !!el.closest(SKIP)));
+    return v;
+  };
+  const spaceCache = new WeakMap();
+  const preservesSpace = (el) => {
+    if (!el) return false;
+    let v = spaceCache.get(el);
+    if (v === undefined) spaceCache.set(el, (v = PRESERVED.test(getComputedStyle(el).whiteSpace)));
     return v;
   };
   const blockCache = new WeakMap();
@@ -153,7 +161,6 @@ if (!window[KEY]) {
         this.queued.delete(block);
         if (!block.isConnected) continue;
         const nodes = this.pieces(block);
-        const preserved = PRESERVED.test(getComputedStyle(block).whiteSpace);
         for (let i = 0; i < nodes.length; i += MAX_PIECES) {
           if (passages.length >= max) {
             this.queue.unshift(block);
@@ -162,20 +169,22 @@ if (!window[KEY]) {
           }
           const pieces = [];
           let previous = null;
+          let attempt = 0;
           for (const { node, gap } of nodes.slice(i, i + MAX_PIECES)) {
+            attempt = Math.max(attempt, this.retries.get(node) || 0);
             const id = ++this.seq;
             const spaced = gap && previous !== null;
             if (spaced) previous.gapAfter = true;
             previous = { orig: node.nodeValue, applied: null, gapBefore: spaced, gapAfter: false };
             this.byId.set(id, node);
             this.records.set(node, previous);
-            const text = preserved ? node.nodeValue : node.nodeValue.replace(SPACE_RUN, " ");
+            const text = preservesSpace(node.parentElement) ? node.nodeValue : node.nodeValue.replace(SPACE_RUN, " ");
             pieces.push([id, spaced ? " " + text : text]);
             chars += node.nodeValue.length;
           }
           pieces[0][1] = pieces[0][1].trimStart();
           pieces[pieces.length - 1][1] = pieces[pieces.length - 1][1].trimEnd();
-          passages.push([++this.seq, pieces]);
+          passages.push([++this.seq, pieces, attempt]);
         }
       }
       this.done += passages.length;

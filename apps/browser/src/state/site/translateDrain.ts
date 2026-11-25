@@ -1,4 +1,4 @@
-export type Passage = [number, [number, string][]];
+export type Passage = [number, [number, string][], number?];
 export type Translated = [number, string | null];
 export type PageBatch = { passages: unknown[]; more: boolean; gone: boolean; done: number; total: number };
 
@@ -7,6 +7,7 @@ export const FIRST_PACK_CHARS = 60;
 export const PACK_PASSAGES = 24;
 export const FAILED_PACKS_IN_A_ROW = 3;
 export const LONG_PASSAGE = 200;
+export const PASSAGE_RETRIES = 2;
 
 type DrainPort = {
   inFlight: number;
@@ -25,7 +26,7 @@ const MAX_PIECES = 40;
 const cleanPassages = (passages: unknown[]): Passage[] =>
   passages
     .filter((p): p is Passage => Array.isArray(p) && typeof p[0] === "number" && Array.isArray(p[1]))
-    .map(([id, pieces]): Passage => [id, pieces.filter((x) => Array.isArray(x) && typeof x[0] === "number" && typeof x[1] === "string").slice(0, MAX_PIECES)])
+    .map(([id, pieces, attempt]): Passage => [id, pieces.filter((x) => Array.isArray(x) && typeof x[0] === "number" && typeof x[1] === "string").slice(0, MAX_PIECES), typeof attempt === "number" ? attempt : 0])
     .filter(([, pieces]) => pieces.length > 0);
 
 const sizeOf = ([, pieces]: Passage) => pieces.reduce((n, [, text]) => n + text.length, 0);
@@ -45,6 +46,11 @@ export function packsOf(passages: Passage[]): Passage[][] {
   if (short.length) packs.push(short);
   return packs;
 }
+
+const translatedIn = (pack: Passage[], results: Translated[]) => {
+  const answered = new Set(results.filter(([, text]) => text !== null).map(([id]) => id));
+  return pack.filter(([, pieces]) => pieces.some(([id]) => answered.has(id))).length;
+};
 
 const untranslated = ([, pieces]: Passage): Translated[] => pieces.map(([id]): Translated => [id, null]);
 
@@ -74,17 +80,21 @@ export async function drainPassages(port: DrainPort): Promise<boolean> {
       .then(
         async (results) => {
           if (!live()) return;
-          failedInARow = 0;
-          succeeded++;
+          const translated = translatedIn(pack, results);
+          if (translated) {
+            failedInARow = 0;
+            succeeded++;
+          }
           port.onStage?.("apply");
           await port.apply(results);
-          if (live()) port.onApplied?.(pack.length, total);
+          if (live()) port.onApplied?.(translated, total);
         },
         async (error: unknown) => {
           if (!live()) return;
           lastError = { error };
           port.onFailed?.(pack.length);
-          if (++failedInARow >= FAILED_PACKS_IN_A_ROW) failure ??= { error };
+          const fresh = pack.some(([, , attempt]) => !attempt);
+          if (fresh && ++failedInARow >= FAILED_PACKS_IN_A_ROW) failure ??= { error };
           await port.apply(pack.flatMap(untranslated)).catch(() => {});
         },
       )

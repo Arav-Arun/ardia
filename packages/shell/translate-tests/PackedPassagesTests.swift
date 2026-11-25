@@ -54,7 +54,7 @@ final class PackedPassagesTests: XCTestCase {
 
   func testASeparatorLeftInAnAnswerFailsThatPassage() {
     let parts = PackedPassages.parts(
-      of: answer([.piece("Main page ·", 0, 0), .piece("Help", 1, 0)]),
+      of: answer([.piece("Main page ·", 0, 0), .gap(" ", 1), .piece("Help", 1, 0)]),
       over: [["Hauptseite"], ["Hilfe"]])
     XCTAssertNil(parts[0])
     XCTAssertEqual(parts[1], ["Help"])
@@ -80,6 +80,31 @@ final class PackedPassagesTests: XCTestCase {
     var text = AttributedString("x")
     text.link = URL(string: "https://example.com")
     XCTAssertEqual(PackedPassages.parts(of: text, over: [["a"], ["b"]]).compactMap { $0 }.count, 0)
+  }
+
+  func testAMissingGapLeavesBothPassagesToBeAskedAgainInsteadOfMovingTextAcross() {
+    let parts = PackedPassages.parts(
+      of: answer([.piece("Settings", 0, 0), .plain(" Helpful "), .piece("links", 1, 0), .gap(" · ", 2), .piece("Help", 2, 0)]),
+      over: [["Einstellungen"], ["Links"], ["Hilfe"]])
+    XCTAssertNil(parts[0])
+    XCTAssertNil(parts[1])
+    XCTAssertEqual(parts[2], ["Help"])
+  }
+
+  func testAPassageWhosePiecesStraddleAnotherPassageIsAskedAgain() {
+    let parts = PackedPassages.parts(
+      of: answer([.piece("Read the ", 0, 0), .gap(" · ", 1), .piece("Help", 1, 0), .piece("notes", 0, 1)]),
+      over: [["Lies die ", "Hinweise"], ["Hilfe"]])
+    XCTAssertNil(parts[0])
+    XCTAssertNil(parts[1])
+  }
+
+  func testUntaggedTextRightAfterAGapGoesToTheNextPassageOnly() {
+    let parts = PackedPassages.parts(
+      of: answer([.piece("Main page", 0, 0), .gap(" · ", 1), .plain("« "), .piece("Help", 1, 0)]),
+      over: [["Hauptseite"], ["Hilfe"]])
+    XCTAssertEqual(parts[0], ["Main page"])
+    XCTAssertEqual(parts[1], ["« Help"])
   }
 
   func testPacksStopAtTheCharacterLimitAndTheCount() {
