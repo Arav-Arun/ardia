@@ -199,3 +199,26 @@ test("S5 (round 2): a miss is handed to the relay at once, with the request's co
   assert.deepEqual(relayed, [asked.consent]);
   assert.notEqual(asked.consent, null);
 });
+
+test("S5: a miss with expired or absent consent never triggers the relay, leaving valid window counts intact", async (t) => {
+  client.setSharing(false, "settings");
+  at("profiles", "work");
+  revealSettingRow("profiles.extensions", consentToken());
+  const askedWhileOff = request();
+  client.setSharing(true, "onboarding");
+  t.after(() => client.setSharing(false, "settings"));
+  const relayed = [];
+  usage.setCountsRelayNow((consent) => {
+    relayed.push(consent);
+    usage.emitWindowUsage(consent);
+  });
+  t.after(() => usage.setCountsRelayNow(null));
+  usage.noteSettingsSearch("started", consentToken());
+  runReveal(askedWhileOff, "profiles.extensions", () => null, () => {});
+  assert.deepEqual(relayed, [], "expired/absent consent must not invoke the relay");
+  usage.emitWindowUsage(consentToken());
+  await client.saveQueueNow();
+  const queue = stub.docs.get("telemetry-queue.json");
+  const events = queue ? JSON.parse(queue).events.filter((e) => e.event === "usage_counts").map((e) => e.properties) : [];
+  assert.ok(events.some((p) => (p.settings_searches ?? 0) >= 1), "valid counts in the current consent period survive");
+});

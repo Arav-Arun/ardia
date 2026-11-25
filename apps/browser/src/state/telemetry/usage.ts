@@ -230,6 +230,7 @@ export const noteSettingsSearchReveal = (via: "keyboard" | "click", rank: number
 let relayCountsNow: ((consent: ConsentToken | null) => void) | null = null;
 export const setCountsRelayNow = (relay: ((consent: ConsentToken | null) => void) | null) => void (relayCountsNow = relay);
 export function noteSettingsRevealMiss(consent: ConsentToken | null) {
+  if (!stillValid(consent)) return;
   bump(consent, { settingsRevealMisses: 1 });
   relayCountsNow?.(consent);
 }
