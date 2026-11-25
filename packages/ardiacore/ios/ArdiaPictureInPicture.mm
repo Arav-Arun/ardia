@@ -1,7 +1,6 @@
 #import "ArdiaPictureInPictureInternal.h"
 #import "ArdiaWindowController.h"
 #import "ArdiaLaunchConfig.h"
-#import "ArdiaHost.h"
 #import "ArdiaChromeWindowHost.h"
 #import "ArdiaPiPThrowMath.h"
 #import "ArdiaPiPSeekMath.h"
@@ -407,28 +406,6 @@ void RefreshPinchesFromOtherApps() {
   dispatch_async(dispatch_get_main_queue(), ^{
     FollowPinchesFromOtherApps();
   });
-}
-
-void ForgetSavedSize() {
-  NSString *file = [ArdiaHost.dataDirectory stringByAppendingPathComponent:@"ArdiaPictureInPicture.plist"];
-  NSArray *saved = [NSArray arrayWithContentsOfFile:file];
-  if (saved.count != 4) return;
-  for (id value in saved)
-    if (![value isKindOfClass:NSNumber.class]) return;
-  const int x = [saved[0] intValue], y = [saved[1] intValue], width = [saved[2] intValue], height = [saved[3] intValue];
-  if (width <= 1 && height <= 1) return;
-  NSScreen *primary = NSScreen.screens.firstObject;
-  if (!primary) return;
-  const CGFloat top = NSMaxY(primary.frame);
-  const NSPoint center = NSMakePoint(x + width / 2.0, top - (y + height / 2.0));
-  NSScreen *screen = primary;
-  for (NSScreen *candidate in NSScreen.screens)
-    if (NSPointInRect(center, candidate.frame)) screen = candidate;
-  const NSRect area = screen.visibleFrame;
-  const BOOL right = center.x >= NSMidX(area), bottom = center.y < NSMidY(area);
-  const int anchorX = right ? x + width - 1 : x, anchorY = bottom ? y + height - 1 : y;
-  if (![@[ @(anchorX), @(anchorY), @1, @1 ] writeToFile:file atomically:YES]) return;
-  NoteGesture(@"pip size forgotten was=%dx%d at %d,%d anchor=%d,%d", width, height, x, y, anchorX, anchorY);
 }
 
 BOOL FollowsPinchesFromOtherApps() { return gOtherAppPinchMonitor != nil; }
