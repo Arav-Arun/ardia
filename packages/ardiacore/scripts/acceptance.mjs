@@ -63,7 +63,7 @@ const usesPageA = [
   "private-windows-create", "extension-private-window", "extension-installed-bubble", "popup-window", "popup-window-full-screen", "autofill-save-prompts",
   "settings-services", "download-navigation", "page-events", "page-background", "external-app-answer",
   "external-app-from-extension",
-  "notifications", "now-playing", "media-state", "auto-picture-in-picture", "auto-picture-in-picture-app-switch", "auto-picture-in-picture-other-window", "auto-picture-in-picture-paused", "media-plays-on-move", "picture-in-picture-opt-out", "pip-window", "pip-framing", "report-recording-pip", "report-recording-guard", "report-recording-webkit-media", "page-focus",
+  "notifications", "now-playing", "media-state", "auto-picture-in-picture", "auto-picture-in-picture-app-switch", "auto-picture-in-picture-other-window", "auto-picture-in-picture-paused", "auto-picture-in-picture-covered-quick", "media-plays-on-move", "picture-in-picture-opt-out", "pip-window", "pip-framing", "report-recording-pip", "report-recording-guard", "report-recording-webkit-media", "page-focus",
   "fullscreen-tab-switch", "fullscreen-native", "fullscreen-system-title-bar", "fullscreen-transition-picture", "fullscreen-hidden-page", "fullscreen-split-sibling",
   "fullscreen-pip", "autofill-suggestions", "images", "extension-surfaces", "frozen", "discard",
   "permission-prompt", "popup-blocked", "move-tab-slow-mount", "move-last-tab-slow-mount",
@@ -3707,6 +3707,35 @@ try {
     }
     await evalApp(`ac.actions.switchToTab("${first.id}"); return true`);
     return results;
+  });
+
+  await check("auto-picture-in-picture-covered-quick", async () => {
+    const n = await engine("tabs.devWindowNumber", { tabId: first.id });
+    const win = (action) => engine("windows.dev", { window: n, action });
+    const tab = await openTab(`${secureBase}/video?covered-quick&file`, "Video");
+    try {
+      await startVideo(tab.id, true);
+      await until("live.playingAudio", async () => (await live(tab.id))?.playingAudio === true, 8000);
+      await until("onNowPlaying with video", async () => lastEvent(tab.id, "nowPlaying", (p) => p.state?.hasVideo && p.state?.playbackState === "playing"), 5000);
+      await win("fakeOcclusion:visible");
+      await sleep(600);
+      const since = (await eventsOf(tab.id)).at(-1)?.t ?? 0;
+      const covered = Date.now();
+      await win("fakeOcclusion:occluded");
+      await sleep(800);
+      await win("fakeOcclusion:visible");
+      const popped = (await eventsOf(tab.id)).find((x) => x.name === "pictureInPicture" && x.t > since && x.payload.kind === "video" && x.payload.active);
+      if (!popped) throw new Error("a video whose window was covered for 800 ms didn't pop out");
+      await until("the PiP closed with the window back", async () => {
+        const e = await lastEvent(tab.id, "pictureInPicture");
+        return e && e.t > popped.t && !e.payload.active ? e : null;
+      }, 5000);
+      return { coveredMs: 800, poppedWithinMs: Date.now() - covered };
+    } finally {
+      await win("fakeOcclusion:off").catch(() => null);
+      await closeTab(tab.id);
+      await evalApp(`ac.actions.switchToTab("${first.id}"); return true`);
+    }
   });
 
   await check("auto-picture-in-picture-app-switch", async () => {
