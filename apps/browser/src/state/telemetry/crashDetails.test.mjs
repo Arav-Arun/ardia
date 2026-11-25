@@ -49,6 +49,16 @@ test("a bad memory access says only whether it was near address zero, never the 
   assert.equal(nearNull.crash_exception_code, 1);
   assert.equal(nearNull.crash_fault_near_null, true);
   assert.equal(nativeCrashDetails({ exceptionType: "EXC_BAD_ACCESS", exceptionCodes: "0x0000000000000002, 0x0000000132a8c000" }).crash_fault_near_null, false);
+  for (const [codes, expected] of [
+    ["0x0000000000000001, 0x0000000000000290, 0x0000000100000000", true],
+    ["0x0000000000000001, 0x0000000000000290, 0x0000000100000000, 0x0000000000000005", true],
+    ["0x0000000000000001, 0x0000000132a8c000, 0x0000000000000010", false],
+    ["0x0000000000000001, 0x0000000132a8c000, 0x0000000000000010, 0x0000000000000020", false],
+  ]) {
+    const details = nativeCrashDetails({ exceptionType: "EXC_BAD_ACCESS", exceptionCodes: codes });
+    assert.equal(details.crash_fault_near_null, expected, `the second code decides, whatever follows: ${codes}`);
+    assert.equal(details.crash_exception_code, 1, codes);
+  }
   assert.ok(!Object.values(nearNull).some((value) => typeof value === "string" && /290/.test(value)));
 });
 

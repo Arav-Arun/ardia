@@ -140,7 +140,8 @@ enum CrashReports {
     let usedImages = body["usedImages"] as? [[String: Any]] ?? []
     let images = usedImages.map(imageName)
     let threads = body["threads"] as? [[String: Any]] ?? []
-    let faulting = body["faultingThread"] as? Int ?? threads.firstIndex { $0["triggered"] as? Bool == true } ?? 0
+    let faulting = CrashThread.stack(in: body)
+    let crashedThread = CrashThread.names(in: body)
     let frames = threads.indices.contains(faulting) ? threads[faulting]["frames"] as? [[String: Any]] ?? [] : []
     func simplified(_ frames: [[String: Any]]) -> [[String: Any]] {
       frames.prefix(64).map { frame -> [String: Any] in
@@ -173,8 +174,7 @@ enum CrashReports {
       ("incidentId", header["incident_id"]), ("exceptionType", exception["type"]), ("signal", exception["signal"]),
       ("terminationNamespace", termination["namespace"]), ("terminationIndicator", termination["indicator"]),
       ("exceptionCodes", exception["codes"]),
-      ("crashedThread", threads.indices.contains(faulting) ? threads[faulting]["name"] : nil),
-      ("crashedQueue", threads.indices.contains(faulting) ? threads[faulting]["queue"] : nil),
+      ("crashedThread", crashedThread.thread), ("crashedQueue", crashedThread.queue),
     ] {
       if let value = value as? String { report[key] = value }
     }

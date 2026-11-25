@@ -33,17 +33,18 @@ esac
 `,
   dwarfdump: `#!/usr/bin/env bash
 [ "$1" = "--uuid" ] || exit 2
-read -r uuid arch kind names <"$2"
+read -r uuid arch kind names data <"$2"
 echo "UUID: $(echo "\${uuid#uuid:}" | tr 'a-f' 'A-F') ($arch) $2"
 `,
   otool: `#!/usr/bin/env bash
-read -r uuid arch kind names <"\${@: -1}"
+read -r uuid arch kind names data <"\${@: -1}"
 echo "Mach header"
 echo "      magic  cputype cpusubtype  caps    filetype ncmds sizeofcmds      flags"
 echo "MH_MAGIC_64    ARM64        ALL  0x00        \${kind:-DYLIB}     9       4344 0x00000000"
 `,
   nm: `#!/usr/bin/env bash
-read -r uuid arch kind names <"\${@: -1}"
+read -r uuid arch kind names data <"\${@: -1}"
+for ((i = 0; i < \${data:-0}; i++)); do echo "0000000000002000 d _data$i"; done
 for ((i = 0; i < \${names:-0}; i++)); do echo "0000000000001000 t _f$i"; done
 `,
 };
@@ -71,10 +72,10 @@ before(() => {
   writeFileSync(join(framework, "Versions/Current/Chromium Framework"), `uuid:${FRAMEWORK_UUID} arm64\n`);
   env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, STUB_LOG: join(work, "gh.log"), STUB_RELEASES: join(work, "releases") };
   const dwarf = "Chromium Framework.dSYM/Contents/Resources/DWARF/Chromium Framework";
-  const archive = (uuid, kind = "DSYM", names = 100001) => {
+  const archive = (uuid, kind = "DSYM", names = 100001, data = 0) => {
     const dir = mkdtempSync(join(work, "dsym-"));
     mkdirSync(join(dir, "Chromium Framework.dSYM/Contents/Resources/DWARF"), { recursive: true });
-    writeFileSync(join(dir, dwarf), `uuid:${uuid} arm64 ${kind} ${names}\n`);
+    writeFileSync(join(dir, dwarf), `uuid:${uuid} arm64 ${kind} ${names} ${data}\n`);
     execFileSync("tar", ["-cJf", join(dir, "out.tar.xz"), "-C", dir, "Chromium Framework.dSYM"]);
     return readFileSync(join(dir, "out.tar.xz"));
   };
@@ -103,6 +104,10 @@ before(() => {
   release("engine-333333333333", {
     "ArdiaCore-333333333333-symbols.tar.xz": archive(FRAMEWORK_UUID, "DSYM", 2791),
     "ArdiaCore-333333333333-uuids.txt": `${FRAMEWORK_UUID}\tarm64\t${dwarf}\n`,
+  });
+  release("engine-444444444444", {
+    "ArdiaCore-444444444444-symbols.tar.xz": archive(FRAMEWORK_UUID, "DSYM", 1, 100010),
+    "ArdiaCore-444444444444-uuids.txt": `${FRAMEWORK_UUID}\tarm64\t${dwarf}\n`,
   });
   release("engine-111111111111", {
     "ArdiaCore-111111111111-symbols.tar.xz": archive(OTHER_UUID),
@@ -149,6 +154,12 @@ test("the stripped framework packed as its own dSYM fails: it has the UUID but n
   const thin = run("engine-333333333333");
   assert.equal(thin.status, 1);
   assert.match(thin.stderr, /names 100000 functions or fewer/);
+});
+
+test("a dSYM full of data symbols but stripped of its functions fails: only function names name frames", () => {
+  const result = run("engine-444444444444");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /names 100000 functions or fewer/);
 });
 
 test("an empty symbols archive fails", () => {

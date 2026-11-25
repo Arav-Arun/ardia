@@ -2,7 +2,8 @@
 # Checks that an engine release on GitHub can name the crashes of a framework: the release carries a non-empty
 # ArdiaCore-<key:12>-symbols.tar.xz and ArdiaCore-<key:12>-uuids.txt, the uuids file names a DWARF file for every
 # architecture's UUID of the framework's Chromium Framework binary, and that file in the archive is a dSYM with the
-# same UUID and the build's full symbol table (over 100,000 names; the stripped framework has a few thousand).
+# same UUID and the build's full symbol table (over 100,000 function names, text symbols only; the stripped framework
+# has a few thousand).
 # scripts/publish-engine.sh runs it after its upload and the Release workflow before it builds, so neither an engine
 # nor an app ships with crashes nobody can symbolicate.
 #
@@ -55,7 +56,7 @@ for row in "${rows[@]}"; do
   [ "$found" = "$uuid" ] || die "$rel in $tag's $symbols has UUID ${found:-none} for $arch, not $uuid"
   kind="$(otool -hv -arch "$arch" "$work/symbols/$rel" | awk 'END { print $5 }')"
   [ "$kind" = DSYM ] || die "$rel in $tag's $symbols is a ${kind:-unreadable} file, not a dSYM: a stripped binary names no frames"
-  named="$( (nm -arch "$arch" "$work/symbols/$rel" 2>/dev/null || true) | awk -v m="$min_symbols" 'NR > m { print "yes"; exit }')"
+  named="$( (nm -arch "$arch" "$work/symbols/$rel" 2>/dev/null || true) | awk -v m="$min_symbols" '$2 == "t" || $2 == "T" { n++ } n > m { print "yes"; exit }')"
   [ "$named" = yes ] || die "$rel in $tag's $symbols names $min_symbols functions or fewer: it isn't the build's full symbol table"
   echo "$tag names Chromium Framework $uuid ($arch) with $rel"
 done

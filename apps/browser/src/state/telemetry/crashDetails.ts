@@ -1,4 +1,4 @@
-const EXCEPTION_CODES = /^0x([0-9a-f]{1,16})(?:, 0x([0-9a-f]{1,16})){0,3}$/;
+const EXCEPTION_CODES = /^0x([0-9a-f]{1,16})(?:, 0x([0-9a-f]{1,16})(?:, 0x[0-9a-f]{1,16}){0,2})?$/;
 const MAX_CODE = 0xffffffff;
 const NULL_PAGE_END = 0x100000n;
 

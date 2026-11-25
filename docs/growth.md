@@ -201,11 +201,13 @@ owner's Mac ──▶ ardia.dev/_ch/ (read-only ClickHouse user)   ardia.dev/_re
     `crash_termination_indicator` (the system's indicator as a fixed kind, its trailing code dropped: `trace_trap`,
     `segmentation_fault`, `bus_error`, `abort_trap`, `illegal_instruction`, `killed`, `terminated`, `floating_point`,
     `invalid_page`, else `other`), `crash_exception_code` (the first Mach exception code: 1 is `KERN_INVALID_ADDRESS` for
-    `EXC_BAD_ACCESS`), `crash_fault_near_null` (`EXC_BAD_ACCESS` only: the faulting address is under 1 MB, a null
-    pointer plus an offset; the address itself is never sent), `crash_thread` (the crashed thread's kind from a fixed
-    list: `chrome_main` for `CrBrowserMain`, `CrRendererMain`, `CrGpuMain` and `CrUtilityMain`, `thread_pool`, `io`,
-    `compositor`, `web_worker`, `media`, `react_js`, `react_other`, `appkit_events`, `apple_other`, else `other`;
-    never the name) and `crash_queue` (`main` for the main dispatch queue, else `other`), `crash_uptime_s` (how
+    `EXC_BAD_ACCESS`), `crash_fault_near_null` (`EXC_BAD_ACCESS` only, from the second exception code: whether the
+    faulting address is below 1 MiB. That's an address-range indicator, not proof of a null dereference: it fits a null
+    pointer plus an offset, and also a corrupted pointer that happens to land low. The address itself is never sent),
+    `crash_thread` (the crashed thread's kind from a fixed list, only when the report names its faulting thread:
+    `chrome_main` for `CrBrowserMain`, `CrRendererMain`, `CrGpuMain` and `CrUtilityMain`, `thread_pool`, `io`, `compositor`, `web_worker`, `media`, `react_js`, `react_other`, `appkit_events`, `apple_other`, else `other`;
+    never the name) and `crash_queue` (`main` for the main dispatch queue, else `other`; likewise only for a named
+    faulting thread), `crash_uptime_s` (how
     long the process ran), `crash_vm_writable_mb` (the report's `Writable regions: Total=`, the virtual size of its
     writable regions, not what it wrote), and the context saved before the crash:
     `ctx_tabs`, `ctx_windows`, `ctx_profiles`, `ctx_footprint_mb` (the app process's physical footprint),

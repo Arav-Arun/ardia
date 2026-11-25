@@ -46,6 +46,7 @@ export const LINUX_WORDING: readonly Wording[] = [
     file: "state/telemetry/copy.ts",
     replacements: [
       ...[PHRASES_ONLY_WITH.freezeWatch ?? []].flat().map((phrase): [string, string] => [phrase, ""]),
+      ...[PHRASES_ONLY_WITH.crashReportDetails ?? []].flat().map((phrase): [string, string] => [phrase, ""]),
       ["how many tab changes this Mac sent,", "how many tab changes this computer sent,"],
       ["; on macOS, from Chromium pages while sharing is on, how many video and audio elements failed to play and why (aborted, network, decoding, unsupported source or other), how many video frames were shown and dropped, how many scrolls there were and how many frames they drew in how many milliseconds, each grouped by whether the display runs at 60 Hz or faster and whether Low Power Mode was on, never which page;", ","],
       ["; on macOS, how many update downloads started, finished or failed and why (like a network error or a full disk), how many updates began installing, and how many couldn't be unpacked, failed their signature check or didn't install", ""],
@@ -76,10 +77,6 @@ export const LINUX_WORDING: readonly Wording[] = [
       [
         "After a crash: the exception type and name (never its message), and the function names where it was thrown and on the crashing thread, from this app's crash report",
         "After a crash: the signal and its code, and for each step on the crashing thread the file it ran in (like chrome or libc.so.6) and the position inside that file, with the build IDs of Ardia's own files, read from the crash dump Chromium's crash handler keeps on this computer. Never the dump itself, which can hold page content",
-      ],
-      [
-        "; and for every crash, of Ardia itself or of one of those processes: the code that ended it and its kind (like a trace trap or a segmentation fault), the exception's code and, for a bad memory access, only whether it was near address zero (never the address), and which kind of thread crashed (from a fixed list, like a page's main thread or a worker thread, never its name) and whether it was the main queue",
-        "",
       ],
       [
         "plus the version that crashed, how long the process had run, the total size of its writable memory regions, and how the system ended it (its termination reason, like a signal or a code-signing kill)",
