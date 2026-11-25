@@ -17,7 +17,7 @@ import { withPresetChosen } from "../../lib/presetLook";
 import { noteHistoryImport, noteRepeatBookmarks } from "../telemetry/importRuns";
 import { reloadEngineHistory } from "../history/engineSync";
 import type { ConsentToken } from "../telemetry/choice";
-import { bookmarkRoots, folderLinks, type BookmarkDraft } from "../bookmarks/bookmarks";
+import { bookmarkRoots } from "../bookmarks/bookmarks";
 import { useBrowser } from "../browser/store";
 import { engineProfile, isIncognitoProfile } from "../browser/model";
 import { openPages, pageKey } from "../tabs/pageKeys";
@@ -26,6 +26,7 @@ import { DEFAULT_PROFILE } from "../profiles/profiles";
 import { focusedWindowOf } from "../windows/ui";
 import { originOfLogin } from "../site/savedPasswords";
 import { importFavicons, importTabs, linksOf, windowFor } from "./tabImport";
+import { bookmarkedPages, mergeImportedBookmarks } from "./bookmarkMerge";
 
 export { importTabs };
 export { importArcSpace } from "./sidebarTree";
@@ -36,88 +37,25 @@ export type ImportCounts = { bookmarks: number; history: number; tabs: number; p
 
 export const emptyCounts = (): ImportCounts => ({ bookmarks: 0, history: 0, tabs: 0, passwords: 0, cookies: 0, addresses: 0, cards: 0, rules: 0, archived: 0, settings: 0 });
 
-const toDraft = (n: ImportedNode): BookmarkDraft =>
-  n.type === "url"
-    ? { title: n.title ?? n.url ?? "", url: n.url ?? "", addedAt: n.dateAdded }
-    : { title: n.title, addedAt: n.dateAdded, children: (n.children ?? []).map(toDraft) };
-
 const linkCount = (nodes: ImportedNode[], counts: (link: ImportedNode) => boolean = () => true): number =>
   nodes.reduce((n, c) => n + (c.type === "url" ? (counts(c) ? 1 : 0) : linkCount(c.children ?? [], counts)), 0);
 
 export const untitledLinks = (root: ImportedNode | undefined): number => linkCount(root?.children ?? [], (link) => link.title === "");
 
-const pagesIn = (nodes: ImportedNode[]): string[] =>
-  nodes.flatMap((n) => (n.type === "url" ? (n.url ? [pageKey(n.url)] : []) : pagesIn(n.children ?? [])));
-
-function bookmarkedPages(folderIds: string[]): Set<string> {
-  const b = useBrowser.getState().bookmarks;
-  return new Set(folderIds.flatMap((id) => folderLinks(b, id).map((link) => pageKey(link.url))));
-}
-
-function unseenNodes(nodes: ImportedNode[], seen: ReadonlySet<string>): ImportedNode[] {
-  return nodes.flatMap((n): ImportedNode[] => {
-    if (n.type === "url") return n.url && seen.has(pageKey(n.url)) ? [] : [n];
-    const children = unseenNodes(n.children ?? [], seen);
-    return children.length || !n.children?.length ? [{ ...n, children }] : [];
-  });
-}
-
-function sameFolderIn(parentId: string, source: ImportedNode, sameNameIsEnough: boolean): string | undefined {
-  const nodes = useBrowser.getState().bookmarks.nodes;
-  const parent = nodes[parentId];
-  if (parent?.kind !== "folder") return undefined;
-  const pages = pagesIn(source.children ?? []);
-  return parent.children.find((id) => {
-    const folder = nodes[id];
-    if (folder?.kind !== "folder" || folder.title !== source.title) return false;
-    if (sameNameIsEnough || !pages.length) return true;
-    const held = bookmarkedPages([id]);
-    return pages.some((page) => held.has(page));
-  });
-}
-
-type BookmarkMerge = { profileId: string; seen: ReadonlySet<string>; added: number };
-
-function addBookmarks(m: BookmarkMerge, nodes: ImportedNode[], folderId: string, wrapper?: string) {
-  const links = linkCount(nodes);
-  if (!links) return;
-  const drafts = nodes.map(toDraft);
-  useBrowser.getState().addBookmarkTree(m.profileId, wrapper ? [{ title: wrapper, children: drafts }] : drafts, folderId);
-  m.added += links;
-}
-
-function mergeInto(m: BookmarkMerge, nodes: ImportedNode[], folderId: string, sameNameIsEnough: boolean): ImportedNode[] {
-  const fresh: ImportedNode[] = [];
-  for (const n of nodes) {
-    const same = n.type === "folder" ? sameFolderIn(folderId, n, sameNameIsEnough) : undefined;
-    if (same) addBookmarks(m, mergeInto(m, n.children ?? [], same, true), same);
-    else fresh.push(...unseenNodes([n], m.seen));
-  }
-  return fresh;
-}
-
 export function importBookmarks(profileId: string, root: ImportedNode | undefined, browserName: string, consent?: ConsentToken | null): number {
   if (!root?.children?.length) return 0;
   if (!bookmarkRoots(useBrowser.getState(), profileId)) useBrowser.getState().addBookmarkTree(profileId, []);
   const roots = bookmarkRoots(useBrowser.getState(), profileId)!;
-  const m: BookmarkMerge = { profileId, seen: bookmarkedPages([roots.bar, roots.other]), added: 0 };
   const toolbar = root.children.filter((c) => c.role === "toolbar").flatMap((c) => c.children ?? []);
   const rest = root.children.filter((c) => c.role !== "toolbar");
   const other = rest.flatMap((c) => (c.type === "folder" && (c.role === "other" || c.role === "list") ? (c.children ?? []) : [c]));
-  const title = `Imported from ${browserName}`;
-  let foldersReused = 0;
-  const place = (nodes: ImportedNode[], parentId: string) => {
-    if (!nodes.length) return;
-    const parent = useBrowser.getState().bookmarks.nodes[parentId];
-    if (parent?.kind === "folder" && parent.children.length === 0) return addBookmarks(m, unseenNodes(nodes, m.seen), parentId);
-    const earlier = sameFolderIn(parentId, { type: "folder", title }, true);
-    if (earlier) foldersReused += 1;
-    addBookmarks(m, mergeInto(m, nodes, earlier ?? parentId, !!earlier), earlier ?? parentId, earlier ? undefined : title);
-  };
-  place(toolbar, roots.bar);
-  place(other, roots.other);
-  noteRepeatBookmarks({ skipped: linkCount([...toolbar, ...other]) - m.added, foldersReused }, consent);
-  return m.added;
+  const bookmarks = useBrowser.getState().bookmarks;
+  const nodes = { ...bookmarks.nodes };
+  const seen = bookmarkedPages(nodes, [roots.bar, roots.other]);
+  const merged = mergeImportedBookmarks(nodes, seen, [{ rootId: roots.bar, nodes: toolbar }, { rootId: roots.other, nodes: other }], `Imported from ${browserName}`);
+  if (merged.links || merged.folders) useBrowser.setState({ bookmarks: { ...bookmarks, nodes } });
+  noteRepeatBookmarks({ skipped: merged.skipped, foldersReused: merged.intoEarlier ? 1 : 0 }, consent);
+  return merged.links;
 }
 
 export async function importHistory(

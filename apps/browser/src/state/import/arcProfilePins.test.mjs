@@ -6,6 +6,9 @@ globalThis.__DEV__ = false;
 globalThis.fetch = async () => ({ status: 200 });
 
 let spaces = [];
+const askedKinds = [];
+const asNativeImporterReturns = (all, kinds) =>
+  all.map((space) => ({ ...space, pinned: kinds.includes("pinnedTabs") ? space.pinned : [], tabs: kinds.includes("tabs") ? space.tabs : [] }));
 globalThis.acTestNativeModules = {
   ArdiaImport: {
     addListener: () => ({ remove() {} }),
@@ -13,8 +16,10 @@ globalThis.acTestNativeModules = {
     forgetUnlockedKeys() {},
     isBrowserUnlocked: () => true,
     listExtensions: async () => "[]",
-    importData: async () =>
-      JSON.stringify({
+    importData: async (_job, _browser, _profile, kinds) => {
+      const asked = typeof kinds === "string" ? JSON.parse(kinds) : kinds;
+      askedKinds.push(asked);
+      return JSON.stringify({
         browserId: "arc",
         profileId: "Default",
         history: [],
@@ -25,12 +30,13 @@ globalThis.acTestNativeModules = {
         cookieCount: 0,
         addressCount: 0,
         cardCount: 0,
-        spaces,
+        spaces: asNativeImporterReturns(spaces, asked),
         favorites: [],
         favicons: [],
         failed: [],
         warnings: [],
-      }),
+      });
+    },
   },
 };
 
@@ -66,13 +72,29 @@ const source = {
 
 function pinsByProfile() {
   const s = S();
-  const pinnedUrls = (profileId) => [
-    ...Object.values(s.tabs).filter((t) => t.profileId === profileId && t.pin).map((t) => t.pinnedUrl ?? t.url),
-    ...Object.values(s.groups).filter((g) => g.profileId === profileId && g.pinned).flatMap((g) => g.tabIds.map((id) => s.tabs[id]?.url)),
-    ...(s.parkedPins[profileId]?.tabs ?? []).map((t) => t.pinnedUrl ?? t.url),
-  ];
-  return Object.fromEntries(s.profileOrder.map((id) => [s.profiles[id].name, [...new Set(pinnedUrls(id))].sort()]));
+  const pinsOf = (profileId) => {
+    const rows = Object.values(s.tabs).filter((t) => t.profileId === profileId && t.pin).map((t) => t.pinnedUrl ?? t.url);
+    const folders = {};
+    for (const g of Object.values(s.groups).filter((x) => x.profileId === profileId && x.pinned)) folders[g.name] = g.tabIds.map((id) => s.tabs[id]?.pinnedUrl ?? s.tabs[id]?.url).sort();
+    const parked = s.parkedPins[profileId];
+    for (const t of parked?.tabs ?? []) {
+      const folder = parked.groups.find((g) => g.id === t.groupId);
+      if (folder) (folders[folder.name] ??= []).push(t.pinnedUrl ?? t.url);
+      else rows.push(t.pinnedUrl ?? t.url);
+    }
+    for (const name of Object.keys(folders)) folders[name] = [...new Set(folders[name])].sort();
+    return { rows: [...new Set(rows)].sort(), folders };
+  };
+  return Object.fromEntries(s.profileOrder.map((id, i) => [SPACE_NAMES[i] ?? s.profiles[id].name, pinsOf(id)]));
 }
+
+const SPACE_NAMES = ["Work", "Home", "Side"];
+const IMPORTED = Object.fromEntries(
+  [["Work", "work"], ["Home", "home"], ["Side", "side"]].map(([name, id]) => [
+    name,
+    { rows: [`https://${id}-row.example/`], folders: { [`${name} folder`]: [`https://${id}-one.example/`, `https://${id}-two.example/`] } },
+  ]),
+);
 
 async function closeWindow(id) {
   windows.emit({ type: "closeRequest", id });
@@ -89,8 +111,9 @@ async function importArcProfiles() {
   S().createWindow({ url: "https://start.example/" });
   S().updateSettings({ shareTabsAcrossWindows: true });
   spaces = [arcSpace("work", "Work"), arcSpace("home", "Home"), arcSpace("side", "Side")];
-  patchImport({ source, sourceProfiles: ["Default"], spaces: spaces.map((s) => s.id), target: "default", kinds: new Set(["spaces"]) });
-  await runImport(new Set(["spaces"]));
+  askedKinds.length = 0;
+  patchImport({ source, sourceProfiles: ["Default"], spaces: spaces.map((s) => s.id), target: "default", kinds: new Set(["tabs"]) });
+  await runImport(new Set(["tabs"]));
   const [first, home, side] = S().profileOrder;
   return { window: S().windowOrder[0], first, home, side, imported: pinsByProfile() };
 }
@@ -148,11 +171,15 @@ for (const [name, run] of Object.entries(steps)) {
     const stop = startPersistence();
     try {
       const imported = await importArcProfiles();
-      assert.deepEqual(imported.imported.Home, ["https://home-one.example/", "https://home-row.example/", "https://home-two.example/"]);
+      assert.ok(askedKinds.length > 0 && askedKinds.every((k) => ["tabs", "spaces", "pinnedTabs"].every((kind) => k.includes(kind))), JSON.stringify(askedKinds));
+      for (const profile of ["Work", "Home", "Side"]) {
+        assert.deepEqual(imported.imported[profile], IMPORTED[profile], `${profile} got its pinned row and its pinned folder with both tabs`);
+        assert.ok(imported.imported[profile].rows.length > 0 && Object.keys(imported.imported[profile].folders).length > 0, `${profile} starts with pins`);
+      }
       await run(imported);
       await showEveryProfileThenRelaunch();
       const now = pinsByProfile();
-      for (const profile of ["Work", "Home", "Side"]) assert.deepEqual(now[profile], imported.imported[profile], `${profile} keeps its pins`);
+      for (const profile of ["Work", "Home", "Side"]) assert.deepEqual(now[profile], imported.imported[profile], `${profile} keeps its pinned row and its pinned folder with both tabs`);
       assert.equal(Object.values(S().parkedPins).reduce((n, p) => n + p.tabs.length, 0), 0, "every profile was shown again, so nothing is left parked");
     } finally {
       stop();

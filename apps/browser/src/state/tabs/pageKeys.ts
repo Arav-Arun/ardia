@@ -2,13 +2,18 @@ import type { BrowserState } from "../browser/store";
 import { pinSection } from "../browser/model";
 import { pinnedGroupMembers } from "../browser/structure";
 
+const DEFAULT_PORTS: Partial<Record<string, string>> = { "http://": ":80", "https://": ":443", "ws://": ":80", "wss://": ":443" };
+
 export function pageKey(url: string): string {
   const m = /^([a-z][a-z0-9+.-]*:\/\/)([^/?#]*)(.*)$/i.exec(url.trim());
   if (!m) return url;
   const at = m[2]!.lastIndexOf("@");
-  const host = `${m[2]!.slice(0, at + 1)}${m[2]!.slice(at + 1).toLowerCase()}`;
+  const scheme = m[1]!.toLowerCase();
+  const port = DEFAULT_PORTS[scheme];
+  const named = m[2]!.slice(at + 1).toLowerCase();
+  const host = `${m[2]!.slice(0, at + 1)}${port && named.endsWith(port) ? named.slice(0, -port.length) : named}`;
   const rest = m[3]!.startsWith("/") ? m[3]! : `/${m[3]}`;
-  return `${m[1]!.toLowerCase()}${host}${rest.replace(/#$/, "")}`;
+  return `${scheme}${host}${rest.replace(/#$/, "")}`;
 }
 
 const pageKeys = (tabs: { url: string; pinnedUrl?: string | null }[]): Set<string> =>

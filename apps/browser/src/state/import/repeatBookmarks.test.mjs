@@ -56,7 +56,7 @@ test("importing the same Dia bookmarks again adds no second Imported from Dia fo
   assert.deepEqual({ bar: bar(), other: other() }, first, "the bar and Other Bookmarks are unchanged");
   const counts = takeImportRuns();
   assert.equal(counts.import_bookmarks_already_there, 12);
-  assert.equal(counts.import_bookmark_folders_reused, 3, "Later went straight into the empty Other Bookmarks, so only the bar has a folder to reuse");
+  assert.equal(counts.import_bookmark_folders_reused, 0, "an import that adds nothing reuses no folder");
 });
 
 test("a repeat import of bookmarks that went straight onto an empty bar adds nothing (#2389)", () => {
@@ -102,4 +102,92 @@ test("the source's own repeated links and empty folders still come over on a fir
   assert.deepEqual(bar(), ["https://a.example/", ["Again", ["https://a.example/"]], ["Empty", []]]);
   assert.equal(importBookmarks(P, dia(twice), "Dia"), 0);
   assert.equal(bar().length, 3);
+});
+
+const childNamed = (parentId, title) => S().bookmarks.nodes[parentId].children.find((id) => S().bookmarks.nodes[id].title === title);
+const barId = () => bookmarkRoots(S(), P).bar;
+
+test("two folders of the same name each take their own new links, matched by the links they share", () => {
+  start(["Mine", "https://mine.example/"]);
+  const nested = (extraA = [], extraB = []) => [folder("Top", [folder("Same", [link("A", "https://a.example/"), ...extraA]), folder("Same", [link("B", "https://b.example/"), ...extraB])])];
+  importBookmarks(P, dia(nested()), "Dia");
+  assert.equal(importBookmarks(P, dia(nested([link("A2", "https://a2.example/")], [link("B2", "https://b2.example/")])), "Dia"), 2);
+  assert.deepEqual(bar()[1], ["Imported from Dia", [["Top", [["Same", ["https://a.example/", "https://a2.example/"]], ["Same", ["https://b.example/", "https://b2.example/"]]]]]]);
+});
+
+test("a folder that went straight onto the bar keeps taking its new links after a later import made an Imported from folder", () => {
+  start();
+  const work = (...more) => folder("Work", [link("Docs", "https://docs.example/"), link("Wiki", "https://wiki.example/"), ...more]);
+  importBookmarks(P, dia([work()]), "Dia");
+  importBookmarks(P, dia([work(link("Plan", "https://plan.example/")), link("News", "https://news.example/")]), "Dia");
+  importBookmarks(P, dia([work(link("Plan", "https://plan.example/"), link("Ship", "https://ship.example/")), link("News", "https://news.example/")]), "Dia");
+  assert.deepEqual(bar(), [
+    ["Work", ["https://docs.example/", "https://wiki.example/", "https://plan.example/", "https://ship.example/"]],
+    ["Imported from Dia", ["https://news.example/"]],
+  ]);
+});
+
+test("another browser's folder that shares a link with one an earlier import put on the bar gets its own Imported from folder", () => {
+  start();
+  importBookmarks(P, dia([folder("Work", [link("Docs", "https://docs.example/"), link("Wiki", "https://wiki.example/")])]), "Dia");
+  assert.equal(importBookmarks(P, dia([folder("Work", [link("Docs", "https://docs.example/"), link("Chrome", "https://chrome.example/"), link("Mail", "https://mail.example/")])]), "Chrome"), 2);
+  assert.deepEqual(bar(), [
+    ["Work", ["https://docs.example/", "https://wiki.example/"]],
+    ["Imported from Chrome", [["Work", ["https://chrome.example/", "https://mail.example/"]]]],
+  ]);
+});
+
+test("folders with no links come over: on a first import, and as a new folder in a repeat whose links are all there", () => {
+  start();
+  assert.equal(importBookmarks(P, dia([folder("Empty", []), folder("Also empty", [])]), "Dia"), 0);
+  assert.deepEqual(bar(), [["Empty", []], ["Also empty", []]]);
+  assert.equal(importBookmarks(P, dia([folder("Empty", []), folder("Also empty", [])]), "Dia"), 0);
+  assert.equal(bar().length, 2, "and aren't made twice");
+  start(["Mine", "https://mine.example/"]);
+  importBookmarks(P, dia(DIA_BAR), "Dia");
+  importBookmarks(P, dia([...DIA_BAR, folder("Ideas", [])]), "Dia");
+  assert.deepEqual(bar()[1][1].at(-1), ["Ideas", []]);
+  importBookmarks(P, dia([...DIA_BAR, folder("Ideas", [])]), "Dia");
+  assert.equal(bar()[1][1].filter((n) => Array.isArray(n) && n[0] === "Ideas").length, 1);
+});
+
+test("a link with the scheme's default port is the page already bookmarked without it", () => {
+  start(["Port", "https://port.example/"], ["Plain", "http://plain.example/a"]);
+  assert.equal(importBookmarks(P, dia([link("Port", "https://port.example:443/"), link("Plain", "HTTP://Plain.Example:80/a"), link("Other port", "https://port.example:8443/")]), "Dia"), 1);
+  assert.deepEqual(bar().at(-1), ["Imported from Dia", ["https://port.example:8443/"]]);
+});
+
+test("a repeat import that adds one link to each of 1,500 folders writes the store once", () => {
+  start(["Mine", "https://mine.example/"]);
+  const folders = (extra) => Array.from({ length: 1500 }, (_, i) => folder(`F${i}`, [link("a", `https://f${i}.example/a`), ...(extra ? [link("b", `https://f${i}.example/b`)] : [])]));
+  importBookmarks(P, dia(folders(false)), "Dia");
+  let writes = 0;
+  const stop = useBrowser.subscribe((s, prev) => {
+    if (s.bookmarks !== prev.bookmarks) writes += 1;
+  });
+  const began = performance.now();
+  assert.equal(importBookmarks(P, dia(folders(true)), "Dia"), 1500);
+  const took = performance.now() - began;
+  stop();
+  assert.equal(writes, 1);
+  assert.ok(took < 2000, `took ${took} ms`);
+  const wrapper = childNamed(barId(), "Imported from Dia");
+  assert.equal(S().bookmarks.nodes[wrapper].children.length, 1500, "every folder took its link in place");
+});
+
+test("Imported from folders reused counts each import that added to a folder an earlier one made, and no other", () => {
+  start(["Mine", "https://mine.example/"]);
+  importBookmarks(P, dia(DIA_BAR), "Dia");
+  takeImportRuns();
+  importBookmarks(P, dia(DIA_BAR), "Dia");
+  assert.equal(takeImportRuns().import_bookmark_folders_reused, 0, "nothing added");
+  importBookmarks(P, dia([...DIA_BAR, link("News", "https://news.example/")]), "Dia");
+  assert.equal(takeImportRuns().import_bookmark_folders_reused, 1, "added to Imported from Dia");
+  start();
+  importBookmarks(P, dia(DIA_BAR), "Dia");
+  takeImportRuns();
+  importBookmarks(P, dia([DIA_BAR[0], folder("Work", [...DIA_BAR[1].children, link("Plan", "https://plan.example/")])]), "Dia");
+  assert.equal(takeImportRuns().import_bookmark_folders_reused, 1, "added to a folder an earlier import put straight on the bar");
+  importBookmarks(P, dia([link("Fresh", "https://fresh.example/")]), "Chrome");
+  assert.equal(takeImportRuns().import_bookmark_folders_reused, 0, "a new Imported from folder isn't a reused one");
 });
