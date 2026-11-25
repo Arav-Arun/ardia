@@ -87,7 +87,11 @@ async function holdLock({ root, env, cleanup }) {
         return await exited;
       } finally {
         clearTimeout(fallback);
-        await until(() => !groupAlive(holder.pid), 5_000, "the holder's process group to exit").catch(() => signalGroup(holder.pid, "SIGKILL"));
+        const groupGone = () => !groupAlive(holder.pid);
+        await until(groupGone, 5_000, "the holder's process group to exit").catch(async () => {
+          signalGroup(holder.pid, "SIGKILL");
+          await until(groupGone, 5_000, "the holder's process group to exit after SIGKILL");
+        });
       }
     })());
   cleanup(release);
