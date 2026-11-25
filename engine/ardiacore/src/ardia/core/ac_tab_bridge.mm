@@ -132,7 +132,38 @@ void TabBridge::EnforceCloseDeadline(bool unload_given) {
   StartUnload();
 }
 
+void TabBridge::AskBeforeLeaving(base::OnceCallback<void(bool)> answer) {
+  if (leave_answer_) {
+    std::move(answer).Run(false);
+    return;
+  }
+  if (closing_after_unload() || !web_contents()->NeedToFireBeforeUnload()) {
+    std::move(answer).Run(true);
+    return;
+  }
+  leave_answer_ = std::move(answer);
+  leave_ask_answered_ = false;
+  web_contents()->DispatchBeforeUnload(false);
+}
+
+bool TabBridge::TakeAnsweredLeaveAsk() {
+  return std::exchange(leave_ask_answered_, false);
+}
+
+void TabBridge::AnswerLeaveAsk(bool leave) {
+  if (!leave_answer_) {
+    return;
+  }
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(std::move(leave_answer_), leave));
+}
+
 void TabBridge::BeforeUnloadFired(bool proceed) {
+  if (leave_answer_) {
+    leave_ask_answered_ = true;
+    AnswerLeaveAsk(proceed);
+    return;
+  }
   if (proceed) {
     if (close_step_ == CloseStep::kAwaitingBeforeUnload) {
       close_step_ = CloseStep::kUnloading;
@@ -182,6 +213,7 @@ const char* TerminationName(base::TerminationStatus status) {
 void TabBridge::PrimaryMainFrameRenderProcessGone(
     base::TerminationStatus status) {
   ScopedNotifying notifying(ScopedNotifying::Kind::kNavigation);
+  AnswerLeaveAsk(true);
   if (status == base::TERMINATION_STATUS_NORMAL_TERMINATION ||
       status == base::TERMINATION_STATUS_STILL_RUNNING) {
     return;
@@ -367,6 +399,7 @@ void TabBridge::DidUpdateAudioMutingState(bool muted) {
 }
 
 void TabBridge::WebContentsDestroyed() {
+  AnswerLeaveAsk(true);
   audible_subscription_ = {};
   if (LivePopups()) {
     popups_->manager()->RemoveObserver(this);

@@ -174,6 +174,24 @@ void ACWebContentsDelegate::RendererResponsive(
   TabBridge::GetOrCreate(source)->SetResponsive(render_widget_host);
 }
 
+void ACWebContentsDelegate::BeforeUnloadFired(content::WebContents* source,
+                                              bool proceed,
+                                              bool* proceed_to_fire_unload) {
+  TabBridge* bridge = source ? TabBridge::FromWebContents(source) : nullptr;
+  if (bridge && bridge->TakeAnsweredLeaveAsk() &&
+      !bridge->closing_after_unload()) {
+    BrowserWindowInterface* browser =
+        GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(source);
+    if (!browser ||
+        !UnloadController::From(browser)->is_attempting_to_close_browser()) {
+      *proceed_to_fire_unload = false;
+      return;
+    }
+  }
+  BrowserWebContentsDelegate::BeforeUnloadFired(source, proceed,
+                                                proceed_to_fire_unload);
+}
+
 void ACWebContentsDelegate::CloseContents(content::WebContents* source) {
   TabBridge* bridge = source ? TabBridge::FromWebContents(source) : nullptr;
   if (!bridge || !bridge->closing_after_unload()) {

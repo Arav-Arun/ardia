@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "base/functional/bind.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/ardia/ac_tab_restore.h"
 #include "chrome/browser/lifetime/browser_shutdown.h"
@@ -472,6 +473,26 @@ using ardiacore::NS;
     return;
   }
   ardiacore::DeleteTabClosedByHost(_contents);
+}
+
+- (BOOL)asksBeforeLeaving {
+  if (!_contents) {
+    return NO;
+  }
+  ardiacore::TabBridge* bridge = ardiacore::TabBridge::FromWebContents(_contents);
+  return !(bridge && bridge->closing_after_unload()) &&
+         _contents->NeedToFireBeforeUnload();
+}
+
+- (void)askBeforeLeaving:(void (^)(BOOL leave))answer {
+  if (!self.asksBeforeLeaving) {
+    answer(YES);
+    return;
+  }
+  ardiacore::TabBridge::GetOrCreate(_contents)->AskBeforeLeaving(
+      base::BindOnce(^(bool leave) {
+        answer(leave);
+      }));
 }
 
 - (void)close {

@@ -258,6 +258,9 @@ class ACWebContentsDelegate : public BrowserWebContentsDelegate {
   void RendererResponsive(content::WebContents* source,
                           content::RenderWidgetHost* render_widget_host) override;
   void CloseContents(content::WebContents* source) override;
+  void BeforeUnloadFired(content::WebContents* source,
+                         bool proceed,
+                         bool* proceed_to_fire_unload) override;
   content::WebContents* AddNewContents(
       content::WebContents* source,
       std::unique_ptr<content::WebContents> new_contents,
@@ -325,6 +328,9 @@ class TabBridge : public content::WebContentsObserver,
   bool closing_after_unload() const {
     return close_step_ >= CloseStep::kAwaitingBeforeUnload;
   }
+  void AskBeforeLeaving(base::OnceCallback<void(bool)> answer);
+  bool TakeAnsweredLeaveAsk();
+  void AnswerLeaveAsk(bool leave);
   void SetTemporary(bool temporary);
   void SetTemporarySource(int32_t source_id);
   bool temporary() const { return temporary_id_ != 0; }
@@ -397,6 +403,8 @@ class TabBridge : public content::WebContentsObserver,
   base::WeakPtrFactory<TabBridge> weak_factory_{this};
   float pinch_scale_ = 1;
   CloseStep close_step_ = CloseStep::kOpen;
+  base::OnceCallback<void(bool)> leave_answer_;
+  bool leave_ask_answered_ = false;
   int32_t temporary_id_ = 0;
   int32_t temporary_source_id_ = 0;
   bool made_ahead_ = false;
