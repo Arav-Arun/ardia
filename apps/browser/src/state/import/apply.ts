@@ -27,6 +27,7 @@ import { focusedWindowOf } from "../windows/ui";
 import { originOfLogin } from "../site/savedPasswords";
 import { importFavicons, importTabs, linksOf, windowFor } from "./tabImport";
 import { bookmarkedPages, mergeImportedBookmarks } from "./bookmarkMerge";
+import { readImportedFolders, saveImportedFolders } from "./importedFolders";
 
 export { importTabs };
 export { importArcSpace } from "./sidebarTree";
@@ -49,11 +50,15 @@ export function importBookmarks(profileId: string, root: ImportedNode | undefine
   const toolbar = root.children.filter((c) => c.role === "toolbar").flatMap((c) => c.children ?? []);
   const rest = root.children.filter((c) => c.role !== "toolbar");
   const other = rest.flatMap((c) => (c.type === "folder" && (c.role === "other" || c.role === "list") ? (c.children ?? []) : [c]));
-  const bookmarks = useBrowser.getState().bookmarks;
-  const nodes = { ...bookmarks.nodes };
+  const s = useBrowser.getState();
+  const engine = engineProfile(s, profileId);
+  const nodes = { ...s.bookmarks.nodes };
   const seen = bookmarkedPages(nodes, [roots.bar, roots.other]);
-  const merged = mergeImportedBookmarks(nodes, seen, [{ rootId: roots.bar, nodes: toolbar }, { rootId: roots.other, nodes: other }], `Imported from ${browserName}`);
-  if (merged.links || merged.folders) useBrowser.setState({ bookmarks: { ...bookmarks, nodes } });
+  const made = readImportedFolders();
+  const merged = mergeImportedBookmarks(nodes, seen, [{ rootId: roots.bar, nodes: toolbar }, { rootId: roots.other, nodes: other }], { source: browserName, engine, made });
+  if (merged.links || merged.folders) useBrowser.setState({ bookmarks: { ...s.bookmarks, nodes } });
+  const kept = Object.entries(made).filter(([id, f]) => f.engine !== engine || !s.bookmarksReady[engine] || nodes[id]);
+  if (Object.keys(merged.made).length || kept.length !== Object.keys(made).length) saveImportedFolders({ ...Object.fromEntries(kept), ...merged.made });
   noteRepeatBookmarks({ skipped: merged.skipped, foldersReused: merged.intoEarlier ? 1 : 0 }, consent);
   return merged.links;
 }

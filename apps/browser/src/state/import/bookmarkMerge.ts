@@ -2,22 +2,28 @@ import type { BookmarkNode as ImportedNode } from "../../platform/importModule";
 import type { Bookmarks } from "../browser/types";
 import { newBookmarkId } from "../bookmarks/bookmarks";
 import { pageKey } from "../tabs/pageKeys";
+import { pairFolders, type FolderEdge } from "./folderMatching";
 
 type Nodes = Bookmarks["nodes"];
 
-export type BookmarkMerge = { links: number; folders: number; skipped: number; intoEarlier: boolean };
+export type ImportedFolder = { source: string; engine: string; wrapper?: true };
+export type ImportedFolders = Record<string, ImportedFolder>;
+
+export type BookmarkMerge = { links: number; folders: number; skipped: number; intoEarlier: boolean; made: ImportedFolders };
 
 type Merging = {
   nodes: Nodes;
   before: Nodes;
   seen: ReadonlySet<string>;
   pages: Map<string, ReadonlySet<string>>;
-  titled: Map<string, Map<string, string[]>>;
   now: number;
   out: BookmarkMerge;
 };
 
-type Place = { id: string; sameNameIsEnough: boolean };
+type Place = { id: string; earlier: boolean; takes: (folderId: string) => boolean };
+type Candidate = { id: string; earlier: boolean };
+
+const SHARED_PAGE_LIMIT = 16;
 
 const pagesIn = (nodes: ImportedNode[]): string[] =>
   nodes.flatMap((n) => (n.type === "folder" ? pagesIn(n.children ?? []) : n.url ? [pageKey(n.url)] : []));
@@ -37,24 +43,15 @@ function pagesUnder(m: PageIndex, id: string): ReadonlySet<string> {
   return out;
 }
 
-function foldersTitled(m: Merging, parentId: string, title: string): string[] {
-  let index = m.titled.get(parentId);
-  if (!index) {
-    index = new Map();
-    const parent = m.before[parentId];
-    for (const id of parent?.kind === "folder" ? parent.children : []) {
-      const child = m.before[id];
-      if (child?.kind !== "folder") continue;
-      index.set(child.title, [...(index.get(child.title) ?? []), id]);
-    }
-    m.titled.set(parentId, index);
-  }
-  return index.get(title) ?? [];
-}
-
 export function bookmarkedPages(nodes: Nodes, folderIds: string[]): Set<string> {
   const index: PageIndex = { before: nodes, pages: new Map() };
   return new Set(folderIds.flatMap((id) => [...pagesUnder(index, id)]));
+}
+
+function childFolders(m: Merging, place: Place): Candidate[] {
+  const parent = m.before[place.id];
+  if (parent?.kind !== "folder") return [];
+  return parent.children.filter((id) => m.before[id]?.kind === "folder" && place.takes(id)).map((id) => ({ id, earlier: place.earlier }));
 }
 
 function unseen(m: Merging, nodes: ImportedNode[]): ImportedNode[] {
@@ -78,47 +75,44 @@ function build(m: Merging, n: ImportedNode, parentId: string): string {
   return id;
 }
 
-function append(m: Merging, parentId: string, nodes: ImportedNode[]) {
+function append(m: Merging, parentId: string, nodes: ImportedNode[], earlier: boolean): string[] {
   const parent = m.nodes[parentId];
-  if (!nodes.length || parent?.kind !== "folder") return;
+  if (!nodes.length || parent?.kind !== "folder") return [];
   const ids = nodes.map((n) => build(m, n, parentId));
   m.nodes[parentId] = { ...parent, children: [...parent.children, ...ids] };
-  if (m.before[parentId]?.parentId) m.out.intoEarlier = true;
+  if (earlier) m.out.intoEarlier = true;
+  return ids;
 }
 
-function heldBySource(m: Merging, folderId: string, sourcePages: ReadonlySet<string>): boolean {
-  const held = pagesUnder(m, folderId);
-  if (!held.size) return !sourcePages.size;
-  let shared = 0;
-  for (const page of held) if (sourcePages.has(page)) shared += 1;
-  return shared * 2 > held.size;
-}
-
-function overlap(m: Merging, folderId: string, sourcePages: ReadonlySet<string>): number {
-  let shared = 0;
-  for (const page of pagesUnder(m, folderId)) if (sourcePages.has(page)) shared += 1;
-  return shared;
-}
-
-function matchFolders(m: Merging, folders: ImportedNode[], places: Place[]): Map<ImportedNode, string> {
-  const pairs: { source: number; folder: string; place: number; candidate: number; shared: number }[] = [];
-  folders.forEach((source, s) => {
-    const sourcePages = new Set(pagesIn(source.children ?? []));
-    places.forEach((place, p) => {
-      foldersTitled(m, place.id, source.title).forEach((folder, candidate) => {
-        if (!place.sameNameIsEnough && !heldBySource(m, folder, sourcePages)) return;
-        pairs.push({ source: s, folder, place: p, candidate, shared: overlap(m, folder, sourcePages) });
-      });
+function matchFolders(m: Merging, folders: ImportedNode[], places: Place[]): Map<ImportedNode, Candidate> {
+  const byTitle = new Map<string, { sources: ImportedNode[]; candidates: Candidate[] }>();
+  const group = (title: string) => {
+    let g = byTitle.get(title);
+    if (!g) byTitle.set(title, (g = { sources: [], candidates: [] }));
+    return g;
+  };
+  for (const source of folders) group(source.title).sources.push(source);
+  for (const place of places) for (const c of childFolders(m, place)) byTitle.get(m.before[c.id]?.title ?? "")?.candidates.push(c);
+  const matched = new Map<ImportedNode, Candidate>();
+  for (const { sources, candidates } of byTitle.values()) {
+    if (!candidates.length) continue;
+    const holders = new Map<string, number[]>();
+    candidates.forEach((c, i) => {
+      for (const page of pagesUnder(m, c.id)) holders.set(page, [...(holders.get(page) ?? []), i]);
     });
-  });
-  pairs.sort((a, z) => z.shared - a.shared || a.place - z.place || a.source - z.source || a.candidate - z.candidate);
-  const matched = new Map<ImportedNode, string>();
-  const taken = new Set<string>();
-  for (const pair of pairs) {
-    const source = folders[pair.source]!;
-    if (matched.has(source) || taken.has(pair.folder)) continue;
-    matched.set(source, pair.folder);
-    taken.add(pair.folder);
+    const edges: FolderEdge[] = [];
+    sources.forEach((source, s) => {
+      const shared = new Map<number, number>();
+      for (const page of new Set(pagesIn(source.children ?? []))) {
+        const held = holders.get(page);
+        if (!held || held.length > SHARED_PAGE_LIMIT) continue;
+        for (const c of held) shared.set(c, (shared.get(c) ?? 0) + 1);
+      }
+      for (const [candidate, count] of shared) edges.push({ source: s, candidate, shared: count });
+    });
+    pairFolders(sources.length, candidates.length, edges).forEach((c, s) => {
+      if (c >= 0) matched.set(sources[s]!, candidates[c]!);
+    });
   }
   return matched;
 }
@@ -128,27 +122,46 @@ function mergeLevel(m: Merging, nodes: ImportedNode[], places: Place[]): Importe
   const fresh: ImportedNode[] = [];
   for (const n of nodes) {
     const folder = matched.get(n);
-    if (folder) append(m, folder, mergeLevel(m, n.children ?? [], [{ id: folder, sameNameIsEnough: true }]));
-    else fresh.push(...unseen(m, [n]));
+    if (!folder) {
+      fresh.push(...unseen(m, [n]));
+      continue;
+    }
+    const inner = mergeLevel(m, n.children ?? [], [{ id: folder.id, earlier: folder.earlier, takes: () => true }]);
+    append(m, folder.id, inner, folder.earlier);
   }
   return fresh;
 }
 
-export function mergeImportedBookmarks(nodes: Nodes, seen: ReadonlySet<string>, placements: { rootId: string; nodes: ImportedNode[] }[], wrapperTitle: string): BookmarkMerge {
-  const m: Merging = { nodes, before: { ...nodes }, seen, pages: new Map(), titled: new Map(), now: Date.now(), out: { links: 0, folders: 0, skipped: 0, intoEarlier: false } };
+export function mergeImportedBookmarks(
+  nodes: Nodes,
+  seen: ReadonlySet<string>,
+  placements: { rootId: string; nodes: ImportedNode[] }[],
+  from: { source: string; engine: string; made: ImportedFolders },
+): BookmarkMerge {
+  const m: Merging = { nodes, before: { ...nodes }, seen, pages: new Map(), now: Date.now(), out: { links: 0, folders: 0, skipped: 0, intoEarlier: false, made: {} } };
+  const record = (id: string, wrapper: boolean) => (m.out.made[id] = { source: from.source, engine: from.engine, ...(wrapper ? { wrapper: true as const } : {}) });
+  const wrapperTitle = `Imported from ${from.source}`;
+  const ours = (id: string) => from.made[id]?.source === from.source;
   for (const { rootId, nodes: incoming } of placements) {
     const root = m.before[rootId];
     if (!incoming.length || root?.kind !== "folder") continue;
     if (!root.children.length) {
-      append(m, rootId, unseen(m, incoming));
+      for (const id of append(m, rootId, unseen(m, incoming), false)) if (m.nodes[id]?.kind === "folder") record(id, false);
       continue;
     }
-    const wrapper = foldersTitled(m, rootId, wrapperTitle)[0];
-    const places: Place[] = [...(wrapper ? [{ id: wrapper, sameNameIsEnough: true }] : []), { id: rootId, sameNameIsEnough: false }];
+    const folders = root.children.filter((id) => m.before[id]?.kind === "folder");
+    const recorded = folders.find((id) => ours(id) && from.made[id]!.wrapper);
+    const adopted = recorded ? undefined : folders.find((id) => !from.made[id] && m.before[id]!.title === wrapperTitle);
+    const wrapper = recorded ?? adopted;
+    if (adopted) record(adopted, true);
+    const places: Place[] = [
+      ...(wrapper ? [{ id: wrapper, earlier: !!recorded, takes: () => true }] : []),
+      { id: rootId, earlier: true, takes: (id: string) => ours(id) && !from.made[id]!.wrapper },
+    ];
     const fresh = mergeLevel(m, incoming, places);
     if (!fresh.length) continue;
-    if (wrapper) append(m, wrapper, fresh);
-    else append(m, rootId, [{ type: "folder", title: wrapperTitle, children: fresh }]);
+    if (wrapper) append(m, wrapper, fresh, !!recorded);
+    else for (const id of append(m, rootId, [{ type: "folder", title: wrapperTitle, children: fresh }], false)) record(id, true);
   }
   m.out.skipped = placements.reduce((n, p) => n + linkCount(p.nodes), 0) - m.out.links;
   return m.out;

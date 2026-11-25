@@ -104,14 +104,20 @@ issue	hash	file	test
 2245	73e18a6e4be80bc4	apps/browser/src/state/extensions/extensions.test.mjs	Add on an install prompt the engine no longer holds says so in the dialog, and Cancel on one rejects nothing
 2245	fe17442fdad3de61	apps/desktop/src/pageFocus.test.mjs	focusIfUnfocused gives the page the keyboard unless a shell field has it, and answers whether it did
 2260	cb2884a57b51a848	apps/browser/src/state/sync/scopeWrites.test.mjs	a sync record or base is written only through putRecord, dropRecord, putBase and dropBase, so the cycle's journal sees every change
+2389	79657b1f00aacd5b	apps/browser/src/state/import/repeatBookmarks.test.mjs	3,000 folders of the same name each take their own new link, in one store write
 2389	da5ab572d9dd685a	apps/browser/src/state/import/repeatBookmarks.test.mjs	a folder that went straight onto the bar keeps taking its new links after a later import made an Imported from folder
 2389	3bc97c412eeb97ea	apps/browser/src/state/import/repeatBookmarks.test.mjs	a link with the scheme's default port is the page already bookmarked without it
+2389	e2a5d38489f0c2bb	apps/browser/src/state/import/repeatBookmarks.test.mjs	a port written with leading zeros is the scheme's default port, or the same port without them
 2389	b128328bd686f29c	apps/browser/src/state/import/repeatBookmarks.test.mjs	a repeat import brings only what's new, into the folders it made, and keeps what the person added or moved (#2389)
 2389	9bf1a8563dc099e2	apps/browser/src/state/import/repeatBookmarks.test.mjs	a repeat import of bookmarks that went straight onto an empty bar adds nothing (#2389)
+2389	f39891239ee6d559	apps/browser/src/state/import/repeatBookmarks.test.mjs	an empty folder an import put on the bar takes the links the source adds to it later
 2389	ad6399d40b1b88d8	apps/browser/src/state/import/repeatBookmarks.test.mjs	another browser's folder that shares a link with one an earlier import put on the bar gets its own Imported from folder
+2389	5cb5db231031daa3	apps/browser/src/state/import/repeatBookmarks.test.mjs	another browser's folder that went straight onto the bar never takes a Dia import, even when Dia's folder holds all its links
+2389	536251843cd7252e	apps/browser/src/state/import/repeatBookmarks.test.mjs	folders of the same name are matched as a whole, so one that shares a link with both doesn't take the other's
 2389	900b5292846d7517	apps/browser/src/state/import/repeatBookmarks.test.mjs	folders with no links come over: on a first import, and as a new folder in a repeat whose links are all there
 2389	286b3766a861cc3f	apps/browser/src/state/import/repeatBookmarks.test.mjs	importing the same Dia bookmarks again adds no second Imported from Dia folder (#2389)
 2389	1752315936f0a1f1	apps/browser/src/state/import/repeatBookmarks.test.mjs	two folders of the same name each take their own new links, matched by the links they share
+2389	db26ed91c007d080	apps/browser/src/state/import/repeatBookmarks.test.mjs	which folders an import made is saved, so a relaunch keeps matching them
 2492	f666f5d810bba18b	apps/browser/src/state/tabs/tabs.test.mjs	tabs closed together come back to their places, from ⇧⌘T or Recently Closed in any order (#2492)
 2572	80a3ca73b2bdbcc1	apps/browser/src/state/commands/menuState.test.mjs	the menu state tells the shell whether links from other apps open in Little Ardia
 2695	382756f4c8c1feb5	apps/browser/src/components/ui/pressFeedback.test.mjs	a pressed glyph dips a little and comes back without a bounce
