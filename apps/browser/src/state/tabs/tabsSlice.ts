@@ -36,7 +36,7 @@ export type TabsSlice = {
   navigate(id: string, input: string, options?: { userInitiated?: boolean; gated?: boolean }): void;
   updateTab(id: string, patch: Partial<Tab>, live?: Partial<TabLive>): void;
   updateLive(id: string, patch: Partial<TabLive>): void;
-  duplicateTab(id: string): string | undefined;
+  duplicateTab(id: string, o?: { background?: boolean }): string | undefined;
   togglePin(id: string): void;
   moveTab(id: string, toIndex: number): void;
   moveTabBy(id: string, delta: 1 | -1): void;
@@ -211,7 +211,7 @@ export const createTabsSlice: StateCreator<BrowserState, [], [], TabsSlice> = (s
     setLive(id, patch);
   },
 
-  duplicateTab(id) {
+  duplicateTab(id, o) {
     const s = get();
     const source = s.tabs[id];
     if (!source) return undefined;
@@ -222,6 +222,7 @@ export const createTabsSlice: StateCreator<BrowserState, [], [], TabsSlice> = (s
       snapshot: { ...snapshotTab(source), pin: null, lastActiveAt: undefined },
       index: w.tabIds.indexOf(id) + 1,
       adoptId: source.url ? cloneId(id) : undefined,
+      background: o?.background,
     });
     set(next);
     return copy;

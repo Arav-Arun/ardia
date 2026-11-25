@@ -30,3 +30,18 @@ test("the duplicate starts from the source's page, so it keeps the browsing hist
   assert.equal(S().tabs[copy].page.kind, "adopted");
   assert.equal(S().tabs[copy].page.adopt, `clone:${page}`);
 });
+
+test("a duplicate opened in the background sits beside its source and leaves the source shown", () => {
+  const { w, page } = windowWithTab();
+  const copy = S().duplicateTab(page, { background: true });
+  assert.deepEqual(S().windows[w].tabIds.slice(0, 2), [page, copy]);
+  assert.equal(S().windows[w].activeTabIds.default, page, "the source stays the shown tab");
+  assert.equal(S().tabs[copy].unseen, true, "the copy is marked unseen, like other background tabs");
+  assert.equal(S().tabs[copy].page.adopt, `clone:${page}`, "and still keeps the history");
+});
+
+test("a duplicate opened in front becomes the shown tab", () => {
+  const { w, page } = windowWithTab();
+  const copy = S().duplicateTab(page);
+  assert.equal(S().windows[w].activeTabIds.default, copy);
+});

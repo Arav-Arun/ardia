@@ -7,7 +7,7 @@ const reload = nav.slice(nav.indexOf("export const ReloadButton"), nav.indexOf("
 
 test("a middle click on reload duplicates the tab, as the back and forward buttons answer one", () => {
   assert.match(reload, /<MouseArea style=\{place\?\.style\} onMiddleClick=\{onMiddleClick\}>/, "the reload button sits in a MouseArea, like the history buttons");
-  assert.match(reload, /const onMiddleClick = useStableHandler\(\(\) => \{\n\s*if \(!tab\.url\) return;\n\s*void duplicateTab\(tab\.id\);/, "a middle click duplicates the shown tab, and a button with no url does nothing");
+  assert.match(reload, /const onMiddleClick = useStableHandler\(\(e: ClickModifiers\) => \{\n\s*if \(!tab\.url\) return;\n\s*void duplicateTab\(tab\.id, \{ background: openModeFor\(\{ \.\.\.e, middle: true \}\) === "background" \}\);/, "a middle click duplicates the shown tab behind it, as the back and forward buttons open theirs, and a button with no url does nothing");
   assert.match(nav, /import \{ newTab, duplicateTab \} from "\.\.\/\.\.\/state\/tabs\/actions";/);
 });
 

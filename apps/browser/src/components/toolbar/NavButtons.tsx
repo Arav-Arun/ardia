@@ -145,9 +145,9 @@ export const ReloadButton = memo(function ReloadButton({
     onFocus();
     void showReloadMenu(tab.id);
   });
-  const onMiddleClick = useStableHandler(() => {
+  const onMiddleClick = useStableHandler((e: ClickModifiers) => {
     if (!tab.url) return;
-    void duplicateTab(tab.id);
+    void duplicateTab(tab.id, { background: openModeFor({ ...e, middle: true }) === "background" });
   });
   const color = tab.url ? palette.icon : palette.iconDisabled;
   const glyph = useMemo(() => <ReloadGlyph loading={loading} color={color} />, [loading, color]);
