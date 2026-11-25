@@ -3,8 +3,8 @@ import { mock, test } from "node:test";
 
 globalThis.__DEV__ = false;
 const { useBrowser } = await import("../browser/store.ts");
-const { INDEX_WHEN_QUIET_MS, reloadHistory, startHistory } = await import("./engineSync.ts");
-const { historyListIndexed } = await import("./historyChanges.ts");
+const { INDEX_WHEN_QUIET_MS, historyIndexesPending, reloadHistory, startHistory } = await import("./engineSync.ts");
+const { historyApplyStats, historyListIndexed } = await import("./historyChanges.ts");
 const { setQuitting } = await import("../app/quit.ts");
 const { markProfileUnloaded, openProfile } = await import("../profiles/profileLoading.ts");
 const stub = await import("../../test-native/index.ts");
@@ -91,21 +91,47 @@ test("clearing a profile's history drops the build pending for the list it repla
   }
 });
 
-test("stopping history sync drops every pending build", async () => {
+test("stopping history sync clears every pending timer, and the clock passing builds nothing", async () => {
   const stop = await started();
-  visit("", 1);
-  visit("work", 2);
-  await settle();
-  const home = listOf("");
-  const work = listOf("work");
-  finish(stop);
-  mock.timers.enable({ apis: ["setTimeout"] });
   try {
-    mock.timers.tick(INDEX_WHEN_QUIET_MS);
+    visit("", 1);
+    visit("work", 2);
+    await settle();
+    const home = listOf("");
+    const work = listOf("work");
+    assert.equal(historyIndexesPending(), 2);
+    const builds = historyApplyStats.indexBuilds;
+    stop();
+    assert.equal(historyIndexesPending(), 0, "stop clears both profiles' timers");
+    mock.timers.tick(INDEX_WHEN_QUIET_MS * 2);
+    assert.equal(historyApplyStats.indexBuilds, builds, "no build after stop");
     assert.equal(historyListIndexed(home), false);
     assert.equal(historyListIndexed(work), false);
   } finally {
+    setQuitting(false);
     mock.timers.reset();
+  }
+});
+
+test("a change that lands while a reload's read is open is replayed onto the read list, which is then indexed once quiet", async () => {
+  const stop = await started();
+  try {
+    const reload = reloadHistory();
+    stub.chromeHistoryEvent({ kind: "modified", profile: "", rows: [{ url: "https://home3.example/", title: "retitled during the read", visits: 1 }] });
+    await reload;
+    await settle();
+    const list = listOf("");
+    assert.ok(list.some((h) => h.title === "retitled during the read"), "the replayed change is in the read list");
+    assert.equal(historyListIndexed(list), false);
+    assert.ok(historyIndexesPending() >= 1, "a quiet-time build is scheduled for it");
+    mock.timers.tick(INDEX_WHEN_QUIET_MS);
+    assert.equal(historyListIndexed(list), true);
+    const indexed = historyApplyStats.indexed;
+    stub.chromeHistoryEvent({ kind: "modified", profile: "", rows: [{ url: "https://home4.example/", title: "after", visits: 1 }] });
+    await settle();
+    assert.equal(historyApplyStats.indexed, indexed + 1, "the next change takes the indexed path");
+  } finally {
+    finish(stop);
   }
 });
 

@@ -103,6 +103,8 @@ function forgetReplacedIndexTimers() {
   for (const [engine, { list }] of [...indexTimers]) if (viewOf(engine) !== list) forgetIndexTimer(engine);
 }
 
+export const historyIndexesPending = () => indexTimers.size;
+
 function forgetIndexTimers() {
   for (const engine of [...indexTimers.keys()]) forgetIndexTimer(engine);
 }
@@ -142,10 +144,12 @@ function load(engine: string): Promise<void> {
         const read = await queryHistory(engine, MAX_HISTORY, MAX_VISIT_TIMES);
         const floor = read.length >= MAX_HISTORY ? read.reduce((oldest, e) => Math.min(oldest, e.visitTimes.at(-1) ?? 0), Infinity) : -Infinity;
         let list = read.filter((e) => isWebPageUrl(e.url)).map(toEntry).sort(byLastVisit);
-        list = applyHistoryChanges(list, state.queued.filter(isListChange), gapNoter(engine));
+        const replayed = state.queued.filter(isListChange);
+        list = applyHistoryChanges(list, replayed, gapNoter(engine));
         if (state.queued.some((c) => c.kind === "deleted" && c.all)) state.again = true;
         setView(engine, list, floor);
         if (inApp(engine)) loaded.add(engine);
+        if (replayed.length && loaded.has(engine)) indexWhenQuiet(engine);
       } while (state.again && inApp(engine));
     } catch (error) {
       const failure = ardiaError(error);
