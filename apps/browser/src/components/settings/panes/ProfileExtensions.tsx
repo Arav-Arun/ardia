@@ -198,8 +198,14 @@ function ExtensionDetails({ ext, profile }: { ext: InstalledExtension; profile: 
 
 function SiteAccessDetails({ ext, profile }: { ext: InstalledExtension; profile: string }) {
   const access = siteAccessOf(ext);
+  const [problem, setProblem] = useState<{ site: string; message: string } | null>(null);
   const addSite = () => showSettingsSheet(<AddSiteSheet ext={ext} profile={profile} />);
   const choose = (siteAccess: SiteAccess) => (siteAccess === "specificSites" ? addSite() : void configure(profile, ext.id, { siteAccess }));
+  const remove = async (site: string) => {
+    setProblem(null);
+    const message = await removeExtensionSite(profile, ext.id, site);
+    if (message) setProblem({ site, message });
+  };
   return (
     <>
       <Row title="Site access" description="Which sites the extension can read and change.">
@@ -207,8 +213,8 @@ function SiteAccessDetails({ ext, profile }: { ext: InstalledExtension; profile:
       </Row>
       {access === "specificSites"
         ? ext.sites.map((site) => (
-            <Row key={site} title={extensionSiteLabel(site)}>
-              <Button title="Remove" onPress={() => void removeExtensionSite(profile, ext.id, site)} />
+            <Row key={site} title={extensionSiteLabel(site)} description={problem?.site === site ? problem.message : undefined}>
+              <Button title="Remove" onPress={() => void remove(site)} />
             </Row>
           ))
         : null}
@@ -226,6 +232,7 @@ function AddSiteSheet({ ext, profile }: { ext: InstalledExtension; profile: stri
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const cancel = () => {
+    if (saving) return;
     noteExtensionSitePickerCancelled();
     closeSettingsSheet();
   };
@@ -249,7 +256,7 @@ function AddSiteSheet({ ext, profile }: { ext: InstalledExtension; profile: stri
         </Text>
       ) : null}
       <DialogActions>
-        <Button title="Cancel" onPress={cancel} />
+        <Button title="Cancel" disabled={saving} onPress={cancel} />
         <Button title="Add" kind="primary" disabled={saving || !site.trim()} onPress={() => void add()} />
       </DialogActions>
     </Sheet>

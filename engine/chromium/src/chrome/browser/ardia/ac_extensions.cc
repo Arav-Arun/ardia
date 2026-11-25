@@ -505,6 +505,18 @@ AC_PROFILE_CALL(ac_extensions_configure) {
   }
   const base::DictValue* nested = call.args().FindDict("options");
   const base::DictValue& options = nested ? *nested : call.args();
+  const std::string* grant = options.FindString("grantSite");
+  const std::string* revoke = options.FindString("revokeSite");
+  if (grant && revoke) {
+    return call.TakeReply().Error("Grant or revoke one site at a time");
+  }
+  if (grant || revoke) {
+    const std::string problem = ardia::extension_sites_internal::SiteProblem(
+        profile, *ardia::Find(profile, id), grant ? *grant : *revoke, !!grant);
+    if (!problem.empty()) {
+      return call.TakeReply().Error(problem);
+    }
+  }
   if (std::optional<bool> pinned = options.FindBool("pinned")) {
     ToolbarActionsModel* model = ToolbarActionsModel::Get(profile);
     if (!model->HasAction(id)) {
@@ -567,13 +579,8 @@ AC_PROFILE_CALL(ac_extensions_configure) {
       return call.TakeReply().Error("unknown site access");
     }
   }
-  const std::string* grant = options.FindString("grantSite");
-  const std::string* revoke = options.FindString("revokeSite");
   if (!grant && !revoke) {
     return call.TakeReply().Ok();
-  }
-  if (grant && revoke) {
-    return call.TakeReply().Error("Grant or revoke one site at a time");
   }
   const extensions::Extension* extension = ardia::Find(profile, id);
   if (!extension) {

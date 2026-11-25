@@ -12,6 +12,7 @@
 #include "extensions/browser/permissions/permissions_updater.h"
 #include "extensions/browser/permissions_manager.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/manifest_handlers/permissions_parser.h"
 #include "extensions/common/permissions/api_permission_set.h"
 #include "extensions/common/permissions/manifest_permission_set.h"
 #include "extensions/common/permissions/permission_set.h"
@@ -41,6 +42,39 @@ extensions::PermissionSet HostPermissions(const URLPattern& pattern) {
 
 }
 
+std::string SiteProblem(Profile* profile,
+                        const extensions::Extension& extension,
+                        const std::string& site,
+                        bool grant) {
+  if (!extensions::PermissionsManager::Get(profile)->CanAffectExtension(
+          extension)) {
+    return "Can't change this extension's site access";
+  }
+  std::optional<URLPattern> pattern = RuntimeSitePattern(site);
+  if (!pattern) {
+    return "That isn't a site an extension can be given";
+  }
+  if (!grant) {
+    return "";
+  }
+  extensions::PermissionSet asked = HostPermissions(*pattern);
+  if (asked.ShouldWarnAllHosts(false)) {
+    return "That covers every site. Choose On all sites instead";
+  }
+  std::unique_ptr<extensions::PermissionSet> requested =
+      extensions::PermissionSet::CreateUnion(
+          extensions::PermissionsParser::GetRequiredPermissions(&extension),
+          extensions::PermissionsParser::GetOptionalPermissions(&extension));
+  if (extensions::PermissionSet::CreateIntersection(
+          asked, *requested,
+          extensions::URLPatternSet::IntersectionBehavior::kDetailed)
+          ->effective_hosts()
+          .is_empty()) {
+    return "This extension doesn't ask for that site";
+  }
+  return "";
+}
+
 void ChangeSite(Profile* profile,
                 const extensions::Extension& extension,
                 const std::string& site,
@@ -48,9 +82,6 @@ void ChangeSite(Profile* profile,
                 Reply reply) {
   extensions::PermissionsManager* manager =
       extensions::PermissionsManager::Get(profile);
-  if (!manager->CanAffectExtension(extension)) {
-    return reply.Error("Can't change this extension's site access");
-  }
   std::optional<URLPattern> pattern = RuntimeSitePattern(site);
   if (!pattern) {
     return reply.Error("That isn't a site an extension can be given");

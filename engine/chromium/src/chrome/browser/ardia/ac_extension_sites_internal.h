@@ -15,6 +15,11 @@ class Extension;
 
 namespace ardia::extension_sites_internal {
 
+std::string SiteProblem(Profile* profile,
+                        const extensions::Extension& extension,
+                        const std::string& site,
+                        bool grant);
+
 void ChangeSite(Profile* profile,
                 const extensions::Extension& extension,
                 const std::string& site,

@@ -13,7 +13,7 @@ test("a typed site becomes a host pattern Chrome grants", () => {
 });
 
 test("anything Chrome would refuse is refused before it reaches the engine", () => {
-  for (const typed of ["", "   ", "ftp://example.com", "chrome://settings", "file:///tmp", "exa mple.com", "https://", "https://exa*mple.com", "example.com:0", "example.com:70000", "javascript:alert(1)", "a".repeat(3000)])
+  for (const typed of ["", "   ", "ftp://example.com", "chrome://settings", "file:///tmp", "exa mple.com", "https://", "https://exa*mple.com", "example.com:0", "example.com:70000", "javascript:alert(1)", "https://[:::]", "[::]x", "*.com", "https://*.org", "a".repeat(3000)])
     assert.equal(extensionSitePattern(typed), null, typed);
 });
 

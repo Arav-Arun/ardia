@@ -6,6 +6,7 @@ import { focusedWindowOf } from "../windows/ui";
 import { notePasswordAppPairing } from "../telemetry/usage";
 import { consentToken, type ConsentToken } from "../telemetry/client";
 import { passwordAppPairing } from "./passwordAppPairing";
+import { useExtensions } from "./store";
 
 export const ONE_PASSWORD_EXTENSION_IDS: ReadonlySet<string> = new Set([
   "aeblfdkhhhdcdjpifhhbdiojplfjncoa",
@@ -22,31 +23,53 @@ export function openPasswordApp(appPath: string) {
   void openFile(appPath);
 }
 
-const asked = new Map<string, ConsentToken | null>();
+const PENDING_MS = 10 * 60_000;
+const asked = new Map<string, { consent: ConsentToken | null; at: number }>();
 let watching = false;
+
+const installKey = (profile: string, id: string) => `${profile}\n${id}`;
+
+function showPairing(key: string) {
+  const pending = asked.get(key);
+  asked.delete(key);
+  if (!pending || Date.now() - pending.at > PENDING_MS) return;
+  const pairing = passwordAppPairing();
+  const windowId = focusedWindowOf(useBrowser.getState());
+  if (!pairing || !windowId) return;
+  notePasswordAppPairing("shown", pending.consent);
+  const { appPath } = pairing;
+  showToast(windowId, pairing.title, pairing.steps, {
+    icon: "key.fill",
+    key: "passwordAppPairing",
+    sticky: true,
+    titleLines: 1,
+    ...(appPath ? { action: { title: "Open 1Password", run: () => openPasswordApp(appPath) } } : {}),
+  });
+}
+
+function showInstalled(lists: Record<string, readonly { id: string }[] | undefined>) {
+  for (const [key, pending] of [...asked]) {
+    if (Date.now() - pending.at > PENDING_MS) {
+      asked.delete(key);
+      continue;
+    }
+    const [profile, id] = key.split("\n");
+    if (lists[profile!]?.some((x) => x.id === id)) showPairing(key);
+  }
+}
 
 export function watchPasswordAppPairing() {
   if (watching) return;
   watching = true;
   onExtensionInstallPrompt((prompt) => {
-    if (pairsWithPasswordApp(prompt.id)) asked.set(`${prompt.profile}\n${prompt.id}`, consentToken());
+    if (prompt.type !== "install" || !pairsWithPasswordApp(prompt.id)) return;
+    if (useExtensions.getState().lists[prompt.profile]?.some((x) => x.id === prompt.id)) return;
+    asked.set(installKey(prompt.profile, prompt.id), { consent: consentToken(), at: Date.now() });
   });
   onExtensionsChanged((e) => {
-    const key = `${e.profile}\n${e.id}`;
-    if (e.event !== "installed" || !asked.has(key)) return;
-    const consent = asked.get(key) ?? null;
-    asked.delete(key);
-    const pairing = passwordAppPairing();
-    const windowId = focusedWindowOf(useBrowser.getState());
-    if (!pairing || !windowId) return;
-    notePasswordAppPairing("shown", consent);
-    const { appPath } = pairing;
-    showToast(windowId, pairing.title, pairing.steps, {
-      icon: "key.fill",
-      key: "passwordAppPairing",
-      sticky: true,
-      titleLines: 1,
-      ...(appPath ? { action: { title: "Open 1Password", run: () => openPasswordApp(appPath) } } : {}),
-    });
+    if (e.event === "installed") showPairing(installKey(e.profile, e.id));
+  });
+  useExtensions.subscribe((s, prev) => {
+    if (asked.size && s.lists !== prev.lists) showInstalled(s.lists);
   });
 }

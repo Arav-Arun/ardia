@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -23,7 +24,8 @@ class ExtensionContractTests(unittest.TestCase):
         extension = 'a' * 32
         self.assertEqual(payload, {'id': extension, 'options': {'pinned': True, 'fileAccess': True, 'siteAccess': 'onClick', 'userScripts': True}})
         helper = (ROOT / 'engine/ardiacore-linux/src/ardia/linux/ac_linux_extensions.cc').read_text()
-        transform = ('#include <algorithm>\n#include <string_view>\n' + method(helper, 'bool ValidExtensionId(') + '\n' +
+        limit = re.search(r'^constexpr size_t kMaxSitePatternLength = \d+;$', helper, re.M).group(0)
+        transform = ('#include <algorithm>\n#include <string_view>\n' + limit + '\n' + method(helper, 'bool ValidExtensionId(') + '\n' +
                      method(helper, 'std::optional<base::DictValue> Configuration(') +
                      '\nstd::optional<base::DictValue> ExtensionConfiguration(const base::DictValue& input) { return Configuration(input); }')
         backend_source = (ROOT / 'engine/chromium/src/chrome/browser/ardia/ac_extensions.cc').read_text()
@@ -97,7 +99,7 @@ bool scripts = false;
 bool ok = false;
 std::string error;
 struct Reply {
-  void Error(const char* text) { error = text; }
+  void Error(std::string_view text) { error = std::string(text); }
   void Ok() { ok = true; }
 };
 struct Call {
@@ -147,6 +149,12 @@ struct ToolbarActionsModel {
     order.insert(order.begin() + static_cast<std::ptrdiff_t>(index), id);
   }
 };
+int site_changes = 0;
+std::string site_problem;
+namespace ardia::extension_sites_internal {
+std::string SiteProblem(Profile*, const extensions::Extension&, const std::string&, bool) { return site_problem; }
+void ChangeSite(Profile*, const extensions::Extension&, const std::string&, bool, Reply reply) { ++site_changes; reply.Ok(); }
+}
 ARDIA_BACKEND
 int main() {
   base::DictValue input = ARDIA_INPUT;
@@ -182,6 +190,30 @@ int main() {
   invalid.Set("options", base::DictValue());
   assert(!ExtensionConfiguration(invalid));
   invalid.Set("id", "extension").Set("options", base::DictValue().Set("pinned", true));
+  assert(!ExtensionConfiguration(invalid));
+  base::DictValue grant;
+  grant.Set("id", std::string(32, 'a')).Set("options", base::DictValue().Set("siteAccess", "specificSites").Set("grantSite", "https://example.com/*"));
+  const auto granted = ExtensionConfiguration(grant);
+  assert(granted);
+  args = *granted;
+  ok = false;
+  withheld = false;
+  site_problem = "That covers every site. Choose On all sites instead";
+  Backend();
+  assert(!ok && error == site_problem && !withheld && site_changes == 0);
+  site_problem.clear();
+  error.clear();
+  Backend();
+  assert(ok && error.empty() && withheld && site_changes == 1);
+  args = base::DictValue().Set("id", std::string(32, 'a')).Set("options", base::DictValue().Set("revokeSite", "https://example.com/*"));
+  ok = false;
+  Backend();
+  assert(ok && site_changes == 2);
+  args = base::DictValue().Set("id", std::string(32, 'a')).Set("options", base::DictValue().Set("grantSite", "https://a.example/*").Set("revokeSite", "https://b.example/*"));
+  ok = false;
+  Backend();
+  assert(!ok && !error.empty() && site_changes == 2);
+  invalid.Set("id", std::string(32, 'a')).Set("options", base::DictValue().Set("grantSite", ""));
   assert(!ExtensionConfiguration(invalid));
 }
 '''
