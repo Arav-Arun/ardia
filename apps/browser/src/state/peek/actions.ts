@@ -111,8 +111,8 @@ export function runPeekCommand(command: string, windowId: string): boolean {
     return true;
   }
   if (command !== "closeTab" || s.windowUi[windowId]?.panel.open) return false;
-  if (s.find[peek.tabId]?.open) closeFind(peek.tabId);
-  else dismissPeek(windowId);
+  if (s.find[peek.tabId]?.open) closeFind(peek.tabId, { refocus: false });
+  dismissPeek(windowId);
   return true;
 }
 
