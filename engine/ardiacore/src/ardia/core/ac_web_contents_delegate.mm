@@ -4,6 +4,7 @@
 
 #include "base/auto_reset.h"
 #include "base/strings/sys_string_conversions.h"
+#include "chrome/browser/lifetime/browser_shutdown.h"
 #include "chrome/browser/picture_in_picture/picture_in_picture_window_manager.h"
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
 #include "chrome/browser/ui/unload_controller.h"
@@ -194,6 +195,11 @@ void ACWebContentsDelegate::BeforeUnloadFired(content::WebContents* source,
 
 void ACWebContentsDelegate::CloseContents(content::WebContents* source) {
   TabBridge* bridge = source ? TabBridge::FromWebContents(source) : nullptr;
+  if (bridge && bridge->asking_before_leaving() &&
+      !browser_shutdown::HasShutdownStarted()) {
+    bridge->CloseAfterLeaveAsk();
+    return;
+  }
   if (!bridge || !bridge->closing_after_unload()) {
     BrowserWebContentsDelegate::CloseContents(source);
     return;

@@ -174,6 +174,10 @@ using ardiacore::NS;
   if (!_contents) {
     return NO;
   }
+  ardiacore::TabBridge* asking = ardiacore::TabBridge::FromWebContents(_contents);
+  if (asking && asking->holds_leave_ask()) {
+    return NO;
+  }
   auto* unit =
       resource_coordinator::TabLifecycleUnitExternal::FromWebContents(_contents);
   return unit && unit->DiscardTab(

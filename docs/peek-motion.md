@@ -76,7 +76,11 @@ out once at the tab's size as it starts.
 - **Leaving asks first.** Every close (×, Escape, ⌘W, a click on the dim, a pinch-in) asks the page's `beforeunload`
   first when it has a handler (`-[ArdiaCoreTab askBeforeLeaving:]`, which runs Chrome's own leave-site prompt without
   starting the close, #985): Stay leaves the card open at rest with what was typed, Leave closes it as before. A page
-  without a handler closes at once. Open as Tab never asks, since the page stays.
+  without a handler closes at once. Open as Tab never asks, since the page stays. While the prompt is up, a tab close
+  (`closeNow`, `close`, the delegate's `CloseContents`) waits for the answer, a window close waits and then asks for
+  itself, quitting is refused, and discards are refused. Not covered: a close Chrome's tab strip makes on its own once
+  its beforeunload ready threshold has passed (an extension's `tabs.remove` or `windows.remove`) and profile deletion,
+  which would need a Chromium patch; all need a background caller, since the prompt is app-modal.
 - **Known limits.** Chrome's own popups, context menus, autofill and IME candidate window are placed by the engine from
   the page's unscaled position while the page is scaled (a pinch, Open as Tab); at rest it is drawn 1:1, so they line
   up. Fixing the scaled case needs an engine change (a visual transform in the render widget's view-to-screen
@@ -137,4 +141,3 @@ that catches it. Every check writes its geometry, identity and frame trace to th
 | --- | --- | --- | --- |
 | P37 | Closing a Peek whose page asks before leaving loses what was typed (#985) | the card closes with no prompt | `close-asks-before-leaving`: ×, Escape, ⌘W, a click on the dim and a pinch-in each show the page's leave prompt; Stay keeps the card open at rest with the typed text; Leave closes it and its page |
 | P38 | Open as Tab runs `beforeunload` | a leave prompt while promoting | `close-asks-before-leaving`: Open as Tab on a page with a handler shows no prompt and keeps the typed text |
-

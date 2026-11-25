@@ -337,6 +337,9 @@ class TabBridge : public content::WebContentsObserver,
   void AnswerLeaveAsk(bool leave);
   bool asking_before_leaving() const { return !leave_answer_.is_null(); }
   void CloseAfterLeaveAsk() { close_after_leave_ask_ = true; }
+  bool holds_leave_ask() const {
+    return asking_before_leaving() || close_after_leave_ask_;
+  }
   void ForgetLeaveAsk();
   void SetTemporary(bool temporary);
   void SetTemporarySource(int32_t source_id);
