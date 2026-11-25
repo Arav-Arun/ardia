@@ -17,6 +17,11 @@ function userChoseControl(): boolean {
 
 export const userTurnedControlOff = () => !programControlOn(useBrowser.getState()) && userChoseControl();
 
+export const controlStoppedItself = () => {
+  const { settings, settingsMeta } = useBrowser.getState();
+  return !settings.cliControl && settingsMeta.inferred.includes(CONTROL_KEY);
+};
+
 export const useControlTurnedOff = () =>
   useBrowser((s) => !s.settings.cliControl && s.settingsMeta.chosen.includes(CONTROL_KEY) && !s.settingsMeta.inferred.includes(CONTROL_KEY));
 

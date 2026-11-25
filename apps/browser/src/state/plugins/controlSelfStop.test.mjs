@@ -6,8 +6,10 @@ const { startPlugins } = await import("./start.ts");
 const { usePlugins } = await import("./store.ts");
 const lifecycle = await import("./lifecycle.ts");
 const { setConsentPeriod } = await import("../telemetry/consentPeriod.ts");
+const { consentNow } = await import("../telemetry/choice.ts");
 const { installOfficialPlugin } = await import("./official.ts");
 const { setProgramControlInferredOff, userTurnedControlOff } = await import("../app/programControlSetting.ts");
+const { takeCliCounts } = await import("../telemetry/cliCounts.ts");
 const { officialPinnedFromPin } = await import("../../test-native/shell.ts");
 
 const S = () => useBrowser.getState();
@@ -34,9 +36,23 @@ test("approving Command Line turns control on after the engine stopped control i
   setProgramControlInferredOff();
   assert.equal(S().settings.cliControl, false);
   assert.equal(userTurnedControlOff(), false);
+  takeCliCounts();
   const done = installOfficialPlugin("cli", { showSheet: false });
   assert.ok(lifecycle.enablePlugin("cli", P().consent.hash));
   assert.deepEqual(await done, { ok: true });
   assert.equal(S().settings.cliControl, true);
+  assert.equal(takeCliCounts().cli_control_restored, 1, "the re-approval that brought control back is counted");
+});
+
+test("approving Command Line again leaves an Off the user chose alone, and counts nothing", async () => {
+  assert.ok(lifecycle.disablePlugin("cli", consentNow()));
+  S().updateSettings({ cliControl: false });
+  assert.equal(userTurnedControlOff(), true);
+  takeCliCounts();
+  const done = installOfficialPlugin("cli", { showSheet: false });
+  assert.ok(lifecycle.enablePlugin("cli", P().consent.hash));
+  assert.deepEqual(await done, { ok: true });
+  assert.equal(S().settings.cliControl, false);
+  assert.equal(takeCliCounts().cli_control_restored, 0);
   host.linkResult = null;
 });

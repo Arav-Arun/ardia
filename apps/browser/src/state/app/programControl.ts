@@ -7,7 +7,7 @@ import { isTabReady, pageOf, usePages } from "../tabs/pageState";
 import { isInternalTab } from "../pages/urls";
 import { errorText } from "../../lib/errors";
 import { focusedWindowOf } from "../windows/ui";
-import { noteCliPillShown } from "../telemetry/cliCounts";
+import { noteCliPillShown, noteControlSelfStop } from "../telemetry/cliCounts";
 import { noteDragsEnded } from "../telemetry/stuckDrags";
 import { consentToken, type ConsentToken } from "../telemetry/client";
 import type { ControlCaller } from "./controlCaller";
@@ -116,8 +116,11 @@ export function startProgramControl() {
     if (generation < newest) return;
     newest = generation;
     useControlServer.setState({ server });
-    const stoppedItself = server.state === "off" && !!server.reason;
-    if (mayReconcile && stoppedItself && programControlOn(useBrowser.getState())) setProgramControlInferredOff();
+    const stoppedItself = server.state === "off" ? server.reason : undefined;
+    if (mayReconcile && stoppedItself && programControlOn(useBrowser.getState())) {
+      setProgramControlInferredOff();
+      noteControlSelfStop(stoppedItself, consent);
+    }
   };
   onControlChanged((server) => apply(server, inFlight === 0));
   let applied: boolean | null = null;

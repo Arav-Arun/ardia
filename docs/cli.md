@@ -42,7 +42,9 @@ the signed digest), and runs its after-update actions once per version (`ardia s
 (the sheet says so), unless you turned control off yourself. An Off you chose, with the control pill's Stop or the switch
 in Settings, stays off across launches. When the engine's control server stops itself (it couldn't
 start or listen, or its folder or file check failed), the setting turns off with it and Settings › Advanced shows why, but
-that Off isn't your choice: enabling or approving Command Line again turns control back on. An install you approved moves to the version this Ardia pins by itself when the new version asks
+that Off isn't your choice: enabling or approving Command Line again turns control back on. Both are counted, never the message:
+`usage_counts.cli_control_self_stop_<cause>` (`policy`, `listen`, `deadline`, `stopped`, `other`) and `cli_control_restored`.
+An install you approved moves to the version this Ardia pins by itself when the new version asks
 for nothing you hadn't approved (`docs/plugins.md` › Official plugins, #3868), and Command Line's page in Settings ›
 Plugins then says "Updated by itself" and lists what's new. Python 0.4.0 to Bun 0.6.0 is such a move, and so is any later
 pin with the same surface: the same control and `ardia` with the same after-update steps, plus a sandboxed, offline

@@ -8,7 +8,8 @@ import { consentNow, consentToken, type ConsentToken } from "../telemetry/choice
 import { warnFor } from "../telemetry/consoleConsent";
 import { listingOf, NO_CLAIMS, type ProgramClaims } from "./appChecks";
 import { loadProgramClaims } from "./programRegistry";
-import { programControlOn, userTurnedControlOff } from "../app/programControlSetting";
+import { controlStoppedItself, programControlOn, userTurnedControlOff } from "../app/programControlSetting";
+import { noteControlRestored } from "../telemetry/cliCounts";
 import { applySettingsPatch, planDisable, planEnable, spliceApplied } from "./defaults";
 import { pluginRecordsSaved, writePluginRecords } from "./savedState";
 import { settleInstall } from "./installWaiters";
@@ -260,7 +261,10 @@ export function enablePlugin(name: string, hash: string): boolean {
   }
   if (candidate) void promoteCandidate(name, listing, consent);
   const asksControl = manifest.permissions.control;
-  applySettingsPatch(kept || !asksControl || programControlOn(useBrowser.getState()) || userTurnedControlOff() ? plan.patch : { ...plan.patch, cliControl: true });
+  const turnsControlOn = !kept && asksControl && !programControlOn(useBrowser.getState()) && !userTurnedControlOff();
+  const restoresControl = turnsControlOn && controlStoppedItself();
+  applySettingsPatch(turnsControlOn ? { ...plan.patch, cliControl: true } : plan.patch);
+  if (restoresControl) noteControlRestored(consent);
   usePlugins.setState({ consent: null });
   clearUnsaved(name);
   notePlugin("plugin_enables", consent);

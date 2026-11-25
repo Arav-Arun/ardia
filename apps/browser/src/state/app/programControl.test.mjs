@@ -25,6 +25,8 @@ globalThis.acTestCliControl = (on) => {
 const { useBrowser } = await import("../browser/store.ts");
 const cli = await import("./programControl.ts");
 const { userTurnedControlOff } = await import("./programControlSetting.ts");
+const { setConsentPeriod } = await import("../telemetry/consentPeriod.ts");
+const { takeCliCounts } = await import("../telemetry/cliCounts.ts");
 const settle = () => new Promise((r) => setImmediate(r));
 const setOn = (on) => useBrowser.getState().updateSettings({ cliControl: on });
 const { emitEvent } = await import("../../test-native/index.ts");
@@ -79,6 +81,27 @@ test("an Off the user chose, in Settings or with the pill's Stop, is still the u
   assert.equal(userTurnedControlOff(), true, "the pill's Stop");
   while (replies.length) replies.shift()({ state: "off", generation: 2 });
   await settle();
+});
+
+test("the engine stopping control itself is counted once, by what stopped it, and never a user's Off", async () => {
+  setConsentPeriod(true, "test-epoch");
+  takeCliCounts();
+  setOn(true);
+  replies.shift()({ state: "on", generation: 2, connections: 0 });
+  await settle();
+  emit({ state: "off", generation: 2, reason: "The control server didn't start." });
+  emit({ state: "off", generation: 2, reason: "The control server didn't start." });
+  await settle();
+  const selfStops = (counts) => Object.fromEntries(Object.entries(counts).filter(([key, n]) => key.startsWith("cli_control_self_stop_") && n));
+  assert.deepEqual(selfStops(takeCliCounts()), { cli_control_self_stop_deadline: 1 });
+  setOn(true);
+  replies.shift()({ state: "on", generation: 2, connections: 0 });
+  await settle();
+  cli.stopProgramControl();
+  while (replies.length) replies.shift()({ state: "off", generation: 2, reason: "Couldn't listen on 127.0.0.1." });
+  await settle();
+  assert.deepEqual(selfStops(takeCliCounts()), {}, "Stop from the pill is the user's choice");
+  setConsentPeriod(false, null);
 });
 
 test("the engine hears which page the user is looking at while control is on", async () => {
