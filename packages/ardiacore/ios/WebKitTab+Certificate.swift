@@ -105,7 +105,7 @@ final class WebKitCertificates {
     pendingSaves.removeValue(forKey: store)?.cancel()
     var kept: [String: WebKitTransportSecurity]?
     if let since {
-      let unread = readAgainIfUnreadable(store)
+      let unread = readAgainIfUnreadable(store, clearingSince: since)
       change(store) { $0.forget(since: since) }
       if let unread { return done(unread) }
       kept = policies[store]?.savedTransportSecurity(now: Date()) ?? [:]
@@ -146,13 +146,13 @@ final class WebKitCertificates {
     return loaded
   }
 
-  private func readAgainIfUnreadable(_ store: StoreID) -> String? {
+  private func readAgainIfUnreadable(_ store: StoreID, clearingSince since: Date) -> String? {
     _ = policy(store)
     guard unreadable.contains(store) else { return nil }
     do {
       let saved = try Self.load(store)
       unreadable.remove(store)
-      change(store) { $0.adoptSaved(saved, now: Date()) }
+      change(store) { $0.adoptSaved(saved, now: Date(), clearingSince: since) }
       return nil
     } catch {
       return (error as? WebKitCertificatePolicy.SavedList.Unreadable)?.message ?? "couldn't read the HSTS list"

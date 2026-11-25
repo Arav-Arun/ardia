@@ -202,6 +202,39 @@ struct DynamicTransportSecurity {
     #expect(policy.revokedBeforeSavedList.isEmpty)
   }
 
+  @Test func `a host revoked before the saved list was read stays revoked after it was seen again and cleared`() {
+    var policy = WebKitCertificatePolicy(awaitingSavedList: true)
+    _ = policy.noteHeader("max-age=0", host: "bank.example", now: now)
+    _ = policy.noteHeader("max-age=600", host: "bank.example", now: now)
+    #expect(policy.revokedBeforeSavedList == ["bank.example"])
+    policy.forget(since: now.addingTimeInterval(-3_600))
+    let saved = ["bank.example": WebKitTransportSecurity(expires: now.timeIntervalSince1970 + 86_400, subdomains: true, observed: now.timeIntervalSince1970 - 7 * 86_400)]
+    policy.adoptSaved(saved, now: now, clearingSince: now.addingTimeInterval(-3_600))
+    #expect(!policy.requiresHTTPS(host: "bank.example", now: now))
+  }
+
+  @Test func `a host seen again after its revocation keeps the newer entry when the saved list is read`() {
+    var policy = WebKitCertificatePolicy(awaitingSavedList: true)
+    _ = policy.noteHeader("max-age=0", host: "bank.example", now: now)
+    _ = policy.noteHeader("max-age=600", host: "bank.example", now: now)
+    let saved = ["bank.example": WebKitTransportSecurity(expires: now.timeIntervalSince1970 + 86_400, subdomains: true, observed: now.timeIntervalSince1970 - 7 * 86_400)]
+    policy.adoptSaved(saved, now: now)
+    #expect(policy.transportSecurity["bank.example"]?.expires == now.timeIntervalSince1970 + 600)
+    #expect(!policy.requiresHTTPS(host: "login.bank.example", now: now))
+  }
+
+  @Test func `a ranged clear while reading a full saved list never evicts an older host for a cleared one`() {
+    var policy = WebKitCertificatePolicy(awaitingSavedList: true)
+    _ = policy.noteHeader("max-age=31536000", host: "recent.example", now: now)
+    let older = now.timeIntervalSince1970 - 7 * 86_400
+    let saved = Dictionary(uniqueKeysWithValues: (0..<WebKitCertificatePolicy.dynamicHostLimit).map {
+      ("h\($0).example", WebKitTransportSecurity(expires: now.timeIntervalSince1970 + 86_400, subdomains: false, observed: older))
+    })
+    policy.adoptSaved(saved, now: now, clearingSince: now.addingTimeInterval(-3_600))
+    #expect(policy.transportSecurity.count == WebKitCertificatePolicy.dynamicHostLimit)
+    #expect(Set(policy.transportSecurity.keys) == Set(saved.keys))
+  }
+
   @Test func `a policy loaded from its saved list records no revocations`() {
     var policy = WebKitCertificatePolicy()
     _ = policy.noteHeader("max-age=0", host: "bank.example", now: now)

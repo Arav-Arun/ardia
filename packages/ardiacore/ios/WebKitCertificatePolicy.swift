@@ -98,7 +98,6 @@ struct WebKitCertificatePolicy: Sendable {
       if awaitingSavedList { revokedBeforeSavedList.insert(name) }
       return transportSecurity.removeValue(forKey: name) != nil
     }
-    revokedBeforeSavedList.remove(name)
     let entry = WebKitTransportSecurity(expires: now.addingTimeInterval(parsed.maxAge).timeIntervalSince1970, subdomains: parsed.subdomains, observed: now.timeIntervalSince1970)
     guard transportSecurity[name] != entry else { return false }
     transportSecurity[name] = entry
@@ -117,17 +116,22 @@ struct WebKitCertificatePolicy: Sendable {
   }
 
   mutating func forget(since: Date) {
-    let cutoff = since.timeIntervalSince1970
-    transportSecurity = transportSecurity.filter { ($0.value.observed ?? -.infinity) < cutoff }
+    transportSecurity = Self.observed(before: since, transportSecurity)
     exceptions = Self.keeping(exceptions) { $0.granted < since ? $0 : nil }
     bypassed = Self.keeping(bypassed) { $0.granted(before: since) }
   }
 
-  mutating func adoptSaved(_ saved: [String: WebKitTransportSecurity], now: Date) {
-    transportSecurity = saved.filter { !revokedBeforeSavedList.contains($0.key) }.merging(transportSecurity) { _, noted in noted }
+  mutating func adoptSaved(_ saved: [String: WebKitTransportSecurity], now: Date, clearingSince since: Date? = nil) {
+    let merged = saved.filter { !revokedBeforeSavedList.contains($0.key) }.merging(transportSecurity) { _, noted in noted }
+    transportSecurity = since.map { Self.observed(before: $0, merged) } ?? merged
     revokedBeforeSavedList = []
     awaitingSavedList = false
     trim(now: now)
+  }
+
+  private static func observed(before since: Date, _ list: [String: WebKitTransportSecurity]) -> [String: WebKitTransportSecurity] {
+    let cutoff = since.timeIntervalSince1970
+    return list.filter { ($0.value.observed ?? -.infinity) < cutoff }
   }
 
   private static func keeping<Value>(_ byHost: [String: [String: Value]], _ keep: (Value) -> Value?) -> [String: [String: Value]] {
