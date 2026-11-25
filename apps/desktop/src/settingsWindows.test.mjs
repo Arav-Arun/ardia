@@ -59,9 +59,10 @@ test("Manage Extensions on Linux and Windows carries the Extensions row to the S
   linux.openSettings("profiles", "work", null, "profiles.extensions");
   await new Promise(setImmediate);
   const request = windows.open.get("settings");
-  const { revealId, ...settings } = request.settings;
+  const { revealId, revealConsent, ...settings } = request.settings;
   assert.deepEqual(settings, { pane: "profiles", profileId: "work", detail: null, reveal: "profiles.extensions" });
   assert.match(revealId, /^[0-9a-f-]{36}$/);
+  assert.equal(revealConsent, null);
 
   shared.useSettingsNav.setState({ pane: "general", profileId: null, detail: null, back: [], forward: [] });
   setSettingsQuery("cookies");
@@ -115,4 +116,34 @@ test("a second Settings renderer started from the host's cached payload doesn't 
   second.navigateUtility(JSON.parse(JSON.stringify(windows.open.get("settings").settings)));
   assert.equal(useSettingsSearch.getState().reveal?.id, "profiles.extensions", "a new Manage Extensions request still reveals");
   delete globalThis.sessionStorage;
+});
+
+test("Manage Extensions captures consent before the async session flush and never renews it after opting in", async (t) => {
+  const { useSettingsSearch } = await import("../../browser/src/state/settings/searchState.ts");
+  const { setConsentPeriod, consentToken } = await import("../../browser/src/state/telemetry/consentPeriod.ts");
+  const { navigateUtility } = await import("./utilityPlace.ts");
+  setConsentPeriod(false, null);
+  t.after(() => setConsentPeriod(false, null));
+  windows.open.clear();
+  let saved;
+  setSessionFlush(() => new Promise((resolve) => { saved = resolve; }));
+  linux.openSettings("profiles", "work", null, "profiles.extensions");
+  setConsentPeriod(true, "epoch-after-click");
+  saved();
+  await new Promise(setImmediate);
+  const payload = JSON.parse(JSON.stringify(windows.open.get("settings").settings));
+  assert.equal(payload.revealConsent, null);
+  useSettingsSearch.setState({ reveal: null });
+  navigateUtility(payload);
+  assert.equal(useSettingsSearch.getState().reveal?.consent, null, "request made while sharing was off keeps null consent even after opt-in");
+  assert.equal(consentToken(), "epoch-after-click");
+
+  setSessionFlush(() => Promise.resolve());
+  linux.openSettings("profiles", "work", null, "profiles.extensions");
+  await new Promise(setImmediate);
+  const consented = JSON.parse(JSON.stringify(windows.open.get("settings").settings));
+  assert.equal(consented.revealConsent, "epoch-after-click");
+  useSettingsSearch.setState({ reveal: null });
+  navigateUtility(consented);
+  assert.equal(useSettingsSearch.getState().reveal?.consent, "epoch-after-click");
 });

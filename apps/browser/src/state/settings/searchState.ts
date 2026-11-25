@@ -121,32 +121,62 @@ export function finishReveal(token: number, flashId: string, missed: boolean): b
 
 export type RevealAnchor = { measure(found: (y: number, height: number) => void, failed: () => void): void; still(): boolean };
 
+const REVEAL_RETRY_MS = 20;
+
 export function runReveal(request: RevealRequest, flashId: string, locate: () => RevealAnchor | null, place: (y: number, height: number) => void): () => void {
   let active = true;
+  let retry: ReturnType<typeof setTimeout> | null = null;
+  let sawAnchor = false;
+  const clearRetry = () => {
+    if (retry !== null) {
+      clearTimeout(retry);
+      retry = null;
+    }
+  };
   const wanted = () => active && revealWanted(request, useSettingsNav.getState());
-  const end = (found: boolean) => {
+  const end = (found: boolean, flash = flashId) => {
+    active = false;
+    clearRetry();
     clearTimeout(deadline);
-    finishReveal(request.token, flashId, !found);
+    finishReveal(request.token, flash, !found);
   };
   const deadline = setTimeout(() => {
-    if (wanted()) finishReveal(request.token, flashId, true);
+    if (wanted()) end(false, sawAnchor ? flashId : "");
   }, REVEAL_MEASURE_MS);
   const attempt = () => {
+    clearRetry();
+    if (!wanted()) return;
     const anchor = locate();
     if (!anchor) {
-      clearTimeout(deadline);
-      finishReveal(request.token, "", true);
+      retry = setTimeout(attempt, REVEAL_RETRY_MS);
       return;
     }
+    sawAnchor = true;
+    let settled = false;
+    const watch = () => {
+      retry = null;
+      if (settled || !wanted()) return;
+      if (!anchor.still()) {
+        settled = true;
+        attempt();
+        return;
+      }
+      retry = setTimeout(watch, REVEAL_RETRY_MS);
+    };
+    retry = setTimeout(watch, REVEAL_RETRY_MS);
     anchor.measure(
       (y, height) => {
-        if (!wanted()) return;
+        if (settled || !wanted()) return;
+        settled = true;
+        clearRetry();
         if (!anchor.still()) return attempt();
         place(y, height);
         end(true);
       },
       () => {
-        if (!wanted()) return;
+        if (settled || !wanted()) return;
+        settled = true;
+        clearRetry();
         if (!anchor.still()) return attempt();
         end(false);
       },
@@ -156,6 +186,7 @@ export function runReveal(request: RevealRequest, flashId: string, locate: () =>
   else clearTimeout(deadline);
   return () => {
     active = false;
+    clearRetry();
     clearTimeout(deadline);
   };
 }

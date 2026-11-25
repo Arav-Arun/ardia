@@ -195,7 +195,9 @@ test("S5 (round 2): a miss is handed to the relay at once, with the request's co
   at("profiles", "work");
   revealSettingRow("profiles.extensions", consentToken());
   const asked = request();
-  runReveal(asked, "profiles.extensions", () => null, () => {});
+  const failing = anchor();
+  runReveal(asked, "profiles.extensions", () => failing, () => {});
+  failing.calls[0].failed();
   assert.deepEqual(relayed, [asked.consent]);
   assert.notEqual(asked.consent, null);
 });
@@ -214,11 +216,54 @@ test("S5: a miss with expired or absent consent never triggers the relay, leavin
   });
   t.after(() => usage.setCountsRelayNow(null));
   usage.noteSettingsSearch("started", consentToken());
-  runReveal(askedWhileOff, "profiles.extensions", () => null, () => {});
+  const failing = anchor();
+  runReveal(askedWhileOff, "profiles.extensions", () => failing, () => {});
+  failing.calls[0].failed();
   assert.deepEqual(relayed, [], "expired/absent consent must not invoke the relay");
   usage.emitWindowUsage(consentToken());
   await client.saveQueueNow();
   const queue = stub.docs.get("telemetry-queue.json");
   const events = queue ? JSON.parse(queue).events.filter((e) => e.event === "usage_counts").map((e) => e.properties) : [];
   assert.ok(events.some((p) => (p.settings_searches ?? 0) >= 1), "valid counts in the current consent period survive");
+});
+
+test("S6 (round 3): a detached anchor that never calls back retries and measures its replacement within the deadline", (t) => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  t.after(() => mock.timers.reset());
+  at("profiles", "work");
+  revealSettingRow("profiles.extensions", consentToken());
+  const asked = request();
+  const detached = anchor();
+  const replacement = anchor();
+  let current = detached;
+  const placed = [];
+  const stop = runReveal(asked, "profiles.extensions", () => current, (y) => placed.push(y));
+  t.after(stop);
+  detached.still = () => false;
+  current = replacement;
+  mock.timers.tick(25);
+  assert.equal(replacement.calls.length, 1, "the replacement anchor was measured even though the detached one stayed silent");
+  replacement.calls[0].found(420, 30);
+  assert.deepEqual(placed, [420]);
+  assert.equal(request(), null);
+});
+
+test("S6 (round 3): an anchor missing on the first frame retries until it mounts within the deadline", (t) => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  t.after(() => mock.timers.reset());
+  at("profiles", "work");
+  revealSettingRow("profiles.extensions", consentToken());
+  const asked = request();
+  let current = null;
+  const placed = [];
+  const stop = runReveal(asked, "profiles.extensions", () => current, (y) => placed.push(y));
+  t.after(stop);
+  assert.equal(request()?.token, asked.token, "missing on frame 1 does not immediately give up");
+  const mounted = anchor();
+  current = mounted;
+  mock.timers.tick(25);
+  assert.equal(mounted.calls.length, 1);
+  mounted.calls[0].found(310, 30);
+  assert.deepEqual(placed, [310]);
+  assert.equal(request(), null);
 });

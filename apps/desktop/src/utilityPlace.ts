@@ -1,7 +1,7 @@
 import { goToSettingsPane, type SettingsPlace } from "../../browser/src/state/settings/settingsWindows";
 import { findSetting, PANES } from "../../browser/src/components/settings/settingsIndex";
 import { dropSettingsSearch, revealSettingRow } from "../../browser/src/state/settings/searchState";
-import { consentToken } from "../../browser/src/state/telemetry/choice";
+import type { ConsentToken } from "../../browser/src/state/telemetry/choice";
 import { setPreferredImportSource } from "./settingsWindows";
 
 const CONSUMED_REVEALS = "ardia.utility.consumedReveals";
@@ -36,10 +36,10 @@ export function navigateUtility(value: unknown) {
   if (typeof importSource === "string") setPreferredImportSource(importSource);
   if (!PANES.some((pane) => pane.id === place.pane)) return;
   goToSettingsPane(place.pane, typeof place.profileId === "string" ? place.profileId : null, typeof place.detail === "string" ? place.detail : null);
-  const { reveal, revealId } = value as { reveal?: unknown; revealId?: unknown };
+  const { reveal, revealId, revealConsent } = value as { reveal?: unknown; revealId?: unknown; revealConsent?: unknown };
   if (typeof reveal !== "string" || findSetting(reveal)?.pane !== place.pane) return;
   if (typeof revealId !== "string" || revealId.length > 64 || !consumeReveal(revealId)) return;
-  const consent = consentToken();
+  const consent = typeof revealConsent === "string" && revealConsent ? (revealConsent as ConsentToken) : null;
   dropSettingsSearch(consent);
   revealSettingRow(reveal, consent);
 }
