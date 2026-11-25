@@ -1,6 +1,6 @@
 import { memo, useMemo } from "react";
 import { Animated, View } from "react-native";
-import { continuousCorners, radius, Symbol } from "../ui";
+import { radius, Symbol } from "../ui";
 import { GlassGroup } from "../ui/Glass";
 import { layout, useTheme } from "../ui/theme";
 import { useSidebarField } from "../../state/sidebar/chrome";
@@ -76,7 +76,7 @@ export function PinFieldZone({ top, height }: { top: number; height: number }) {
         right: layout.sidebarInset,
         top,
         height,
-        ...continuousCorners(radius.chrome),
+        borderRadius: radius.chrome,
         borderWidth: active ? 1.5 : 1,
         borderStyle: "dashed",
         borderColor: active ? tokens.dropMark : tokens.dragBorder,
@@ -123,7 +123,7 @@ export function PinSlotZone({ top = 0 }: { top?: number }) {
           top: top + firstRowTop,
           height: layout.pinnedHeight,
           opacity,
-          ...continuousCorners(radius.pinned),
+          borderRadius: radius.pinned,
           borderWidth: 1.5,
           borderStyle: "dashed",
           borderColor: tokens.dropMark,

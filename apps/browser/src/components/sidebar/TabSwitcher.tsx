@@ -6,7 +6,7 @@ import { useSidebarUi } from "../../state/sidebar/sidebarUi";
 import { lastPicture, onPicturesChanged } from "../../state/tabs/tabPictures";
 import { commitSwitcher, hoverSwitcherRow, leaveSwitcherRow, subscribeSwitcherTabChanges } from "../../state/sidebar/switcher";
 import { noteTabSwitcherOverflowClick, noteTabSwitcherOverflowOpened, noteTabSwitcherPictureLate, noteTabSwitcherWheelScrolled } from "../../state/telemetry/tabSwitcherOpens";
-import { continuousCorners, Symbol, Text, Panel } from "../ui";
+import { clippedContinuousCorners, continuousCorners, Symbol, Text, Panel } from "../ui";
 import { useTheme } from "../ui/theme";
 import { TabIcon } from "./TabIcon";
 import { previewBackdrop } from "./switcherPreview";
@@ -181,7 +181,7 @@ const SwitcherCard = memo(function SwitcherCard({ tabId, index, focused, accent,
               style={[
                 StyleSheet.absoluteFill,
                 {
-                  ...continuousCorners(T.previewRadius),
+                  ...clippedContinuousCorners(T.previewRadius),
                   borderWidth: focused ? T.ring.focused : T.ring.rest,
                   borderColor: focused ? accent : colors.restRing,
                 },

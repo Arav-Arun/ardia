@@ -16,7 +16,7 @@ import { PinnedFace } from "./PinnedFace";
 import { dockWidth, dropIndex, type DragGeometry } from "./stripGroups";
 import { TabChip } from "./TabChip";
 import { CHIP_HAIRLINE, DOCK_GAP, GAP, ITEM_HEIGHT, ITEM_TOP, MAX_CHIP, PINNED_CELL, PINNED_FACE_INSET, pinnedFaceRadius, PINNED_SPACING, tabRadius, TOP_STRIP_HEIGHT } from "./tokens";
-import { continuousCorners } from "../ui";
+import { clippedContinuousCorners, continuousCorners } from "../ui";
 import { useStripDrag } from "./useStripDrag";
 import { useStripPick } from "./stripPick";
 import { useStripCardHover } from "./StripHoverCard";
@@ -42,7 +42,7 @@ export function PinnedDock({ tabIds }: { tabIds: string[] }) {
           height: ITEM_HEIGHT,
           width: box.interpolate({ inputRange: [0, 1], outputRange: [0, 1], extrapolateLeft: "clamp" }),
           opacity: box.interpolate({ inputRange: [0, PINNED_CELL / 2], outputRange: [0, 1], extrapolate: "clamp" }),
-          ...continuousCorners(tabRadius()),
+          ...(glass ? continuousCorners(tabRadius()) : clippedContinuousCorners(tabRadius())),
           borderWidth: glass ? 0 : CHIP_HAIRLINE,
           borderColor: theme.pinnedRestingStroke,
           backgroundColor: glass ? undefined : theme.pinnedResting,

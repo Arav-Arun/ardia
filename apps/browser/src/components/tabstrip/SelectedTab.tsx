@@ -1,11 +1,10 @@
 import { Fragment, useContext } from "react";
 import { Animated } from "react-native";
-import { Surface } from "../ui";
+import { clippedContinuousCorners, continuousCorners, Surface } from "../ui";
 import { useTheme } from "../ui/theme";
 import type { useEasedColor } from "../ui/toolbarColors";
 import { FloatingStrip } from "./context";
 import { CHIP_HAIRLINE, FLARE, ITEM_HEIGHT, ITEM_TOP, RIM_HEIGHT, RIM_WIDTH, STRIP_COLORS, tabRadius, TAB_TOP, TOP_STRIP_HEIGHT } from "./tokens";
-import { continuousCorners } from "../ui";
 
 type Fill = string | ReturnType<typeof useEasedColor>;
 
@@ -22,7 +21,7 @@ export function SelectedTab({ width, band, opaque = false }: { width: Size; band
       top: ITEM_TOP,
       width,
       height: ITEM_HEIGHT,
-      ...continuousCorners(tabRadius()),
+      ...clippedContinuousCorners(tabRadius()),
     };
     return (
       <>
@@ -46,19 +45,11 @@ export function SelectedTab({ width, band, opaque = false }: { width: Size; band
     <Animated.View pointerEvents="none" style={{ position: "absolute", left: 0, top: 0, width, height: TOP_STRIP_HEIGHT }}>
       {fills.map((fill, i) => (
         <Fragment key={i}>
-          <Animated.View
-            style={{
-              position: "absolute",
-              left: 0.5,
-              top: TAB_TOP,
-              width: body,
-              height: TOP_STRIP_HEIGHT - TAB_TOP,
-              borderTopLeftRadius: tabRadius(),
-              borderTopRightRadius: tabRadius(),
-              borderCurve: "continuous" as const,
-              backgroundColor: fill,
-            }}
-          />
+          <Animated.View style={{ position: "absolute", left: 0.5, top: TAB_TOP, width: body, height: TOP_STRIP_HEIGHT - TAB_TOP, overflow: "hidden" }}>
+            <Animated.View
+              style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: -tabRadius() * 2, ...continuousCorners(tabRadius()), backgroundColor: fill }}
+            />
+          </Animated.View>
           <Flare x={0.5 - FLARE} side="left" color={fill} />
           <Flare x={plus(body, 0.5)} side="right" color={fill} />
         </Fragment>
