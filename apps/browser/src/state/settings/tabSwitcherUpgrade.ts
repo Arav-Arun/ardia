@@ -10,6 +10,7 @@ export const TAB_SWITCHER_MODES_APPLIED = "tabSwitcherOrder:fromShortcuts";
 const isOverrides = (v: unknown): v is ShortcutOverrides => isFields(v) && Object.values(v).every(isStringList);
 
 const STEPPED = { tabSwitcherOrder: "inOrder", tabSwitcherView: "none" } as const;
+const DEFAULT_MODES = { tabSwitcherOrder: "recent", tabSwitcherView: "thumbnails" } as const;
 
 type Upgraded<S> = { settings: S | undefined; settingsMeta: SettingsMeta };
 
@@ -28,6 +29,8 @@ export function withTabSwitcherModes<S extends object>(saved: S | undefined, met
   return { settings: fields as S, settingsMeta: stepped ? { ...settingsMeta, chosen: [...new Set([...meta.chosen, ...Object.keys(STEPPED)])] } : settingsMeta };
 }
 
-export function withSyncedTabSwitcherModes(patch: Partial<Settings>, modesSynced: boolean): Partial<Settings> {
-  return modesSynced ? patch : (upgradedFields(patch, false).fields as Partial<Settings>);
+export function withSyncedTabSwitcherModes(patch: Partial<Settings>, modesExplicit: boolean): Partial<Settings> {
+  if (modesExplicit || !isOverrides(patch.shortcuts) || "tabSwitcherOrder" in patch || "tabSwitcherView" in patch) return patch;
+  const { shortcuts, stepped } = ctrlTabUpgrade(patch.shortcuts, staticShortcutSources(), { usedToStep: false });
+  return { ...patch, shortcuts, ...(stepped ? STEPPED : DEFAULT_MODES) };
 }
