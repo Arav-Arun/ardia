@@ -179,6 +179,27 @@ test("a pinned group tab's home reaches the other Mac in the pull that brings th
   assert.deepEqual(fromB, [], "B never sends a home of its own over A's");
 });
 
+test("a malformed home from another Mac is refused without holding back a good home in the same pull", async () => {
+  const folder = new Folder();
+  const a = new Device("devA", folder);
+  const b = new Device("devB", folder);
+  const [m1, m2] = a.with(() => {
+    const w = S().createWindow({ url: "https://home.example/" });
+    const one = S().newTab(w, { url: "https://one.example/", background: true });
+    const two = S().newTab(w, { url: "https://two.example/", background: true });
+    S().groupTabs([one, two], { pinned: true, name: "Reading" });
+    return [one, two];
+  });
+  b.with(() => S().createWindow({ url: "https://b-home.example/" }));
+  await syncAll([a, b]);
+  const other = new Clock("devOther", null, () => Date.now() + 60_000);
+  const ops = [{ k: `pgh:${m1}`, h: other.tick(), v: "ardia://history#x\ny" }, { k: `pgh:${m2}`, h: other.tick(), v: "https://two-next.example/" }];
+  folder.files.set("other1", { scope: "p", payload: JSON.stringify({ v: 1, kind: "log", device: "devOther", seq: 1, at: Date.now(), ops }) });
+  await b.sync();
+  assert.equal(memberOf(b, m1)?.pinnedUrl, "https://one.example/", "the malformed home is refused");
+  assert.equal(memberOf(b, m2)?.pinnedUrl, "https://two-next.example/", "its good sibling still lands");
+});
+
 test("a pinned group tab takes a home from another Mac only when it's a web address or a listed Ardia page", async () => {
   const folder = new Folder();
   const a = new Device("devA", folder);
