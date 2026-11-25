@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mock, test } from "node:test";
+import { test } from "node:test";
 
 globalThis.__DEV__ = false;
 const { applyHistoryChanges, historyApplyStats, indexHistoryList } = await import("./historyChanges.ts");
@@ -185,25 +185,49 @@ test("64 title changes near the tail of an indexed 100,000-page list take the in
   assert.equal(historyApplyStats.indexed, indexed + 2);
 });
 
-test("a list the scan made gets its index once batches have been quiet for 2 s, and the next batch uses it", () => {
-  mock.timers.enable({ apis: ["setTimeout"] });
-  try {
-    const list = pages(3000);
-    const visit = (i) => [{ kind: "visit", profile: "", url: `https://new${i}.example/`, title: "N", visits: 1, at: 20_000_000 + i }];
-    const scanned = historyApplyStats.scanned;
-    const first = applyHistoryChanges(list, visit(1));
-    const second = applyHistoryChanges(first, visit(2));
-    assert.equal(historyApplyStats.scanned, scanned + 2);
-    const builds = historyApplyStats.indexBuilds;
-    mock.timers.tick(1999);
-    assert.equal(historyApplyStats.indexBuilds, builds);
-    mock.timers.tick(1);
-    assert.equal(historyApplyStats.indexBuilds, builds + 1);
-    const indexed = historyApplyStats.indexed;
-    const third = applyHistoryChanges(second, visit(3));
-    assert.equal(historyApplyStats.indexed, indexed + 1);
-    assert.deepEqual(third, referenceApply(second, visit(3)));
-  } finally {
-    mock.timers.reset();
+test("a list the scan made has no index until one is built for it, and the next batch then takes the indexed path", () => {
+  const list = pages(3000);
+  const visit = (i) => [{ kind: "visit", profile: "", url: `https://new${i}.example/`, title: "N", visits: 1, at: 20_000_000 + i }];
+  const builds = historyApplyStats.indexBuilds;
+  const scanned = historyApplyStats.scanned;
+  const first = applyHistoryChanges(list, visit(1));
+  assert.equal(historyApplyStats.scanned, scanned + 1);
+  assert.equal(historyApplyStats.indexBuilds, builds, "a batch never builds an index itself");
+  assert.equal(indexHistoryList(first), true);
+  const indexed = historyApplyStats.indexed;
+  const second = applyHistoryChanges(first, visit(2));
+  assert.equal(historyApplyStats.indexed, indexed + 1);
+  assert.deepEqual(second, referenceApply(first, visit(2)));
+});
+
+test("pages sharing one visit time: 64 tail title updates on 100,000 such pages fall back to one scan instead of walking the tie per page, and match", () => {
+  const list = pages(MAX_HISTORY).map((p) => ({ ...p, lastVisit: 5_000_000, visitTimes: [5_000_000] }));
+  assert.equal(indexHistoryList(list), true);
+  const rows = Array.from({ length: 64 }, (_, i) => ({ url: `https://p${MAX_HISTORY - 1 - i * 7}.example/`, title: `tied ${i}`, visits: 2 }));
+  const changes = [{ kind: "modified", profile: "", rows }];
+  const scanned = historyApplyStats.scanned;
+  assert.deepEqual(applyHistoryChanges(list, changes), referenceApply(list, changes));
+  assert.equal(historyApplyStats.scanned, scanned + 1, "past the tie budget the batch is merged by one scan");
+});
+
+test("small groups of pages sharing a visit time stay on the indexed path and match, over random batches", () => {
+  const indexed = historyApplyStats.indexed;
+  for (let seed = 1; seed <= 200; seed++) {
+    const r = rng(seed * 104729);
+    const n = 1 + r(300);
+    let t = 9_000_000;
+    let list = Array.from({ length: n }, (_, i) => {
+      if (r(3)) t -= 1 + r(2);
+      return { url: `https://s${i}.example/`, title: `T${i}`, favicon: null, visits: 1 + r(4), lastVisit: t, visitTimes: [t] };
+    });
+    indexHistoryList(list);
+    for (let step = 0; step < 8; step++) {
+      const changes = changesOf(r, n, t + r(n * 2));
+      const want = referenceApply(list, changes);
+      const got = applyHistoryChanges(list, changes);
+      assert.deepEqual(got, want, `seed ${seed} step ${step}`);
+      list = got;
+    }
   }
+  assert.ok(historyApplyStats.indexed - indexed > 500, `indexed applies: ${historyApplyStats.indexed - indexed}`);
 });

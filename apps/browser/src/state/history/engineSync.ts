@@ -4,7 +4,7 @@ import { readDocument } from "../../platform/documents";
 import { useBrowser, type BrowserState } from "../browser/store";
 import { afterFirstWindow } from "../../lib/afterFirstWindow";
 import { MAX_HISTORY, MAX_VISIT_TIMES } from "./history";
-import { applyHistoryChanges, isListChange, type HistoryGap, type ListChange, type NoteGap } from "./historyChanges";
+import { applyHistoryChanges, historyListIndexed, indexHistoryList, isListChange, type HistoryGap, type ListChange, type NoteGap } from "./historyChanges";
 import { engineProfile, isIncognitoProfile } from "../browser/model";
 import type { HistoryEntry } from "../browser/types";
 import { isWebPageUrl } from "../../lib/url";
@@ -12,10 +12,12 @@ import { engineProfiles } from "../profiles/engineProfiles";
 import { onProfilesOpened, onProfilesUnloaded, openedEngineProfiles } from "../profiles/profileLoading";
 import { migrateLegacyFile } from "../app/legacyFiles";
 import { during } from "../app/jobActivity";
+import { isQuitting, onQuittingChanged } from "../app/quit";
 import { consentToken } from "../telemetry/client";
 import { warnFor } from "../telemetry/logs";
 
 const LEGACY_FILE = "history.json";
+export const INDEX_WHEN_QUIET_MS = 2000;
 const LEGACY_TOLERANCE_MS = 60_000;
 const CHUNK = 500;
 const LEGACY_KEPT_MS = 15_000;
@@ -89,6 +91,33 @@ function setView(engine: string, list: HistoryEntry[], floor?: number) {
 
 const byLastVisit = (a: HistoryEntry, b: HistoryEntry) => b.lastVisit - a.lastVisit;
 
+const indexTimers = new Map<string, { timer: ReturnType<typeof setTimeout>; list: readonly HistoryEntry[] }>();
+
+function forgetIndexTimer(engine: string) {
+  const pending = indexTimers.get(engine);
+  if (pending) clearTimeout(pending.timer);
+  indexTimers.delete(engine);
+}
+
+function forgetReplacedIndexTimers() {
+  for (const [engine, { list }] of [...indexTimers]) if (viewOf(engine) !== list) forgetIndexTimer(engine);
+}
+
+function forgetIndexTimers() {
+  for (const engine of [...indexTimers.keys()]) forgetIndexTimer(engine);
+}
+
+function indexWhenQuiet(engine: string) {
+  forgetIndexTimer(engine);
+  const list = viewOf(engine);
+  if (isQuitting() || !list.length || historyListIndexed(list)) return;
+  const timer = setTimeout(() => {
+    indexTimers.delete(engine);
+    if (!isQuitting() && loaded.has(engine) && inApp(engine) && viewOf(engine) === list) indexHistoryList(list);
+  }, INDEX_WHEN_QUIET_MS);
+  indexTimers.set(engine, { timer, list });
+}
+
 type Load = { running: Promise<void>; again: boolean; queued: HistoryChange[] };
 const loads = new Map<string, Load>();
 const loaded = new Set<string>();
@@ -141,7 +170,10 @@ function applyPending() {
   const batches = new Map<string, ListChange[]>();
   const show = () => {
     during("historyApply", () => {
-      for (const [engine, batch] of batches) setView(engine, applyHistoryChanges(viewOf(engine), batch, gapNoter(engine)));
+      for (const [engine, batch] of batches) {
+        setView(engine, applyHistoryChanges(viewOf(engine), batch, gapNoter(engine)));
+        indexWhenQuiet(engine);
+      }
     });
     batches.clear();
   };
@@ -227,20 +259,29 @@ export function startHistory() {
     if (s.profiles === prev.profiles) return;
     const inStore = engineProfiles(s);
     for (const engine of loaded) if (!inStore.includes(engine)) loaded.delete(engine);
+    for (const engine of [...indexTimers.keys()]) if (!inStore.includes(engine)) forgetIndexTimer(engine);
     if (!moving) loadAll(s);
   });
   const opened = onProfilesOpened(() => {
     if (!moving) loadAll(store());
   });
   const unloaded = onProfilesUnloaded((engines) => {
-    for (const engine of engines) loaded.delete(engine);
+    for (const engine of engines) {
+      loaded.delete(engine);
+      forgetIndexTimer(engine);
+    }
   });
+  const quitting = onQuittingChanged((on) => on && forgetIndexTimers());
+  const replaced = useBrowser.subscribeTo(["history"], (s, prev) => s.history !== prev.history && indexTimers.size > 0 && forgetReplacedIndexTimers());
   return () => {
     stopped = true;
     events.remove();
     stop();
     opened();
     unloaded();
+    quitting();
+    replaced();
+    forgetIndexTimers();
     pending = [];
     loaded.clear();
     forgetGaps();
