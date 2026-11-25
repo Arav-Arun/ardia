@@ -18,10 +18,11 @@ const cornerFade = (filled: Animated.Value, fade: readonly (readonly [number, nu
   extrapolate: "clamp",
 });
 
-type LoadValues = { filled: Animated.Value; opacity: Animated.Value; comet: Animated.Value };
+type LoadValues = { filled: Animated.Value; opacity: Animated.Value; comet: Animated.Value; intensity: Animated.Value };
 
-function animatedSink({ filled, opacity, comet }: LoadValues, front: () => Front): LoadSink {
+function animatedSink({ filled, opacity, comet, intensity }: LoadValues, front: () => Front): LoadSink {
   let leave: Animated.CompositeAnimation | null = null;
+  let pulse: Animated.CompositeAnimation | null = null;
   opacity.setValue(0);
   return {
     show() {
@@ -36,6 +37,17 @@ function animatedSink({ filled, opacity, comet }: LoadValues, front: () => Front
       const to = filledAt(progress, front());
       if (still) filled.setValue(to);
       else Animated.timing(filled, { toValue: to, ...motion.progress, useNativeDriver: true }).start();
+    },
+    pulse(on) {
+      pulse?.stop();
+      pulse = null;
+      intensity.setValue(0);
+      if (!on) return;
+      pulse = Animated.loop(Animated.timing(intensity, {
+        toValue: 1, duration: FIELD_LOAD.pulse.period, easing: (t) => (1 - Math.cos(2 * Math.PI * t)) / 2,
+        useNativeDriver: true, isInteraction: false,
+      }));
+      pulse.start();
     },
     finish(still) {
       if (still) {
@@ -59,7 +71,7 @@ function animatedSink({ filled, opacity, comet }: LoadValues, front: () => Front
 
 const JsFieldLoadFill = memo(function JsFieldLoadFill({ tabId, color, height, radius }: FieldLoadFillProps) {
   const [width, setWidth] = useState(0);
-  const values = useRef<LoadValues>({ filled: new Animated.Value(0), opacity: new Animated.Value(0), comet: new Animated.Value(0) }).current;
+  const values = useRef<LoadValues>({ filled: new Animated.Value(0), opacity: new Animated.Value(0), comet: new Animated.Value(0), intensity: new Animated.Value(0) }).current;
   const { tail } = frontOf(width);
   const front = useRef<Front>({ width, tail });
   front.current = { width, tail };
@@ -74,7 +86,8 @@ const JsFieldLoadFill = memo(function JsFieldLoadFill({ tabId, color, height, ra
   const layers = useMemo(() => {
     if (!width) return null;
     const plates = fieldLoadPlates(width, height);
-    const { filled, opacity, comet } = values;
+    const { filled, opacity, comet, intensity } = values;
+    const brightness = intensity.interpolate({ inputRange: [0, 1], outputRange: [1, FIELD_LOAD.pulse.low] });
     const plate = (extra: number) => ({ position: "absolute", left: 0, top: 0, bottom: 0, width: width + extra }) as const;
     const corner = fieldRimRadius(width, height, radius);
     const travel = filled.interpolate({ inputRange: [0, 1], outputRange: [-width, 0] });
@@ -101,7 +114,7 @@ const JsFieldLoadFill = memo(function JsFieldLoadFill({ tabId, color, height, ra
       </>
     );
     return (
-      <Animated.View style={[StyleSheet.absoluteFill, { opacity }]}>
+      <Animated.View style={[StyleSheet.absoluteFill, { opacity: Animated.multiply(opacity, brightness) }]}>
         <Animated.View style={{ ...plate(plates.tail.extra), transform: [{ translateX: travel }] }}>
           <Animated.View style={[StyleSheet.absoluteFill, { opacity: steady }]}>
             <GradientFill color={color} stops={plates.tail.stops} fade={plates.tail.fade} style={plate(plates.tail.extra)} />

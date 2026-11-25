@@ -226,6 +226,7 @@ public final class FieldGlowLayers: NSObject, FieldGlowTarget {
     comet.opacity = cometValue
     steady.opacity = 1 - cometValue
     slide.isHidden = !shown
+    syncPulse(model.pulse)
     CATransaction.commit()
     if model.phase == .finishing { onFinished(model.generation) }
   }
@@ -235,6 +236,7 @@ public final class FieldGlowLayers: NSObject, FieldGlowTarget {
     CATransaction.setDisableActions(true)
     if model.phase != .idle { slide.isHidden = false }
     if model.phase != .loading { rawProgress = nil }
+    syncPulse(model.pulse)
     for move in moves { apply(move) }
     if model.phase == .finishing {
       finishing = model.generation
@@ -272,7 +274,24 @@ public final class FieldGlowLayers: NSObject, FieldGlowTarget {
   }
 
   private func clearAnimations() {
+    clip.removeAnimation(forKey: "pulse")
     for layer in [slide, steady, comet, capPlate.rim, cometPlate.rim] { layer.removeAllAnimations() }
+  }
+
+  public func syncPulse(_ pulse: FieldGlowPulse?) {
+    guard let pulse, animates() else {
+      clip.removeAnimation(forKey: "pulse")
+      return
+    }
+    guard clip.animation(forKey: "pulse") == nil else { return }
+    let animation = CABasicAnimation(keyPath: "opacity")
+    animation.fromValue = 1
+    animation.toValue = pulse.low
+    animation.duration = pulse.period / 2
+    animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+    animation.autoreverses = true
+    animation.repeatCount = .infinity
+    clip.add(animation, forKey: "pulse")
   }
 
   private func apply(_ move: FieldGlowMove) {
