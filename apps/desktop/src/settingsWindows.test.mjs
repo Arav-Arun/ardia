@@ -118,6 +118,23 @@ test("a second Settings renderer started from the host's cached payload doesn't 
   delete globalThis.sessionStorage;
 });
 
+test("in-memory reveal deduplication still holds when readable sessionStorage rejects writes", async (t) => {
+  const { useSettingsSearch } = await import("../../browser/src/state/settings/searchState.ts");
+  globalThis.sessionStorage = {
+    getItem: () => JSON.stringify(["older-reveal"]),
+    setItem: () => { throw new Error("quota exceeded"); },
+  };
+  t.after(() => { delete globalThis.sessionStorage; });
+  const renderer = await import("./utilityPlace.ts?renderer=readonly-storage");
+  const payload = { pane: "profiles", profileId: "work", detail: null, reveal: "profiles.extensions", revealId: "unwritable-storage-reveal" };
+  useSettingsSearch.setState({ reveal: null });
+  renderer.navigateUtility(payload);
+  assert.equal(useSettingsSearch.getState().reveal?.id, "profiles.extensions");
+  useSettingsSearch.setState({ reveal: null });
+  renderer.navigateUtility(payload);
+  assert.equal(useSettingsSearch.getState().reveal, null);
+});
+
 test("Manage Extensions captures consent before the async session flush and never renews it after opting in", async (t) => {
   const { useSettingsSearch } = await import("../../browser/src/state/settings/searchState.ts");
   const { setConsentPeriod, consentToken } = await import("../../browser/src/state/telemetry/consentPeriod.ts");

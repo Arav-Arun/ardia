@@ -8,14 +8,22 @@ const CONSUMED_REVEALS = "ardia.utility.consumedReveals";
 const KEPT_REVEALS = 20;
 const consumedInMemory: string[] = [];
 
-function consumedReveals(): string[] {
+function persistedReveals(): string[] {
   try {
     const saved = globalThis.sessionStorage?.getItem(CONSUMED_REVEALS);
     const parsed: unknown = saved ? JSON.parse(saved) : null;
-    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : consumedInMemory;
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
   } catch {
-    return consumedInMemory;
+    return [];
   }
+}
+
+function consumedReveals(): string[] {
+  const merged = persistedReveals();
+  for (const id of consumedInMemory) {
+    if (!merged.includes(id)) merged.push(id);
+  }
+  return merged;
 }
 
 function consumeReveal(revealId: string): boolean {
