@@ -5,7 +5,7 @@ import { useProfile } from "../../state/browser/hooks";
 import { usePluginTitle } from "../../state/plugins/hooks";
 import { trackSettingsSection } from "../../state/telemetry/track";
 import { preparePane, usePaneLoaded } from "../../state/settings/paneData";
-import { clearSettingsReveal, flashSetting, settingsSearchHost, useSettingsSearch } from "../../state/settings/searchState";
+import { clearSettingsReveal, flashSetting, revealTargetShown, settingsSearchHost, useSettingsSearch } from "../../state/settings/searchState";
 import { anchorView } from "./anchors";
 import { findSetting, resolveSettingId, PANES, paneTitle } from "./settingsIndex";
 import { SettingsPaneContext, UnshownSettingsProvider } from "./Form";
@@ -122,7 +122,7 @@ export function SettingsWindow() {
   useEffect(() => {
     if (!reveal) return;
     if (nav.pane !== revealPane) return void clearSettingsReveal();
-    if (shown?.pane !== revealPane) return;
+    if (!revealTargetShown(shown, nav, revealPane)) return;
     const animated = switched.current === key;
     const consent = consentToken();
     const frame = requestAnimationFrame(() => {

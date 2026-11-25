@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { goToSettingsPane, onTargetedSettingsOpen, type SettingsPane, useSettingsNav } from "./settingsWindows";
+import { goToSettingsPane, onTargetedSettingsOpen, type SettingsPane, type SettingsPlace, useSettingsNav } from "./settingsWindows";
 import { settingsProfileFor } from "../extensions/store";
 import { noteSettingsSearch, noteSettingsSearchReveal } from "../telemetry/usage";
 import { consentToken, type ConsentToken } from "../telemetry/choice";
@@ -52,7 +52,10 @@ export function dropSettingsSearch(consent: ConsentToken | null, why: "dropped" 
   useSettingsSearch.setState({ query: "", selected: 0, keyboardMove: 0, reveal: null, flash: null, previewSection: null, previewing: false });
 }
 
-onTargetedSettingsOpen(dropSettingsSearch);
+onTargetedSettingsOpen((consent, reveal) => {
+  dropSettingsSearch(consent);
+  if (reveal) revealSettingRow(reveal);
+});
 
 export const settingsSearchHost = () => () => dropSettingsSearch(consentToken(), "closed");
 
@@ -83,6 +86,9 @@ export const selectSettingsResult = (index: number) => useSettingsSearch.setStat
 export const clearSettingsReveal = () => useSettingsSearch.setState({ reveal: null });
 
 export const revealSettingRow = (id: string) => useSettingsSearch.setState({ reveal: { id, at: Date.now() } });
+
+export const revealTargetShown = (shown: SettingsPlace | null, target: SettingsPlace, revealPane: SettingsPane | null) =>
+  !!shown && shown.pane === revealPane && shown.profileId === target.profileId && shown.detail === target.detail;
 
 export function revealSetting(target: Target, via: "keyboard" | "click", rank: number, unshown = false) {
   noteSettingsSearchReveal(via, rank, unshown);

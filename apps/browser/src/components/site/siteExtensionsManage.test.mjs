@@ -94,3 +94,14 @@ test("Manage Extensions from an extension's page goes back to the profile overvi
   assert.equal(search.query, "");
   assert.equal(search.reveal?.id, "profiles.extensions");
 });
+
+test("a pending reveal waits while Settings still shows another profile or a detail page, and fires once the asked-for overview shows", async () => {
+  const { revealTargetShown } = await import("../../state/settings/searchState.ts");
+  const target = { pane: "profiles", profileId: "b", detail: null };
+  assert.equal(revealTargetShown(null, target, "profiles"), false, "nothing shown yet");
+  assert.equal(revealTargetShown({ pane: "profiles", profileId: "a", detail: null }, target, "profiles"), false, "profile A's overview while B loads");
+  assert.equal(revealTargetShown({ pane: "profiles", profileId: "a", detail: "extension:abc" }, target, "profiles"), false, "A's extension page while B loads");
+  assert.equal(revealTargetShown({ pane: "profiles", profileId: "b", detail: "extension:abc" }, target, "profiles"), false, "B's extension page before its overview");
+  assert.equal(revealTargetShown({ pane: "general", profileId: null, detail: null }, target, "profiles"), false, "another pane");
+  assert.equal(revealTargetShown({ pane: "profiles", profileId: "b", detail: null }, target, "profiles"), true);
+});

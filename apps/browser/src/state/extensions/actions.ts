@@ -21,7 +21,7 @@ import { shownPageId } from "../peek/peek";
 import { isOpenRegularWindow, mainWindowFor, originalProfile } from "../windows/small";
 import { focusedWindowOf } from "../windows/ui";
 import { goToSettingsPane, openSettings, replaceSettingsPlace, SETTINGS_DETAIL, useSettingsNav } from "../settings/settingsWindows";
-import { dropSettingsSearch, revealSettingRow } from "../settings/searchState";
+import { dropSettingsSearch } from "../settings/searchState";
 import { closeSidePanelsOf, toggleSidePanel } from "./sidePanels";
 import { notePrivateWindowExtensionOpen, noteExtensionProfilePageOpen, noteToolbarExtensionMove } from "../telemetry/usage";
 import { extensionPageUrl, extensionProfile, extensionsProfileId, isPrivate, nextInstallKey, pageProfile, shownIn, useExtensions, windowExtensions, readyTabOf, tabProfile, type Anchor } from "./store";
@@ -164,10 +164,7 @@ export function openOptions(windowId: string, ext: InstalledExtension) {
   focus(regular);
 }
 
-export function openManageExtensions(windowId?: string | null) {
-  openSettings("profiles", extensionsProfileId(null, windowId));
-  revealSettingRow(MANAGE_EXTENSIONS_ROW);
-}
+export const openManageExtensions = (windowId?: string | null) => openSettings("profiles", extensionsProfileId(null, windowId), null, MANAGE_EXTENSIONS_ROW);
 
 const MANAGE_EXTENSIONS_ROW = "profiles.extensions";
 
