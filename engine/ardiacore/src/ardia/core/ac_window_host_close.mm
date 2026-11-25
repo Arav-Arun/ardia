@@ -61,8 +61,14 @@ void WindowHost::ResumeClosesAfterLeaveAsk() {
   if (browser_shutdown::IsTryingToQuit() || IsQuitting()) {
     return;
   }
+  std::vector<base::WeakPtr<WindowHost>> waiting;
   for (WindowHost* host : All()) {
-    if (std::exchange(host->waiting_for_leave_ask_, false)) {
+    if (host->waiting_for_leave_ask_) {
+      waiting.push_back(host->GetWeakPtr());
+    }
+  }
+  for (const base::WeakPtr<WindowHost>& host : waiting) {
+    if (host && std::exchange(host->waiting_for_leave_ask_, false)) {
       host->ContinueClose();
     }
   }
