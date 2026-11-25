@@ -1760,10 +1760,18 @@ index b85ee3dd203f88bf2daaa47e912031ea200ff910..7cfb6ef470087501e0d485991f8e4e53
  }
    
 diff --git a/React/Base/RCTUIKit.h b/React/Base/RCTUIKit.h
-index 8f1094a71ed431fcecb6f760ffe8d6da643f04cb..67404c8656b69d9cf28d9eb5862e991400be8276 100644
+index 8f1094a71ed431fcecb6f760ffe8d6da643f04cb..10a989e11842f9db0d1c0409401d159b36c26407 100644
 --- a/React/Base/RCTUIKit.h
 +++ b/React/Base/RCTUIKit.h
-@@ -604,6 +604,11 @@ NS_INLINE RCTPlatformView *RCTUIViewHitTestWithEvent(RCTPlatformView *view, CGPo
+@@ -529,6 +529,7 @@ void UIBezierPathAppendPath(UIBezierPath *path, UIBezierPath *appendPath);
+  * containing window is in the background.
+  */
+ @property (nonatomic, assign) BOOL acceptsFirstMouse;
++@property (nonatomic, assign) BOOL ardiaKeepsHitsWhileClear;
+ 
+ @property (nonatomic, assign) BOOL mouseDownCanMoveWindow;
+ 
+@@ -604,6 +605,11 @@ NS_INLINE RCTPlatformView *RCTUIViewHitTestWithEvent(RCTPlatformView *view, CGPo
    return [view hitTest:pointInSuperview];
  }
  
@@ -1776,7 +1784,7 @@ index 8f1094a71ed431fcecb6f760ffe8d6da643f04cb..67404c8656b69d9cf28d9eb5862e9914
  {
    view.layerContentsRedrawPolicy = NSViewLayerContentsRedrawDuringViewResize;
 diff --git a/React/Base/macOS/RCTUIKit.m b/React/Base/macOS/RCTUIKit.m
-index a37a1c106a04752c1baeb6dd2170402ce5f34f71..4b0fa1207d50724979fdb0122a4a88eed20374cd 100644
+index a37a1c106a04752c1baeb6dd2170402ce5f34f71..12b9296d163bf8cf6297b55c53653f6b5d0cd7c6 100644
 --- a/React/Base/macOS/RCTUIKit.m
 +++ b/React/Base/macOS/RCTUIKit.m
 @@ -15,6 +15,7 @@
@@ -1832,7 +1840,7 @@ index a37a1c106a04752c1baeb6dd2170402ce5f34f71..4b0fa1207d50724979fdb0122a4a88ee
  - (BOOL)acceptsFirstMouse:(NSEvent *)event
  {
    if (self.acceptsFirstMouse || [super acceptsFirstMouse:event]) {
-@@ -284,20 +323,53 @@ - (CATransform3D)transform3D
+@@ -284,23 +323,59 @@ - (CATransform3D)transform3D
    return _transform3D;
  }
  
@@ -1873,8 +1881,8 @@ index a37a1c106a04752c1baeb6dd2170402ce5f34f71..4b0fa1207d50724979fdb0122a4a88ee
    _hasCustomTransform3D = !CATransform3DEqualToTransform(transform3D, CATransform3DIdentity);
 -  self.layer.transform = transform3D;
 +  self.layer.transform = RCTUIViewLayerTransform(self);
-+}
-+
+ }
+ 
 +- (void)setFrameOrigin:(NSPoint)newOrigin
 +{
 +  [super setFrameOrigin:newOrigin];
@@ -1889,12 +1897,18 @@ index a37a1c106a04752c1baeb6dd2170402ce5f34f71..4b0fa1207d50724979fdb0122a4a88ee
 +  if (_hasCustomTransform3D) {
 +    RCTUIViewApplyTransform3D(self);
 +  }
- }
++}
 +// Ardia]
- 
++
  - (NSView *)hitTest:(NSPoint)point
  {
-@@ -308,7 +380,11 @@ - (NSView *)hitTest:(NSPoint)point
++  if (!self.ardiaKeepsHitsWhileClear && (self.alphaValue < 0.01 || self.layer.opacity < 0.01)) {
++    return nil;
++  }
+   // NSView's hitTest: receives a point in superview coordinates. Convert to local
+   // coordinates using CALayer, which correctly accounts for layer.transform.
+   // NSView's convertPoint:fromView: does NOT account for layer transforms.
+@@ -308,7 +383,11 @@ - (NSView *)hitTest:(NSPoint)point
    if (self.layer.superlayer) {
      localPoint = [self.layer convertPoint:point fromLayer:self.layer.superlayer];
    } else {
@@ -1907,7 +1921,7 @@ index a37a1c106a04752c1baeb6dd2170402ce5f34f71..4b0fa1207d50724979fdb0122a4a88ee
    }
    return [self hitTest:localPoint withEvent:nil];
  }
-@@ -331,8 +407,8 @@ - (void)updateLayer
+@@ -331,8 +410,8 @@ - (void)updateLayer
    // On macOS, AppKit's layer-backed view system resets layer.transform to identity
    // during its layout/display cycle because NSView has no built-in transform property
    // (unlike UIView on iOS). We must re-apply the stored transform after each cycle.
@@ -1918,7 +1932,7 @@ index a37a1c106a04752c1baeb6dd2170402ce5f34f71..4b0fa1207d50724979fdb0122a4a88ee
    }
  
    if (_respondsToDisplayLayer) {
-@@ -822,6 +898,13 @@ - (instancetype)initWithFrame:(CGRect)frame
+@@ -822,6 +901,13 @@ - (instancetype)initWithFrame:(CGRect)frame
    return self;
  }
  
