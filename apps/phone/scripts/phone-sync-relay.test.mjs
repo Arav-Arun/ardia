@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -10,7 +10,7 @@ const relay = join(dirname(fileURLToPath(import.meta.url)), "phone-sync-relay.mj
 const skip = (process.platform === "win32" || process.getuid?.() === 0) && "needs a non-root Unix user, so pid 1 belongs to someone else";
 
 function savedRelay(t, saved) {
-  const base = mkdtempSync(join(tmpdir(), "relay-test-"));
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "relay-test-")));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const work = join(base, "work");
   mkdirSync(work);
@@ -37,4 +37,13 @@ test("start isn't refused by a saved relay pid that another user's process took 
   const start = runRelay("start", "--work", work, "--mac", join(base, "mac"), "--adb", "/usr/bin/false");
   assert.notEqual(start.status, 0);
   assert.doesNotMatch(start.stderr, /a relay already runs/);
+});
+
+test("the relay runs as a single copied file, as docs/phone.md deploys it", (t) => {
+  const { base, work } = savedRelay(t, { every: 3 });
+  const alone = join(base, "phone-sync-relay.mjs");
+  copyFileSync(relay, alone);
+  const status = spawnSync(process.execPath, [alone, "status", "--work", work], { encoding: "utf8", timeout: 20_000, cwd: base });
+  assert.equal(status.status, 0, status.stderr);
+  assert.match(status.stdout, /^relay not running;/);
 });

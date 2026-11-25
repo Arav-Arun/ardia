@@ -28,12 +28,21 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { signalable, trySignal } from "../../../scripts/lib/pid.mjs";
 
 const TEMP_SUFFIX = ".relay-part";
 const PARTS_FOLDER = ".ardia-relay-parts";
 const PROBE_NAME = ".ardia-relay-probe";
 const PROBE_TEXT = "ardia relay probe\n";
+
+function relayRunning(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function plan(mac, phone, record) {
   const steps = [];
@@ -311,7 +320,7 @@ async function main() {
   const savedFile = path.join(opts.work, "relay.json");
   if (opts.command === "start") {
     if (!opts.mac) throw new Error("start needs --mac [HOST:]FOLDER");
-    if (opts.pid && signalable(opts.pid)) throw new Error(`a relay already runs for this phone (pid ${opts.pid}); stop it first`);
+    if (opts.pid && relayRunning(opts.pid)) throw new Error(`a relay already runs for this phone (pid ${opts.pid}); stop it first`);
     fs.mkdirSync(opts.work, { recursive: true });
     const { command, pid, ...kept } = opts;
     fs.writeFileSync(savedFile, JSON.stringify(kept));
@@ -337,7 +346,7 @@ async function main() {
     if (!opts.mac) throw new Error("type-phrase needs --mac [HOST:]FOLDER, or a relay started for this phone");
     console.log(`${stamp()} ${typePhrase(opts)}`);
   } else if (opts.command === "status") {
-    console.log(`relay ${opts.pid && signalable(opts.pid) ? `running (pid ${opts.pid})` : "not running"}; Mac ${opts.mac ?? "?"}, phone ${opts.serial ?? "(the only one)"} ${opts.phoneFolder}`);
+    console.log(`relay ${opts.pid && relayRunning(opts.pid) ? `running (pid ${opts.pid})` : "not running"}; Mac ${opts.mac ?? "?"}, phone ${opts.serial ?? "(the only one)"} ${opts.phoneFolder}`);
     const last = path.join(opts.work, "last.json");
     if (fs.existsSync(last)) {
       const summary = JSON.parse(fs.readFileSync(last, "utf8"));
@@ -346,7 +355,13 @@ async function main() {
     const log = path.join(opts.work, "relay.log");
     if (fs.existsSync(log)) console.log(fs.readFileSync(log, "utf8").trim().split("\n").slice(-10).join("\n"));
   } else if (opts.command === "stop") {
-    if (opts.pid && signalable(opts.pid)) trySignal(opts.pid, "SIGTERM");
+    if (opts.pid && relayRunning(opts.pid)) {
+      try {
+        process.kill(opts.pid, "SIGTERM");
+      } catch (error) {
+        console.log(`could not stop the relay (pid ${opts.pid}): ${error.code ?? error.message}`);
+      }
+    }
     if (opts.mac) {
       const ends = endpoints(opts);
       for (const side of [ends.sides.phone, ends.sides.mac]) {

@@ -9,7 +9,7 @@ export function signalState(target, signal = (to, sig) => process.kill(to, sig))
   }
 }
 
-const validPid = (pid) => Number.isSafeInteger(pid) && pid > 0;
+const validPid = (pid) => Number.isSafeInteger(pid) && pid > 0 && pid <= 0x7fffffff;
 
 export const isAlive = (pid) => validPid(pid) && signalState(pid) !== "gone";
 

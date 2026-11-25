@@ -22,6 +22,7 @@ test("EPERM from signal 0 means the process exists, ESRCH means it's gone", () =
 test("isAlive answers for real pids and refuses ones that would signal a group", () => {
   assert.equal(isAlive(process.pid), true);
   assert.equal(isAlive(2 ** 30), false);
+  for (const pid of [2 ** 31, 2 ** 32 + process.pid]) assert.equal(isAlive(pid), false, String(pid));
   for (const pid of [0, -1, -process.pid, NaN, 1.5, String(process.pid), null, undefined]) assert.equal(isAlive(pid), false, String(pid));
   for (const pgid of [0, 1, -5, NaN, null]) assert.equal(groupAlive(pgid), false, String(pgid));
 });
@@ -53,7 +54,7 @@ test("trySignal reports a refused signal instead of throwing", { skip: otherUser
 });
 
 test("await refuses a --pid that isn't a positive process id", () => {
-  for (const pid of ["Operation not permitted", "0", "-1", "12x", ""]) {
+  for (const pid of ["Operation not permitted", "0", "-1", "12x", "", "2147483648", "99999999999", "4294967297"]) {
     const result = spawnSync(join(repo, "scripts/agent/await"), ["--timeout", "2", "--every", "0.2", "--pid", pid, "--", "false"], { encoding: "utf8", timeout: 10_000 });
     assert.equal(result.status, 64, `${pid}: ${result.stderr}`);
     assert.match(result.stderr, /--pid needs a positive process id/);
