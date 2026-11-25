@@ -1,4 +1,5 @@
-import { isMouseShortcut, sameShortcut, storedShortcut, type ResolvedShortcuts, type Shortcut } from "../commands/shortcuts";
+import { isMouseShortcut, sameShortcut, storedShortcut, type Shortcut } from "../commands/shortcuts";
+import { resolvedShortcuts, type ShortcutState } from "../commands/commandShortcuts";
 import { useBrowser } from "../browser/store";
 import { setMouseShortcut, setShortcutOverride } from "./actions";
 
@@ -11,10 +12,11 @@ type Bindable = { id: string; remappable: boolean; mouseBindable?: boolean };
 export function applyRecordedShortcut(
   item: Bindable,
   combo: Shortcut | null | undefined,
-  resolved: ResolvedShortcuts,
-  saved: readonly string[] | undefined = useBrowser.getState().settings.shortcuts[item.id],
+  now: ShortcutState = useBrowser.getState(),
 ): RecordedChange | null {
   if (!combo) return null;
+  const resolved = resolvedShortcuts(now);
+  const saved = now.settings.shortcuts[item.id];
   if (isMouseShortcut(combo)) {
     if (!item.remappable || !item.mouseBindable) return null;
     const current = resolved.mouse.get(item.id);
@@ -30,7 +32,8 @@ export function applyRecordedShortcut(
   return "changed";
 }
 
-export function clearShortcut(item: { id: string }, resolved: ResolvedShortcuts): RecordedChange | null {
+export function clearShortcut(item: { id: string }, now: ShortcutState = useBrowser.getState()): RecordedChange | null {
+  const resolved = resolvedShortcuts(now);
   if (!resolved.bindings.get(item.id)?.length) return null;
   setShortcutOverride(item.id, resolved.defaultsOf(item.id).length ? NO_SHORTCUT : null);
   return "cleared";

@@ -83,7 +83,7 @@ function KeyboardSection() {
     setRecording(item.id);
     const combo = await recordShortcut();
     setRecording(null);
-    applyRecordedShortcut(item, combo, resolved);
+    applyRecordedShortcut(item, combo);
   };
 
   const searchKeys = async () => {
@@ -154,7 +154,7 @@ function KeyboardSection() {
           remappable={item.remappable}
           recording={recording === item.id}
           onRecord={() => void record(item)}
-          onClear={() => clearShortcut(item, resolved)}
+          onClear={() => clearShortcut(item)}
         />
       </Row>
     );

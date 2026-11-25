@@ -38,8 +38,6 @@ export function ShortcutConflict({ titles }: { titles: readonly string[] }) {
 export function CommandKeyField({ command, onChange }: { command: string; onChange?: (change: RecordedChange) => void }) {
   const [items] = useResource(shortcutItems);
   const resolved = useResolvedShortcuts(items);
-  const latest = useRef(resolved);
-  latest.current = resolved;
   const [recording, setRecording] = useState(false);
   const recorder = useRef<ShortcutRecorder | null>(null);
   recorder.current ??= shortcutRecorder(recordShortcut, cancelShortcutRecording);
@@ -53,7 +51,7 @@ export function CommandKeyField({ command, onChange }: { command: string; onChan
     const combo = await session.take().catch(() => null);
     if (combo === undefined) return;
     setRecording(false);
-    const change = applyRecordedShortcut(item, combo, latest.current);
+    const change = applyRecordedShortcut(item, combo);
     if (change) onChange?.(change);
   };
   return (
@@ -65,7 +63,7 @@ export function CommandKeyField({ command, onChange }: { command: string; onChan
       tooltip="Change Shortcut"
       onRecord={() => void record()}
       onClear={() => {
-        const change = clearShortcut(item, resolved);
+        const change = clearShortcut(item);
         if (change) onChange?.(change);
       }}
       onClearMouse={() => setMouseShortcut(command, null)}
