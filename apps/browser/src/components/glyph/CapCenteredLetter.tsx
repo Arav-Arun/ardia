@@ -27,14 +27,14 @@ const RETINA_PIXELS_PER_POINT = 2;
 const retinaPixelsPerPoint = () => RETINA_PIXELS_PER_POINT * currentInterfaceScale();
 
 export function inkCentered(box: number, shiftX: number, inkRise: number, metrics: LineMetrics, inset = 0, pixelsPerPoint = retinaPixelsPerPoint()): ViewStyle {
-  const snapped = (points: number) => snappedToGrid(points, pixelsPerPoint);
   const top = box / 2 - Math.round(metrics.ascender) + inkRise;
+  const laidTop = Math.floor(top * pixelsPerPoint) / pixelsPerPoint;
   return {
     position: "absolute",
     left: -inset,
-    top: Math.floor(top) - inset,
+    top: laidTop - inset,
     width: box,
-    transform: [{ translateX: snapped(shiftX) }, { translateY: snapped(top - Math.floor(top)) }],
+    transform: [{ translateX: snappedToGrid(shiftX, pixelsPerPoint) }, { translateY: snappedToGrid(top, pixelsPerPoint) - laidTop }],
   };
 }
 
