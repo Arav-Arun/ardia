@@ -516,7 +516,12 @@ using ardiacore::NS;
   if (!browser) {
     return;
   }
-  ardiacore::TabBridge::GetOrCreate(_contents)->set_closed_by_host();
+  ardiacore::TabBridge* bridge = ardiacore::TabBridge::GetOrCreate(_contents);
+  if (bridge->asking_before_leaving() && !browser_shutdown::HasShutdownStarted()) {
+    bridge->CloseAfterLeaveAsk();
+    return;
+  }
+  bridge->set_closed_by_host();
   TabStripModel* model = browser->GetTabStripModel();
   int index = model->GetIndexOfWebContents(_contents);
   if (index != TabStripModel::kNoTab) {

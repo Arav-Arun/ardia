@@ -506,6 +506,7 @@ try {
     const tabId = await run(`return open("bu");`);
     const rest = await waitFor((s) => s.phase === "open");
     const page = await app.page("page.html?n=bu");
+    await page.eval(`new Promise((r) => (document.readyState === "complete" ? r(0) : addEventListener("load", () => r(0))))`);
     await page.send("Page.enable");
     const dialogs = [];
     page.on("Page.javascriptDialogOpening", (d) => dialogs.push(d.type));
@@ -535,7 +536,7 @@ try {
     await ways.closeTab();
     await sleep(1200);
     await ways.closeTab();
-    await ways.escape();
+    await ways.closeTab();
     await sleep(600);
     record.repeatWhileAsking = { ...(await stillOpen()), dialogs: dialogs.length };
     assert.ok(await answer(false), "the first close asked");
@@ -647,7 +648,11 @@ try {
       record.peekAsked = await asked(1);
       await sleep(1200);
       await run(via === "native" ? `globalThis.expo.modules.ArdiaAppWindows.closeWindow("w1"); return 0;` : `st().closeWindow("w1"); return 0;`);
-      await sleep(1500);
+      record.timeline = [];
+      for (const ms of [100, 300, 600, 500]) {
+        await sleep(ms);
+        record.timeline.push({ ms, target: !!(await app.pageTarget("page.html?n=wc")), socketClosed: page.closed, dialogs: dialogs.length });
+      }
       record.alive = !page.closed && !!(await app.pageTarget("page.html?n=wc"));
       record.dialogsBeforeStay = dialogs.length;
       if (via === "store") {
