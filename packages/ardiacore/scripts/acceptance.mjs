@@ -46,7 +46,7 @@ import { createServer as createHttpsServer } from "node:https";
 import { basename, join, resolve } from "node:path";
 import { X509Certificate, createHash, createSign, generateKeyPairSync } from "node:crypto";
 import { crc32, deflateSync, inflateSync } from "node:zlib";
-import { attach as attachInstance, launch as launchInstance, onScreenWindows as windowsOf, reporter, sleep } from "../../../scripts/lib/instance.mjs";
+import { attach as attachInstance, isAlive, launch as launchInstance, onScreenWindows as windowsOf, reporter, sleep } from "../../../scripts/lib/instance.mjs";
 import { instanceEntries } from "../../../scripts/lib/launchEnv.mjs";
 
 // MARK: What each check needs
@@ -496,7 +496,7 @@ function adopt(i) {
 }
 if (kept) adopt(kept);
 else await launch();
-const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const alive = () => isAlive(pid);
 setInterval(() => { if (!exited && !alive()) exited = { pid }; }, 300).unref();
 const appLog = { join: () => (existsSync(stdout) ? readFileSync(stdout, "utf8") : "") };
 
