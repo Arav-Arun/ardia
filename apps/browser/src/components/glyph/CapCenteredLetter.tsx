@@ -4,6 +4,7 @@ import { typeFace } from "../ui/tokens";
 import { PLATFORM_FEATURES } from "../../lib/platformFeatures";
 import { snappedToGrid } from "../../lib/interfaceScale";
 import { currentInterfaceScale } from "../../state/settings/interfaceScale";
+import { SYSTEM_FONT } from "./capFit";
 
 type LineMetrics = { ascender: number; capHeight: number };
 
@@ -21,24 +22,10 @@ function useLineMetrics(key: string) {
   return { metrics, onTextLayout };
 }
 
-const SYSTEM_FONT = { ascender: 0.9668, capHeight: 0.7046 } as const;
 
 const RETINA_PIXELS_PER_POINT = 2;
 
-const retinaPixelsPerPoint = () => RETINA_PIXELS_PER_POINT * currentInterfaceScale();
-
-const retinaSnapped = (points: number) => snappedToGrid(points, retinaPixelsPerPoint());
-
-export function capFittedFontSize(fontSize: number, box: number): number {
-  if (!PLATFORM_FEATURES.snapsTextBaselines) return fontSize;
-  const density = retinaPixelsPerPoint();
-  const boxPixels = Math.round(box * density);
-  const capPixels = fontSize * SYSTEM_FONT.capHeight * density;
-  const below = Math.floor(capPixels);
-  const evenWithBox = (below - boxPixels) % 2 === 0 ? below : below - 1;
-  const fitted = capPixels - evenWithBox <= 1 ? evenWithBox : evenWithBox + 2;
-  return fitted > 0 ? fitted / (SYSTEM_FONT.capHeight * density) : fontSize;
-}
+const retinaSnapped = (points: number) => snappedToGrid(points, RETINA_PIXELS_PER_POINT * currentInterfaceScale());
 
 export function inkCentered(box: number, shiftX: number, inkRise: number, metrics: LineMetrics, inset = 0): ViewStyle {
   const top = box / 2 - Math.round(metrics.ascender) + inkRise;
@@ -62,7 +49,7 @@ export function CapCenteredLetter({
   color,
   tracking = 0,
   inset = 0,
-  nudgeX = 0,
+  leadInset = 0,
   children,
 }: {
   box: number;
@@ -71,7 +58,7 @@ export function CapCenteredLetter({
   color: string;
   tracking?: number;
   inset?: number;
-  nudgeX?: number;
+  leadInset?: number;
   children: string;
 }) {
   const face = typeFace();
@@ -86,7 +73,7 @@ export function CapCenteredLetter({
         style={{
           ...face,
           width: box,
-          paddingLeft: snaps ? 2 * nudgeX : 0,
+          paddingLeft: snaps ? leadInset : 0,
           textAlign: "center",
           fontSize,
           letterSpacing: tracking,

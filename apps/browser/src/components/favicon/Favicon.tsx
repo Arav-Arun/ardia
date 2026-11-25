@@ -4,7 +4,10 @@ import { Image, View } from "react-native";
 import { faviconFailed, useAppearanceDark } from "../../state/favicons/favicons";
 import { useFavicon, useFaviconTheme, usePrivateViewer } from "../../state/favicons/faviconHooks";
 import { drawnSymbol, radius, tintedImage, useTheme, weight } from "../ui";
-import { capFittedFontSize, CapCenteredLetter } from "../glyph/CapCenteredLetter";
+import { CapCenteredLetter } from "../glyph/CapCenteredLetter";
+import { useDevicePixelsPerRootPoint } from "../../state/settings/interfaceScale";
+import { PLATFORM_FEATURES } from "../../lib/platformFeatures";
+import { initialGlyph } from "./initialGlyph";
 import { bundledSiteIcon } from "./siteIcons";
 
 export const Favicon = memo(function Favicon({
@@ -58,11 +61,13 @@ export const SiteFavicon = memo(function SiteFavicon({ host, profileId, size }: 
 export const FaviconFallback = memo(function FaviconFallback({ url, size = 16, opacity = 1, color }: { url: string; size?: number; opacity?: number; color?: string }) {
   const theme = useTheme();
   const glyph = color ?? theme.textSecondary;
+  const pixelsPerPoint = useDevicePixelsPerRootPoint();
   const bundled = bundledSiteIcon(url, theme.dark);
   if (bundled !== undefined) return <Image source={bundled} style={{ width: size, height: size, borderRadius: size > 18 ? radius.control : radius.hair, opacity }} />;
   const initial = hostInitial(url);
   if (!initial) return drawnSymbol({ name: "globe", size: size - 2, color: glyph, style: { width: size, height: size, opacity } });
   const tile = Math.round((size * 14) / 16);
+  const glyphSize = initialGlyph(tile, pixelsPerPoint, PLATFORM_FEATURES.snapsTextBaselines);
   return (
     <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center", opacity }}>
       <View
@@ -76,15 +81,13 @@ export const FaviconFallback = memo(function FaviconFallback({ url, size = 16, o
           justifyContent: "center",
         }}
       >
-        <CapCenteredLetter box={tile} fontSize={capFittedFontSize(tile * INITIAL.scale, tile)} nudgeX={INITIAL.nudgeX} fontWeight={weight.semibold} color={glyph}>
+        <CapCenteredLetter box={tile} fontSize={glyphSize.fontSize} leadInset={glyphSize.leadInset} fontWeight={weight.semibold} color={glyph}>
           {initial}
         </CapCenteredLetter>
       </View>
     </View>
   );
 });
-
-const INITIAL = { scale: 0.64, nudgeX: 0.25 } as const;
 
 function hostInitial(url: string): string {
   const host = /^(?:https?|ftp):/i.test(url) ? hostOf(url) : "";
