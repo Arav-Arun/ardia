@@ -10,7 +10,7 @@ import { useNativePagerPosition, usePagerPages, type PagerPage } from "../../sta
 import { ContextMenuArea, useHover } from "../ui";
 import { TooltipAbove } from "../ui/TooltipAbove";
 import { SIDEBAR_FOOTER_DOWNLOADS } from "../sidebar/geometry";
-import { switcherCellWidth, switcherIcons, SwitcherMark } from "./ProfileIcons";
+import { switcherCellWidth, switcherIconCell, switcherIcons, SwitcherMark } from "./ProfileIcons";
 import { openProfileItemMenu } from "./profileMenu";
 import { profileSwitcherShown } from "../../state/profiles/switcherShown";
 import { switcherIconOf } from "../../state/profiles/switcherMark";
@@ -36,9 +36,11 @@ export function useProfileDotsShown() {
 export function ProfileDots({ windowId, width, besideDownloads }: { windowId: string; width: number; besideDownloads: boolean }) {
   const ids = useProfileOrder(useShallow((o) => o));
   const saved = useProfileRecords(useShallow((profiles) => ids.map((id) => switcherIconOf(profiles[id]))));
-  const icons = switcherIcons(saved, width - 2 * (besideDownloads ? SIDE_ROOM_BESIDE_DOWNLOADS : SIDE_ROOM));
+  const room = width - 2 * (besideDownloads ? SIDE_ROOM_BESIDE_DOWNLOADS : SIDE_ROOM);
+  const icons = switcherIcons(saved, room);
+  const iconCell = switcherIconCell(icons, room);
   const { pages, pager } = usePagerPages(windowId);
-  const cells = ids.map((_, i) => switcherCellWidth(icons[i] ?? null));
+  const cells = ids.map((_, i) => switcherCellWidth(icons[i] ?? null, iconCell));
   const reorder = useDotReorder(ids, cells);
   const rowWidth = cells.reduce((sum, cell) => sum + cell, 0);
   return (
@@ -50,6 +52,7 @@ export function ProfileDots({ windowId, width, besideDownloads }: { windowId: st
             id={id}
             windowId={windowId}
             icon={icons[i] ?? null}
+            cell={cells[i]!}
             page={pages.find((p) => p.id === id)}
             pos={pager.pos}
             offset={reorder.offsetOf(id)}
@@ -67,6 +70,7 @@ type DotProps = {
   id: string;
   windowId: string;
   icon: string | null;
+  cell: number;
   page: PagerPage | undefined;
   pos: Animated.Value;
   offset: Animated.Value;
@@ -75,7 +79,7 @@ type DotProps = {
   reordering: boolean;
 };
 
-function Dot({ id, windowId, icon, page, pos, offset, pan, lifted, reordering }: DotProps) {
+function Dot({ id, windowId, icon, cell, page, pos, offset, pan, lifted, reordering }: DotProps) {
   const theme = useTheme();
   useNativePagerPosition(windowId);
   const name = useProfile(id, (p) => p?.name ?? "");
@@ -91,7 +95,6 @@ function Dot({ id, windowId, icon, page, pos, offset, pan, lifted, reordering }:
   const opacity = page
     ? pos.interpolate({ inputRange: [page.slot - 1, page.slot, page.slot + 1], outputRange: [rest, levels.selected, rest], extrapolate: "clamp" })
     : rest;
-  const cell = switcherCellWidth(icon);
   const mark = useRef<View>(null);
   return (
     <Animated.View {...hoverProps} {...pan.panHandlers} ref={mark} style={{ zIndex: lifted ? 1 : 0, transform: [{ translateX: offset }] }}>
@@ -112,7 +115,7 @@ function Dot({ id, windowId, icon, page, pos, offset, pan, lifted, reordering }:
             {holding ? (
               <View
                 pointerEvents="none"
-                style={{ position: "absolute", width: icon ? cell : holdPlate.dot, height: icon ? holdPlate.icon : holdPlate.dot, borderRadius: icon ? holdPlate.radius : holdPlate.dot / 2, backgroundColor: tokens.multiSelected }}
+                style={{ position: "absolute", width: icon ? profileSwitcher.iconCell : holdPlate.dot, height: icon ? holdPlate.icon : holdPlate.dot, borderRadius: icon ? holdPlate.radius : holdPlate.dot / 2, backgroundColor: tokens.multiSelected }}
               />
             ) : null}
             <Animated.View style={[{ opacity }, pressMotion.scale ? { transform: [{ scale: pressMotion.scale }] } : null]}>

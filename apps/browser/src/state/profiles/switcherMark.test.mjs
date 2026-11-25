@@ -10,7 +10,7 @@ const { CONFIG_SETTING_KEYS } = await import("../settings/configAllowlist.ts");
 const { checkedSettings } = await import("../config/configSettings.ts");
 const { chooseIcon } = await import("./actions.ts");
 const { switcherIconOf } = await import("./switcherMark.ts");
-const { switcherIcons } = await import("../../components/profiles/ProfileIcons.tsx");
+const { switcherIconCell, switcherIcons } = await import("../../components/profiles/ProfileIcons.tsx");
 
 const S = () => useBrowser.getState();
 const profile = (id, icon) => ({ id, name: id, color: "plum", icon, createdAt: 0 });
@@ -89,6 +89,14 @@ test("a kept dot gives way when the icon is chosen again, changed by sync or imp
 test("icons that don't fit the sidebar fall back to dots for every profile", () => {
   assert.deepEqual(switcherIcons(["🔥", null], 1000), ["🔥", null]);
   assert.deepEqual(switcherIcons(["🔥", "🌊"], 10), [null, null]);
+});
+
+test("icon cells widen to share the room, between 26 and 32 pt", () => {
+  assert.equal(switcherIconCell(["a", "b", "c", "d", "e"], 172), 32);
+  assert.equal(switcherIconCell(["a", "b", "c", "d", "e", "f"], 172), 28);
+  assert.equal(switcherIconCell(["a", null, "c"], 70), 29);
+  assert.equal(switcherIconCell(["a", "b"], 40), 26);
+  assert.equal(switcherIconCell([null, null], 172), 26);
 });
 
 test("a config file that still names the old setting raises no problem", () => {

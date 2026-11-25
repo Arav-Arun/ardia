@@ -57,7 +57,15 @@ export const PROFILE_SYMBOLS: { name: string; title: string }[] = [
   { name: "bolt.fill", title: "Energy" },
 ];
 
-export const switcherCellWidth = (icon: string | null) => (icon ? profileSwitcher.iconCell : profileSwitcher.dotCell);
+export const switcherCellWidth = (icon: string | null, iconCell: number = profileSwitcher.iconCell) => (icon ? iconCell : profileSwitcher.dotCell);
+
+export function switcherIconCell(icons: (string | null)[], room: number): number {
+  const iconCount = icons.filter((icon) => icon !== null).length;
+  if (!iconCount) return profileSwitcher.iconCell;
+  const dotsWidth = (icons.length - iconCount) * profileSwitcher.dotCell;
+  const even = Math.floor((room - dotsWidth) / iconCount);
+  return Math.max(profileSwitcher.iconCell, Math.min(profileSwitcher.roomyIconCell, even));
+}
 
 export function switcherIcons(icons: (string | null)[], room: number): (string | null)[] {
   const fits = icons.reduce((width, icon) => width + switcherCellWidth(icon), 0) <= room;

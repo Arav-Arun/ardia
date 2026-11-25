@@ -4,7 +4,7 @@ import { Image, View } from "react-native";
 import { faviconFailed, useAppearanceDark } from "../../state/favicons/favicons";
 import { useFavicon, useFaviconTheme, usePrivateViewer } from "../../state/favicons/faviconHooks";
 import { drawnSymbol, radius, tintedImage, useTheme, weight } from "../ui";
-import { CapCenteredLetter } from "../glyph/CapCenteredLetter";
+import { capFittedFontSize, CapCenteredLetter } from "../glyph/CapCenteredLetter";
 import { bundledSiteIcon } from "./siteIcons";
 
 export const Favicon = memo(function Favicon({
@@ -76,13 +76,15 @@ export const FaviconFallback = memo(function FaviconFallback({ url, size = 16, o
           justifyContent: "center",
         }}
       >
-        <CapCenteredLetter box={tile} fontSize={Math.round(tile * 0.64)} fontWeight={weight.semibold} color={glyph}>
+        <CapCenteredLetter box={tile} fontSize={capFittedFontSize(tile * INITIAL.scale, tile)} nudgeX={INITIAL.nudgeX} fontWeight={weight.semibold} color={glyph}>
           {initial}
         </CapCenteredLetter>
       </View>
     </View>
   );
 });
+
+const INITIAL = { scale: 0.64, nudgeX: 0.25 } as const;
 
 function hostInitial(url: string): string {
   const host = /^(?:https?|ftp):/i.test(url) ? hostOf(url) : "";
