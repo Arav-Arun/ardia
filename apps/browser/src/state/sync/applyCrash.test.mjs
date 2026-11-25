@@ -36,7 +36,7 @@ class Mac {
     this.id = id;
     this.folder = folder;
     S().hydrate({});
-    useBrowser.setState({ history: { "": { list: [], floor: -Infinity, ready: true } }, bookmarksReady: { "": true } });
+    useBrowser.setState({ bookmarks: { ...S().bookmarks, nodes: {} }, history: { "": { list: [], floor: -Infinity, ready: true } }, bookmarksReady: { "": true } });
     this.browser = S();
     this.state = emptyScope();
     this.clock = new Clock(id);
@@ -213,4 +213,85 @@ test("history: visits applied and killed before Chrome committed them are applie
   await syncAll([p, a], 2);
   assert.deepEqual(timesOn(p), [first, second]);
   assert.deepEqual(timesOn(a), [first, second]);
+});
+
+test("bookmarks: two reorders applied and killed before Chrome saved either, then a delete elsewhere: it stays deleted and the order holds", async () => {
+  const { a, p } = await savedPair();
+  a.with(() => {
+    for (const title of ["X", "B", "C"]) S().addBookmark({ profileId: "default", url: `https://${title.toLowerCase()}.example/`, title });
+  });
+  await settled(a, p);
+  const toFront = (title) =>
+    a.with(() => {
+      const id = idOf(a, title);
+      S().moveBookmark(id, S().bookmarks.nodes[id].parentId, 0);
+    });
+  toFront("C");
+  await a.sync();
+  await p.sync();
+  toFront("B");
+  await a.sync();
+  await p.sync();
+  assert.deepEqual(titles(p), titles(a));
+  p.killed();
+  a.with(() => S().removeBookmark(idOf(a, "C")));
+  await a.sync();
+  assert.equal((await p.sync()).published, 0, "neither stale order is sent as this Mac's edit");
+  await syncAll([p, a], 3);
+  assert.deepEqual(titles(a).flat(), ["B", "X"]);
+  assert.deepEqual(titles(p), titles(a));
+});
+
+test("bookmarks: two reorders applied, Chrome saved only the first before the kill, then a delete elsewhere: it stays deleted and the order holds", async () => {
+  const { a, p } = await savedPair();
+  a.with(() => {
+    for (const title of ["X", "B", "C"]) S().addBookmark({ profileId: "default", url: `https://${title.toLowerCase()}.example/`, title });
+  });
+  await settled(a, p);
+  const toFront = (title) =>
+    a.with(() => {
+      const id = idOf(a, title);
+      S().moveBookmark(id, S().bookmarks.nodes[id].parentId, 0);
+    });
+  toFront("C");
+  await a.sync();
+  await p.sync();
+  p.chromeSaves();
+  toFront("B");
+  await a.sync();
+  await p.sync();
+  assert.deepEqual(titles(p), titles(a));
+  p.killed();
+  a.with(() => S().removeBookmark(idOf(a, "C")));
+  await a.sync();
+  assert.equal((await p.sync()).published, 0, "neither stale order is sent as this Mac's edit");
+  await syncAll([p, a], 3);
+  assert.deepEqual(titles(a).flat(), ["B", "X"]);
+  assert.deepEqual(titles(p), titles(a));
+});
+
+test("history: Chrome committed only the first of two synced visit sets before the kill, then the page is deleted elsewhere: it stays deleted", async () => {
+  const { a, p } = await savedPair();
+  const url = "https://visited.example/";
+  const times = [Date.now() - 90_000, Date.now() - 60_000, Date.now() - 30_000];
+  const visit = (list) => ({ url, title: "Visited", favicon: null, visits: list.length, lastVisit: list.at(-1), visitTimes: list });
+  const setVisits = (list) => a.with(() => useBrowser.setState({ history: { "": { list: list ? [visit(list)] : [], floor: -Infinity, ready: true } } }));
+  const timesOn = (mac) => mac.with(() => historyOf(S(), "default").find((e) => e.url === url)?.visitTimes);
+  setVisits(times.slice(0, 1));
+  await settled(a, p);
+  setVisits(times.slice(0, 2));
+  await a.sync();
+  await p.sync();
+  p.chromeSaves();
+  setVisits(times);
+  await a.sync();
+  await p.sync();
+  assert.deepEqual(timesOn(p), times);
+  p.killed();
+  assert.deepEqual(timesOn(p), times.slice(0, 2));
+  setVisits(null);
+  await a.sync();
+  await syncAll([p, a], 3);
+  assert.equal(timesOn(a), undefined);
+  assert.equal(timesOn(p), undefined);
 });

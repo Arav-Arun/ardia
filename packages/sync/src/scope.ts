@@ -4,7 +4,7 @@ import { holdsBack, noteFileHealth } from "./fileHealth.ts";
 import { baseKeysWith, baseWritesUnder, dropBase, dropRecord, putBase, putRecord, visible } from "./scopeKeys.ts";
 export * from "./scopeKeys.ts";
 import { covered, isApplied, markApplied, raiseApplied } from "./applied.ts";
-import { countReapplied, finishBatch, startApplying, takeReapplied, writeAhead } from "./applyBatches.ts";
+import { countReapplied, finishBatch, startApplying, takeReapplied, trimBatch, writeAhead } from "./applyBatches.ts";
 import { recoverBatches } from "./applyRecovery.ts";
 import { parseSyncFile } from "./syncFile.ts";
 export { parseSyncFile } from "./syncFile.ts";
@@ -245,7 +245,7 @@ async function applyAdapter(state: ScopeState, adapter: Adapter, keys: Set<strin
       landed: (key: string) => void landed.add(key),
       defer: (key: string) => void (mine.has(key) && deferred.add(key)),
     };
-    ok = await adapter.apply(view, mine, (key) => parseBase(state.base[key]), records);
+    ok = held() ? false : await adapter.apply(view, mine, (key) => parseBase(state.base[key]), records);
   } catch (error) {
     console.warn(`[sync] applying ${adapter.prefix} failed`, error);
   }
@@ -372,7 +372,7 @@ export async function syncScope(args: {
     heldApply ||= applyHeld();
     const deferred = new Set<string>();
     const ahead = heldApply ? null : await writeAhead(state, adapter.prefix, keys, now(), options);
-    if (ahead?.batch) await publishLate();
+    if (ahead?.batch) trimBatch(state, ahead.batch, await publishLate());
     const applied = !heldApply && !ahead?.failed && (await applyAdapter(state, adapter, keys, now(), 2 * (options?.tombstoneTTL ?? DEFAULTS.tombstoneTTL), applyHeld, deferred));
     finishBatch(ahead?.batch ?? null, options);
     heldApply ||= applyHeld();

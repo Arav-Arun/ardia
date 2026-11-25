@@ -346,6 +346,36 @@ test("a batch too big for one part is split across parts under the limit and rea
   assert.equal(Object.keys(after.scopes["p:s1"].applying[0].k).length, 100_000);
 });
 
+test("a batch whose parts weren't all written is never loaded", async () => {
+  const doc = newDoc({ profiles: { default: { syncId: "s1", enabled: true } } });
+  const { files } = await opening({ doc });
+  doc.scopes["p:s1"] = emptyScope();
+  const keys = Object.fromEntries(Array.from({ length: 30_000 }, (_, i) => [`h:https://example.com/a/fairly/long/path/${i}`, [null, `{"t":"${i}"}`]]));
+  sealHook = async (text) => {
+    if (text.includes('"i":1')) throw new Error("killed mid-write");
+    return `sealed:${text}`;
+  };
+  await assert.rejects(files.persistApplying("p:s1")(batchOf(50, keys)));
+  sealHook = null;
+  const { doc: after } = await restart(doc);
+  assert.equal(after.scopes["p:s1"]?.applying, undefined);
+});
+
+test("keys a batch no longer covers, and its residual mark, stay that way across restarts", async () => {
+  const doc = newDoc({ profiles: { default: { syncId: "s1", enabled: true } } });
+  const { files } = await opening({ doc });
+  const state = (doc.scopes["p:s1"] = emptyScope());
+  const full = batchOf(60, { "bm:a": ['{"t":"A"}', '{"t":"B"}'], "bm:b": ['{"t":"X"}', '{"t":"Y"}'], "bm:c": [null, '{"t":"Z"}'] });
+  await files.persistApplying("p:s1")(full);
+  const settled = files.watchScope("p:s1", state, new Clock("devA"));
+  state.applying = [{ ...full, r: 1, x: 1, k: { "bm:b": full.k["bm:b"] } }];
+  await settled();
+  const { doc: once } = await restart(doc);
+  assert.deepEqual(once.scopes["p:s1"].applying, [{ ...full, r: 1, x: 1, k: { "bm:b": full.k["bm:b"] } }]);
+  const { doc: twice } = await restart(once);
+  assert.deepEqual(twice.scopes["p:s1"].applying, [{ ...full, r: 1, x: 1, k: { "bm:b": full.k["bm:b"] } }]);
+});
+
 test("damaged batches in a part, a checkpoint or a cycle's part are dropped instead of stalling sync", async () => {
   const doc = newDoc({ profiles: { default: { syncId: "s1", enabled: true } } });
   const good = batchOf(30, { "bm:t1": ['{"t":"T1"}', "fp1"] });

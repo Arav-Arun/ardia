@@ -190,7 +190,7 @@ const { holdsBack, noteFileHealth } = __require("packages/sync/src/fileHealth.ts
 const { baseKeysWith, baseWritesUnder, dropBase, dropRecord, putBase, putRecord, visible } = __require("packages/sync/src/scopeKeys.ts");
 
 const { covered, isApplied, markApplied, raiseApplied } = __require("packages/sync/src/applied.ts");
-const { countReapplied, finishBatch, startApplying, takeReapplied, writeAhead } = __require("packages/sync/src/applyBatches.ts");
+const { countReapplied, finishBatch, startApplying, takeReapplied, trimBatch, writeAhead } = __require("packages/sync/src/applyBatches.ts");
 const { recoverBatches } = __require("packages/sync/src/applyRecovery.ts");
 const { parseSyncFile } = __require("packages/sync/src/syncFile.ts");
 
@@ -431,7 +431,7 @@ async function applyAdapter(state            , adapter         , keys           
       landed: (key        ) => void landed.add(key),
       defer: (key        ) => void (mine.has(key) && deferred.add(key)),
     };
-    ok = await adapter.apply(view, mine, (key) => parseBase(state.base[key]), records);
+    ok = held() ? false : await adapter.apply(view, mine, (key) => parseBase(state.base[key]), records);
   } catch (error) {
     console.warn(`[sync] applying ${adapter.prefix} failed`, error);
   }
@@ -558,7 +558,7 @@ async function syncScope(args
     heldApply ||= applyHeld();
     const deferred = new Set        ();
     const ahead = heldApply ? null : await writeAhead(state, adapter.prefix, keys, now(), options);
-    if (ahead?.batch) await publishLate();
+    if (ahead?.batch) trimBatch(state, ahead.batch, await publishLate());
     const applied = !heldApply && !ahead?.failed && (await applyAdapter(state, adapter, keys, now(), 2 * (options?.tombstoneTTL ?? DEFAULTS.tombstoneTTL), applyHeld, deferred));
     finishBatch(ahead?.batch ?? null, options);
     heldApply ||= applyHeld();
@@ -817,10 +817,10 @@ __define("packages/sync/src/applyBatches.ts", function (exports, __require) {
   __export(exports, "ABSENT", () => ABSENT);
   __export(exports, "UNSEEN_KEPT_MS", () => UNSEEN_KEPT_MS);
   __export(exports, "launchOf", () => launchOf);
-  __export(exports, "fingerprint", () => fingerprint);
   __export(exports, "isApplyBatch", () => isApplyBatch);
   __export(exports, "validBatches", () => validBatches);
   __export(exports, "writeAhead", () => writeAhead);
+  __export(exports, "trimBatch", () => trimBatch);
   __export(exports, "finishBatch", () => finishBatch);
   __export(exports, "startApplying", () => startApplying);
   __export(exports, "queueRecovered", () => queueRecovered);
@@ -840,20 +840,8 @@ const steadyNow = () => (typeof performance !== "undefined" ? performance.now() 
 const launchOf = (options               = {}) => options.launch ?? thisLaunch;
 const monotonicOf = (options               = {}) => (options.monotonic ?? steadyNow)();
 
-function fingerprint(json        )         {
-  let h1 = 0xdeadbeef ^ json.length;
-  let h2 = 0x41c6ce57 ^ json.length;
-  for (let i = 0; i < json.length; i++) {
-    const c = json.charCodeAt(i);
-    h1 = Math.imul(h1 ^ c, 2654435761);
-    h2 = Math.imul(h2 ^ c, 1597334677);
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  return (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36);
-}
-
-const isStep = (v         ) => Array.isArray(v) && v.length === 2 && (v[0] === null || typeof v[0] === "string") && typeof v[1] === "string";
+const isJsonOrNull = (v         ) => v === null || typeof v === "string";
+const isStep = (v         ) => Array.isArray(v) && v.length === 2 && isJsonOrNull(v[0]) && isJsonOrNull(v[1]);
 const isFiniteNumber = (v         )              => typeof v === "number" && Number.isFinite(v);
 
 function isApplyBatch(v         )                  {
@@ -861,7 +849,7 @@ function isApplyBatch(v         )                  {
   const b = v                           ;
   if (!isFiniteNumber(b.id) || typeof b.p !== "string" || typeof b.l !== "string" || !isFiniteNumber(b.at)) return false;
   if (b.done !== undefined && !isFiniteNumber(b.done)) return false;
-  if (b.r !== undefined && b.r !== 1) return false;
+  if ((b.r !== undefined && b.r !== 1) || (b.x !== undefined && b.x !== 1)) return false;
   return typeof b.k === "object" && b.k !== null && !Array.isArray(b.k) && Object.values(b.k).every(isStep);
 }
 
@@ -876,7 +864,7 @@ function noteBatch(state            , prefix        , keys                  , no
     const from = state.base[key];
     const to = view.has(key) ? canonical(view.get(key)) : ABSENT;
     if ((from ?? ABSENT) === to) continue;
-    k[key] = [from ?? null, fingerprint(to)];
+    k[key] = [from ?? null, to === ABSENT ? null : to];
     noted = true;
   }
   if (!noted) return null;
@@ -906,6 +894,16 @@ async function writeAhead(state            , prefix        , keys               
     dropBatch(state, batch);
     return { batch: null, failed: true };
   }
+}
+
+function trimBatch(state            , batch                   , keys                  ) {
+  if (!batch) return;
+  for (const key of keys) {
+    if (!(key in batch.k)) continue;
+    delete batch.k[key];
+    batch.x = 1;
+  }
+  if (!Object.keys(batch.k).length) dropBatch(state, batch);
 }
 
 function finishBatch(batch                   , options               = {}) {
@@ -963,7 +961,7 @@ function takeReapplied(state            )         {
 __define("packages/sync/src/applyRecovery.ts", function (exports, __require) {
   __export(exports, "recoverBatches", () => recoverBatches);
 const { canonical } = __require("packages/sync/src/canon.ts");
-const { ABSENT, fingerprint, launchOf, queueRecovered } = __require("packages/sync/src/applyBatches.ts");
+const { ABSENT, launchOf, queueRecovered } = __require("packages/sync/src/applyBatches.ts");
 const { dropBase, putBase, visible } = __require("packages/sync/src/scopeKeys.ts");
                                                                                         
 
@@ -988,53 +986,36 @@ function chainsOf(batches              , skip                          ) {
       if (skip(key)) continue;
       let chain = chains.get(key);
       if (!chain) chains.set(key, (chain = []));
-      chain.push({ at, from: from ?? ABSENT, to });
+      chain.push({ at, from: from ?? ABSENT, to: to ?? ABSENT });
     }
   });
   return chains;
 }
 
-function knownJson(state            , key        , chain        , fp        )                     {
-  const record = state.records[key];
-  const candidates = [state.base[key] ?? ABSENT, ...(record ? [canonical(record.v)] : []), ...chain.map((s) => s.from)];
-  return candidates.find((json) => fingerprint(json) === fp);
-}
-
-function lastBefore(chain        , hypothesis        )                   {
+function valueAt(chain        , hypothesis        )         {
   let last                  ;
   for (const step of chain) if (step.at < hypothesis) last = step;
-  return last;
+  return last ? last.to : chain[0] .from;
 }
 
-function fpAt(chain        , hypothesis        )         {
-  const last = lastBefore(chain, hypothesis);
-  return last ? last.to : fingerprint(chain[0] .from);
-}
-
-function jsonAt(state            , key        , chain        , hypothesis        )                     {
-  const last = lastBefore(chain, hypothesis);
-  return last ? knownJson(state, key, chain, last.to) : chain[0] .from;
-}
+const holds = (chain                    , json        ) => !!chain?.some((s) => s.to === json || s.from === json);
 
                                                                                                                             
 
-async function tryHypothesis(state            , chains                     , hypothesis        , first            , extractWith             )                        {
+async function tryHypothesis(state            , chains                     , hypothesis        , first            , extractWith             )                 {
   const overrides = new Map                ();
-  for (const [key, chain] of chains) {
-    const json = jsonAt(state, key, chain, hypothesis);
-    if (json !== undefined) overrides.set(key, json);
-  }
+  for (const [key, chain] of chains) overrides.set(key, valueAt(chain, hypothesis));
   const baseJson = (key        ) => {
     const json = overrides.has(key) ? overrides.get(key)  : state.base[key];
     return json === ABSENT ? undefined : json;
   };
   const same = [...overrides].every(([key, json]) => (state.base[key] ?? ABSENT) === json);
   const extraction = same ? first : await extractWith(baseJson);
-  if (!extraction) return null;
+  if (!extraction) return { hypothesis, extraction: first, matches: -1, baseJson };
   let matches = 0;
   for (const [key, chain] of chains) {
     if (extraction.ignore?.(key)) continue;
-    if (fingerprint(nativeJson(extraction, key)) === fpAt(chain, hypothesis)) matches++;
+    if (nativeJson(extraction, key) === valueAt(chain, hypothesis)) matches++;
   }
   return { hypothesis, extraction, matches, baseJson };
 }
@@ -1047,7 +1028,7 @@ function keepUnresolved(state            , batches              , resolved      
       continue;
     }
     const left = Object.entries(batch.k).filter(([key]) => !resolved.has(key));
-    if (left.length) kept.push({ ...batch, r: 1, k: Object.fromEntries(left) });
+    if (left.length) kept.push({ ...batch, r: 1, x: 1, k: Object.fromEntries(left) });
   }
   if (kept.length) state.applying = kept;
   else delete state.applying;
@@ -1059,13 +1040,13 @@ async function recoverBatches(state            , prefix        , first          
   if (!batches.length) return first;
   const chains = chainsOf(batches, (key) => !!first.ignore?.(key));
   if (!chains.size) {
-    keepUnresolved(state, batches, new Set());
+    if (batches.some((b) => !b.r)) keepUnresolved(state, batches, new Set());
     return first;
   }
   let best               = null;
   for (let hypothesis = 0; hypothesis <= batches.length; hypothesis++) {
     const trial = await tryHypothesis(state, chains, hypothesis, first, extractWith);
-    if (!trial) return null;
+    if (trial.matches < 0) return null;
     if (!best || trial.matches > best.matches) best = trial;
   }
   const { extraction, hypothesis, baseJson } = best ;
@@ -1077,9 +1058,7 @@ async function recoverBatches(state            , prefix        , first          
     if (extraction.ignore?.(key)) continue;
     resolved.add(key);
     const actual = nativeJson(extraction, key);
-    const fp = fingerprint(actual);
-    const explained = fp === fpAt(chain, hypothesis) || chain.some((s) => s.to === fp || fingerprint(s.from) === fp) || !!sinceRestart.get(key)?.some((s) => s.to === fp || fingerprint(s.from) === fp);
-    if (!explained) {
+    if (actual !== valueAt(chain, hypothesis) && !holds(chain, actual) && !holds(sinceRestart.get(key), actual)) {
       setBase(state, key, baseJson(key) ?? ABSENT);
       continue;
     }
@@ -1113,7 +1092,7 @@ __define("packages/sync/src/scopeState.ts", function (exports, __require) {
   
                                               
 
-                                                                                                                                                      
+                                                                                                                                                                    
 
                                                                                                                               
 

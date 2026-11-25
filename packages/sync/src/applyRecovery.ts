@@ -1,5 +1,5 @@
 import { canonical } from "./canon.ts";
-import { ABSENT, fingerprint, launchOf, queueRecovered } from "./applyBatches.ts";
+import { ABSENT, launchOf, queueRecovered } from "./applyBatches.ts";
 import { dropBase, putBase, visible } from "./scopeKeys.ts";
 import type { ApplyBatch, Extraction, ScopeOptions, ScopeState } from "./scopeState.ts";
 
@@ -24,53 +24,36 @@ function chainsOf(batches: ApplyBatch[], skip: (key: string) => boolean) {
       if (skip(key)) continue;
       let chain = chains.get(key);
       if (!chain) chains.set(key, (chain = []));
-      chain.push({ at, from: from ?? ABSENT, to });
+      chain.push({ at, from: from ?? ABSENT, to: to ?? ABSENT });
     }
   });
   return chains;
 }
 
-function knownJson(state: ScopeState, key: string, chain: Step[], fp: string): string | undefined {
-  const record = state.records[key];
-  const candidates = [state.base[key] ?? ABSENT, ...(record ? [canonical(record.v)] : []), ...chain.map((s) => s.from)];
-  return candidates.find((json) => fingerprint(json) === fp);
-}
-
-function lastBefore(chain: Step[], hypothesis: number): Step | undefined {
+function valueAt(chain: Step[], hypothesis: number): string {
   let last: Step | undefined;
   for (const step of chain) if (step.at < hypothesis) last = step;
-  return last;
+  return last ? last.to : chain[0]!.from;
 }
 
-function fpAt(chain: Step[], hypothesis: number): string {
-  const last = lastBefore(chain, hypothesis);
-  return last ? last.to : fingerprint(chain[0]!.from);
-}
-
-function jsonAt(state: ScopeState, key: string, chain: Step[], hypothesis: number): string | undefined {
-  const last = lastBefore(chain, hypothesis);
-  return last ? knownJson(state, key, chain, last.to) : chain[0]!.from;
-}
+const holds = (chain: Step[] | undefined, json: string) => !!chain?.some((s) => s.to === json || s.from === json);
 
 type Trial = { hypothesis: number; extraction: Extraction; matches: number; baseJson: (key: string) => string | undefined };
 
-async function tryHypothesis(state: ScopeState, chains: Map<string, Step[]>, hypothesis: number, first: Extraction, extractWith: ExtractWith): Promise<Trial | null> {
+async function tryHypothesis(state: ScopeState, chains: Map<string, Step[]>, hypothesis: number, first: Extraction, extractWith: ExtractWith): Promise<Trial> {
   const overrides = new Map<string, string>();
-  for (const [key, chain] of chains) {
-    const json = jsonAt(state, key, chain, hypothesis);
-    if (json !== undefined) overrides.set(key, json);
-  }
+  for (const [key, chain] of chains) overrides.set(key, valueAt(chain, hypothesis));
   const baseJson = (key: string) => {
     const json = overrides.has(key) ? overrides.get(key)! : state.base[key];
     return json === ABSENT ? undefined : json;
   };
   const same = [...overrides].every(([key, json]) => (state.base[key] ?? ABSENT) === json);
   const extraction = same ? first : await extractWith(baseJson);
-  if (!extraction) return null;
+  if (!extraction) return { hypothesis, extraction: first, matches: -1, baseJson };
   let matches = 0;
   for (const [key, chain] of chains) {
     if (extraction.ignore?.(key)) continue;
-    if (fingerprint(nativeJson(extraction, key)) === fpAt(chain, hypothesis)) matches++;
+    if (nativeJson(extraction, key) === valueAt(chain, hypothesis)) matches++;
   }
   return { hypothesis, extraction, matches, baseJson };
 }
@@ -83,7 +66,7 @@ function keepUnresolved(state: ScopeState, batches: ApplyBatch[], resolved: Set<
       continue;
     }
     const left = Object.entries(batch.k).filter(([key]) => !resolved.has(key));
-    if (left.length) kept.push({ ...batch, r: 1, k: Object.fromEntries(left) });
+    if (left.length) kept.push({ ...batch, r: 1, x: 1, k: Object.fromEntries(left) });
   }
   if (kept.length) state.applying = kept;
   else delete state.applying;
@@ -95,13 +78,13 @@ export async function recoverBatches(state: ScopeState, prefix: string, first: E
   if (!batches.length) return first;
   const chains = chainsOf(batches, (key) => !!first.ignore?.(key));
   if (!chains.size) {
-    keepUnresolved(state, batches, new Set());
+    if (batches.some((b) => !b.r)) keepUnresolved(state, batches, new Set());
     return first;
   }
   let best: Trial | null = null;
   for (let hypothesis = 0; hypothesis <= batches.length; hypothesis++) {
     const trial = await tryHypothesis(state, chains, hypothesis, first, extractWith);
-    if (!trial) return null;
+    if (trial.matches < 0) return null;
     if (!best || trial.matches > best.matches) best = trial;
   }
   const { extraction, hypothesis, baseJson } = best!;
@@ -113,9 +96,7 @@ export async function recoverBatches(state: ScopeState, prefix: string, first: E
     if (extraction.ignore?.(key)) continue;
     resolved.add(key);
     const actual = nativeJson(extraction, key);
-    const fp = fingerprint(actual);
-    const explained = fp === fpAt(chain, hypothesis) || chain.some((s) => s.to === fp || fingerprint(s.from) === fp) || !!sinceRestart.get(key)?.some((s) => s.to === fp || fingerprint(s.from) === fp);
-    if (!explained) {
+    if (actual !== valueAt(chain, hypothesis) && !holds(chain, actual) && !holds(sinceRestart.get(key), actual)) {
       setBase(state, key, baseJson(key) ?? ABSENT);
       continue;
     }

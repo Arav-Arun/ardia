@@ -33,7 +33,7 @@ class Folder {
 }
 
 type Saved = { kind: "state"; json: string; clock: string | null } | { kind: "batch"; json: string };
-type Mode = { replaces?: boolean; throttled?: boolean; failsAfter?: string; ignores?: (key: string) => boolean; slowApplyMs?: number };
+type Mode = { replaces?: boolean; throttled?: boolean; failsAfter?: string; ignores?: (key: string) => boolean; slowApplyMs?: number; quitting?: boolean };
 
 class Mac {
   memory = new Map<string, unknown>();
@@ -47,6 +47,7 @@ class Mac {
   mode: Mode = {};
   duringWriteAhead?: () => void;
   saved: Saved[] = [];
+  applies = 0;
   readonly id: string;
   readonly folder: Folder;
   constructor(id: string, folder: Folder, writeAhead = true) {
@@ -69,6 +70,7 @@ class Mac {
         return { values: new Map([...this.memory].filter(([key]) => !ignores?.(key))), ignore: ignores };
       },
       apply: (visible, changed) => {
+        this.applies++;
         if (this.mode.slowApplyMs) this.tick(this.mode.slowApplyMs);
         if (this.mode.replaces) {
           this.memory = new Map([...visible].filter(([key]) => key.startsWith("b:")));
@@ -101,7 +103,7 @@ class Mac {
       clock: this.clock,
       device: this.id,
       now: () => this.folder.now,
-      options: { pruneGrace: 0, persist: async () => {}, persistApplying, launch: this.launch, nativeSaveMs: SAVE_MS, monotonic: () => this.steady },
+      options: { pruneGrace: 0, persist: async () => {}, persistApplying, launch: this.launch, nativeSaveMs: SAVE_MS, monotonic: () => this.steady, holdApply: () => !!this.mode.quitting },
     });
     this.saved.push({ kind: "state", json: JSON.stringify(this.state), clock: this.clock.last });
     return result;
@@ -370,4 +372,29 @@ test("recovering 100,000 keys after a crash doesn't scan the unapplied list once
   assert.equal(published, 0);
   assert.equal(b.memory.size, 100_000);
   assert.ok(performance.now() - started < 15_000, `took ${Math.round(performance.now() - started)} ms`);
+});
+
+test("an apply cancelled by a local edit made while its batch was written can't come back after a later edit and a crash", async () => {
+  const { a, b } = await pairWith({ "b:t1": "A" });
+  b.duringWriteAhead = () => b.memory.set("b:t1", "C");
+  await remoteChange(a, b, () => a.memory.set("b:t1", "B"));
+  assert.equal(b.memory.get("b:t1"), "C");
+  assert.equal(b.state.applying, undefined, "the cancelled key leaves no batch behind");
+  b.memory.set("b:t1", "B");
+  b.chromeSaves();
+  b.killed();
+  b.tick(1_000);
+  await settle([b, a], 3);
+  assert.equal(b.memory.get("b:t1"), "B");
+  assert.equal(a.memory.get("b:t1"), "B");
+});
+
+test("quitting while the batch is being written leaves the apply for the next launch", async () => {
+  const { a, b } = await pairWith({ "b:t1": "A" });
+  const before = b.applies;
+  b.duringWriteAhead = () => (b.mode.quitting = true);
+  await remoteChange(a, b, () => a.memory.set("b:t1", "B"));
+  assert.equal(b.applies, before, "the native apply never ran");
+  assert.equal(b.memory.get("b:t1"), "A");
+  assert.ok(b.state.unapplied.includes("b:t1"));
 });

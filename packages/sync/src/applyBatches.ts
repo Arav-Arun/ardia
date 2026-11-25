@@ -12,20 +12,8 @@ const steadyNow = () => (typeof performance !== "undefined" ? performance.now() 
 export const launchOf = (options: ScopeOptions = {}) => options.launch ?? thisLaunch;
 const monotonicOf = (options: ScopeOptions = {}) => (options.monotonic ?? steadyNow)();
 
-export function fingerprint(json: string): string {
-  let h1 = 0xdeadbeef ^ json.length;
-  let h2 = 0x41c6ce57 ^ json.length;
-  for (let i = 0; i < json.length; i++) {
-    const c = json.charCodeAt(i);
-    h1 = Math.imul(h1 ^ c, 2654435761);
-    h2 = Math.imul(h2 ^ c, 1597334677);
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  return (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36);
-}
-
-const isStep = (v: unknown) => Array.isArray(v) && v.length === 2 && (v[0] === null || typeof v[0] === "string") && typeof v[1] === "string";
+const isJsonOrNull = (v: unknown) => v === null || typeof v === "string";
+const isStep = (v: unknown) => Array.isArray(v) && v.length === 2 && isJsonOrNull(v[0]) && isJsonOrNull(v[1]);
 const isFiniteNumber = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
 export function isApplyBatch(v: unknown): v is ApplyBatch {
@@ -33,7 +21,7 @@ export function isApplyBatch(v: unknown): v is ApplyBatch {
   const b = v as Record<string, unknown>;
   if (!isFiniteNumber(b.id) || typeof b.p !== "string" || typeof b.l !== "string" || !isFiniteNumber(b.at)) return false;
   if (b.done !== undefined && !isFiniteNumber(b.done)) return false;
-  if (b.r !== undefined && b.r !== 1) return false;
+  if ((b.r !== undefined && b.r !== 1) || (b.x !== undefined && b.x !== 1)) return false;
   return typeof b.k === "object" && b.k !== null && !Array.isArray(b.k) && Object.values(b.k).every(isStep);
 }
 
@@ -48,7 +36,7 @@ function noteBatch(state: ScopeState, prefix: string, keys: Iterable<string>, no
     const from = state.base[key];
     const to = view.has(key) ? canonical(view.get(key)) : ABSENT;
     if ((from ?? ABSENT) === to) continue;
-    k[key] = [from ?? null, fingerprint(to)];
+    k[key] = [from ?? null, to === ABSENT ? null : to];
     noted = true;
   }
   if (!noted) return null;
@@ -78,6 +66,16 @@ export async function writeAhead(state: ScopeState, prefix: string, keys: Iterab
     dropBatch(state, batch);
     return { batch: null, failed: true };
   }
+}
+
+export function trimBatch(state: ScopeState, batch: ApplyBatch | null, keys: Iterable<string>) {
+  if (!batch) return;
+  for (const key of keys) {
+    if (!(key in batch.k)) continue;
+    delete batch.k[key];
+    batch.x = 1;
+  }
+  if (!Object.keys(batch.k).length) dropBatch(state, batch);
 }
 
 export function finishBatch(batch: ApplyBatch | null, options: ScopeOptions = {}) {

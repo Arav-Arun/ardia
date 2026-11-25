@@ -6,7 +6,7 @@ import { APP_SCOPE, DOC, DOC_MIGRATIONS, DOC_VERSION, JOURNAL, STATE, defaultTyp
 import { isFields, numberOr, stringOr } from "../../lib/decode";
 import { consentToken } from "../telemetry/client";
 import { warnFor } from "../telemetry/logs";
-import { chunksOf, holdsApplying, replayApplying, restOf, savedScope, scopeFromRest, type ScopeRest } from "./applyJournal";
+import { chunksOf, holdsApplying, replayApplying, restOf, savedScope, scopeFromRest, type Assembly, type ScopeRest } from "./applyJournal";
 
 type Journal = Record<string, LogFile[]>;
 type ScopeChange = { records: Record<string, SyncRecord | null>; base: Record<string, string | null>; rest: ScopeRest };
@@ -150,6 +150,7 @@ export function syncFiles(current: () => SyncDoc) {
       if (savedClock) clock.observe(savedClock);
       const batches: Journal = {};
       const added = new Map<string, Set<string>>();
+      const assembly: Assembly = new Map();
       journal.lastId = Math.max(covers, 0);
       for (const part of parts) {
         journal.lastId = Math.max(journal.lastId, part.id);
@@ -158,7 +159,7 @@ export function syncFiles(current: () => SyncDoc) {
         if ((!part.changes && !part.applying) || part.device !== doc.deviceId) continue;
         if (part.clock) clock.observe(part.clock);
         if (part.changes) replayChanges(scopes, part.changes, live);
-        if (part.applying) replayApplying(scopes, part.applying, live);
+        if (part.applying) replayApplying(scopes, part.applying, live, assembly);
       }
       journal.batches = {};
       for (const [scope, files] of Object.entries(batches)) {

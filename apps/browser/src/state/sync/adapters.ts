@@ -2,6 +2,7 @@ import { deletePassword } from "../../platform/passwords";
 import { orWarn } from "../../lib/fallback";
 import { assignPositions, folderChildren, SyncNative, type Adapter, type SealedLogin } from "../../platform/sync";
 import { bookmarkRoots, bookmarkUuidFor, ensureRoots, isBookmarkUuid } from "../bookmarks/bookmarks";
+import { bookmarksWritten } from "../bookmarks/engineSync";
 import { useBrowser, type BrowserState } from "../browser/store";
 import { engineProfile } from "../browser/model";
 import { profileOpened } from "../profiles/profileLoading";
@@ -130,7 +131,7 @@ export function bookmarksAdapter(profileId: string): Adapter {
       }
       return { values };
     },
-    apply: (visible) => {
+    apply: async (visible) => {
       if (!ready()) return false;
       const s = store();
       const [b, roots] = ensureRoots(s.bookmarks, engineProfile(s, profileId));
@@ -176,6 +177,7 @@ export function bookmarksAdapter(profileId: string): Adapter {
         if (folder?.kind === "folder") nodes[parent] = { ...folder, children: ids.sort(byPosition) };
       }
       useBrowser.setState({ bookmarks: { ...b, nodes } });
+      await bookmarksWritten(engineProfile(s, profileId));
     },
   });
 }
