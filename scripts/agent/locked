@@ -127,13 +127,17 @@ describe() {
 
 held_file() { printf '%s.held' "${1%.lockf}"; }
 
+own_record() { [[ -f "$1" && ! -L "$1" && -O "$1" ]]; }
+
 held_by_caller() {
-  local want=${1:-$kernel}
+  local want=${1:-$kernel} record
   [[ -n "${AC_LOCKED_HELD:-}" ]] || return 1
+  record=$(held_file "$want")
+  own_record "$record" || return 1
   printf '%s\n' "$AC_LOCKED_HELD" | {
     while read -r pid nonce path; do
       [[ -n "$pid" && ${#nonce} -eq 32 && "$path" == "$want" ]] || continue
-      [[ "$(cat "$(held_file "$want")" 2>/dev/null)" == "$pid $nonce" ]] && pid_alive "$pid" && { echo "$pid"; exit 0; }
+      [[ "$(cat "$record" 2>/dev/null)" == "$pid $nonce" ]] && pid_alive "$pid" && { echo "$pid"; exit 0; }
     done
     exit 1
   }
@@ -164,12 +168,20 @@ waitpid($pid, 0);
 exit(($? & 127) ? 128 + ($? & 127) : $? >> 8);
 '
 
-release_held() { [[ "$(cat "$held" 2>/dev/null)" == "$$ $nonce" ]] && rm -f "$held"; }
+release_held() { own_record "$held" && [[ "$(cat "$held" 2>/dev/null)" == "$$ $nonce" ]] && rm -f "$held"; }
+
+write_held() {
+  local staged
+  staged=$(umask 077 && mktemp "$held.XXXXXX" 2>/dev/null) || return 1
+  if printf '%s %s\n' "$$" "$nonce" >"$staged" && mv -f "$staged" "$held"; then return 0; fi
+  rm -f "$staged"
+  return 1
+}
 
 run() {
   held=$(held_file "$kernel")
   nonce=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
-  { printf '%s %s\n' "$$" "$nonce" >"$held.$$" && mv -f "$held.$$" "$held"; } 2>/dev/null
+  write_held 2>/dev/null
   AC_LOCKED_HELD="${AC_LOCKED_HELD:+$AC_LOCKED_HELD
 }$$ $nonce $kernel" AC_LOCKED_AS="$as" "$@" &
   child=$!

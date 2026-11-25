@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, lstatSync, mkdtempSync, openSync, rmSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -32,28 +32,61 @@ async function until(check, ms, what) {
 
 function lockRoot(t) {
   const root = mkdtempSync(join(tmpdir(), "locked-test-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const before = [];
+  t.after(async () => {
+    for (const step of before.reverse()) await step();
+    rmSync(root, { recursive: true, force: true });
+  });
   const env = { ...process.env, AC_LOCK_ROOT: root };
   for (const name of ["AC_LOCKED_HELD", "AC_LOCKED_INNER", "AC_LOCKED_AS", "AC_LOCKED_DEADLINE"]) delete env[name];
-  return { root, env, kernel: join(root, "ac-pod.lockf") };
+  return { root, env, kernel: join(root, "ac-pod.lockf"), cleanup: (step) => before.push(step) };
 }
 
-async function holdLock(t, root, env) {
+function openGate(gate) {
+  const fd = openSync(gate, constants.O_WRONLY | constants.O_NONBLOCK);
+  try {
+    writeSync(fd, "\n");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+async function holdLock({ root, env, cleanup }) {
   const ready = join(root, "ready");
   const gate = join(root, "gate");
   assert.equal(spawnSync("mkfifo", [gate]).status, 0);
   const holder = spawn(locked, ["pod", "--wait", "10", "--", "bash", "-c", `touch "${ready}"; read -r _ < "${gate}"`], { env, stdio: "ignore" });
-  const exited = new Promise((resolve) => holder.once("exit", resolve));
+  const exited = new Promise((resolve) => holder.once("exit", (code, signal) => resolve(code ?? signal)));
   let released;
-  const release = () => (released ??= (writeFileSync(gate, "\n"), exited));
-  t.after(release);
+  const release = () =>
+    (released ??= (async () => {
+      if (holder.exitCode === null && holder.signalCode === null) {
+        try {
+          openGate(gate);
+        } catch {
+          holder.kill("SIGTERM");
+        }
+      }
+      const fallback = setTimeout(() => holder.kill("SIGKILL"), 10_000);
+      try {
+        return await exited;
+      } finally {
+        clearTimeout(fallback);
+      }
+    })());
+  cleanup(release);
   await until(() => existsSync(ready), 10_000, "the holder to take the pod lock");
   return release;
 }
 
 test("AC_LOCKED_HELD naming a live process that doesn't hold the lock doesn't skip it", { skip: !canLock && "needs lockf or flock" }, async (t) => {
-  const { root, env, kernel } = lockRoot(t);
-  const release = await holdLock(t, root, env);
+  const lock = lockRoot(t);
+  const { root, env, kernel } = lock;
+  const release = await holdLock(lock);
+  const record = lstatSync(join(root, "ac-pod.held"));
+  assert.equal(record.isFile(), true);
+  assert.equal(record.mode & 0o777, 0o600);
+  assert.equal(record.uid, process.getuid());
   const bystander = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
   t.after(() => bystander.kill("SIGKILL"));
   for (const held of [`${bystander.pid} ${kernel}`, `${bystander.pid} ${"0".repeat(32)} ${kernel}`]) {
@@ -80,4 +113,13 @@ test("a nested call inside a macOS sandbox, where setuid ps can't run, still run
   assert.equal(nested.status, 0, nested.stderr);
   assert.match(nested.stdout, /NESTED/);
   assert.match(nested.stderr, /already held by an enclosing call/);
+});
+
+test("a nested call doesn't trust a lock record that is a symlink", { skip: !canLock && "needs lockf or flock" }, (t) => {
+  const { env } = lockRoot(t);
+  const swap = `h="$AC_LOCK_ROOT/ac-pod.held"; cp "$h" "$h.copy"; ln -sf "$h.copy" "$h"; "${locked}" pod --wait 1 -- echo NESTED; echo "nested=$?"`;
+  const nested = spawnSync(locked, ["pod", "--wait", "10", "--", "bash", "-c", swap], { env, encoding: "utf8", timeout: 30_000 });
+  assert.equal(nested.status, 0, nested.stderr);
+  assert.doesNotMatch(nested.stdout, /NESTED/);
+  assert.match(nested.stdout, /nested=75/);
 });

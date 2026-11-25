@@ -34,13 +34,25 @@ const PARTS_FOLDER = ".ardia-relay-parts";
 const PROBE_NAME = ".ardia-relay-probe";
 const PROBE_TEXT = "ardia relay probe\n";
 
-function relayRunning(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+const sendSignal = (target, sig) => process.kill(target, sig);
+
+function relayRunning(pid, send = sendSignal) {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || pid > 0x7fffffff) return false;
   try {
-    process.kill(pid, 0);
+    send(pid, 0);
     return true;
   } catch {
     return false;
+  }
+}
+
+export function stopRelayProcess(pid, send = sendSignal) {
+  if (!relayRunning(pid, send)) return null;
+  try {
+    send(pid, "SIGTERM");
+    return null;
+  } catch (error) {
+    return error?.code === "ESRCH" ? null : `could not stop the relay (pid ${pid}): ${error?.code ?? error?.message ?? error}`;
   }
 }
 
@@ -355,12 +367,11 @@ async function main() {
     const log = path.join(opts.work, "relay.log");
     if (fs.existsSync(log)) console.log(fs.readFileSync(log, "utf8").trim().split("\n").slice(-10).join("\n"));
   } else if (opts.command === "stop") {
-    if (opts.pid && relayRunning(opts.pid)) {
-      try {
-        process.kill(opts.pid, "SIGTERM");
-      } catch (error) {
-        console.log(`could not stop the relay (pid ${opts.pid}): ${error.code ?? error.message}`);
-      }
+    const refused = stopRelayProcess(opts.pid);
+    if (refused) {
+      console.error(`${refused}; kept ${opts.work}`);
+      process.exitCode = 1;
+      return;
     }
     if (opts.mac) {
       const ends = endpoints(opts);

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { stopRelayProcess } from "./phone-sync-relay.mjs";
 
 const relay = join(dirname(fileURLToPath(import.meta.url)), "phone-sync-relay.mjs");
 const skip = (process.platform === "win32" || process.getuid?.() === 0) && "needs a non-root Unix user, so pid 1 belongs to someone else";
@@ -46,4 +47,20 @@ test("the relay runs as a single copied file, as docs/phone.md deploys it", (t) 
   const status = spawnSync(process.execPath, [alone, "status", "--work", work], { encoding: "utf8", timeout: 20_000, cwd: base });
   assert.equal(status.status, 0, status.stderr);
   assert.match(status.stdout, /^relay not running;/);
+});
+
+test("stop keeps the relay's state when its relay can't be signalled to stop", () => {
+  const refusing = (code) => (pid, sig) => {
+    if (sig === "SIGTERM") throw Object.assign(new Error(code), { code });
+  };
+  assert.match(stopRelayProcess(4242, refusing("EPERM")), /could not stop the relay \(pid 4242\): EPERM/);
+  assert.equal(stopRelayProcess(4242, refusing("ESRCH")), null);
+  assert.equal(stopRelayProcess(4242, () => {}), null);
+  assert.equal(stopRelayProcess(undefined, () => {}), null);
+  assert.equal(
+    stopRelayProcess(4242, () => {
+      throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+    }),
+    null,
+  );
 });
