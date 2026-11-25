@@ -80,7 +80,7 @@ function greedyPairs(edges: FolderEdge[]): [number, number][] {
   return out;
 }
 
-export function pairFolders(sourceCount: number, candidateCount: number, edges: FolderEdge[]): number[] {
+export function pairFolders(sourceCount: number, candidateCount: number, edges: FolderEdge[], positional: readonly boolean[] = []): number[] {
   const parent = Array.from({ length: sourceCount + candidateCount }, (_, i) => i);
   const root = (x: number): number => {
     while (parent[x] !== x) x = parent[x] = parent[parent[x]!]!;
@@ -105,7 +105,7 @@ export function pairFolders(sourceCount: number, candidateCount: number, edges: 
   let next = 0;
   for (let s = 0; s < sourceCount; s++) {
     if (paired[s]! >= 0) continue;
-    while (next < candidateCount && taken.has(next)) next++;
+    while (next < candidateCount && (taken.has(next) || positional[next] === false)) next++;
     if (next >= candidateCount) break;
     paired[s] = next;
     taken.add(next);

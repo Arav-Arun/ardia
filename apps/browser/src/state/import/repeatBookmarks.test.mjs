@@ -9,6 +9,7 @@ client.setSharing(true, "settings");
 after(() => client.setSharing(false, "settings"));
 const { useBrowser } = await import("../browser/store.ts");
 const { importBookmarks } = await import("./apply.ts");
+const { countedPages, EDGE_WORK_BUDGET } = await import("./bookmarkMerge.ts");
 const { bookmarkRoots } = await import("../bookmarks/bookmarks.ts");
 const { takeImportRuns } = await import("../telemetry/importRuns.ts");
 const { pageKey } = await import("../tabs/pageKeys.ts");
@@ -337,4 +338,59 @@ test("3,000 folders of the same name that all hold one common page still pair by
   assert.equal(importBookmarks(P, dia(siblings(true).reverse()), "Dia"), 3000);
   assert.ok(performance.now() - began < 3000, `took ${performance.now() - began} ms`);
   wrapperFolders().forEach((urls, i) => assert.deepEqual(urls, ["https://common.example/", `https://s${i}.example/a`, `https://s${i}.example/b`]));
+});
+
+test("a folder another browser's import made keeps that browser's name on it when moved out of its parent into Imported from Dia", () => {
+  start();
+  importBookmarks(P, dia([folder("Outer", [folder("Work", [link("A", "https://a.example/")])])]), "Chrome");
+  importBookmarks(P, dia([link("Mail", "https://mail.example/")]), "Dia");
+  const work = childNamed(childNamed(barId(), "Outer"), "Work");
+  S().moveBookmark(work, childNamed(barId(), "Imported from Dia"));
+  assert.equal(importBookmarks(P, dia([link("Mail", "https://mail.example/"), folder("Work", [link("A", "https://a.example/"), link("B", "https://b.example/")])]), "Dia"), 1);
+  assert.deepEqual(bar(), [["Outer", []], ["Imported from Dia", ["https://mail.example/", ["Work", ["https://a.example/"]], ["Work", ["https://b.example/"]]]]]);
+});
+
+test("a folder an import from before this fix put on the bar takes the links its source adds, while a folder of the same name made by hand doesn't", () => {
+  start();
+  S().addBookmarkTree(P, [{ title: "Work", children: [{ title: "A", url: "https://a.example/" }] }, { title: "Notes", children: [{ title: "X", url: "https://x.example/" }] }], bookmarkRoots(S(), P).bar);
+  assert.equal(importBookmarks(P, dia([folder("Work", [link("A", "https://a.example/"), link("B", "https://b.example/")])]), "Dia"), 1);
+  assert.deepEqual(bar(), [["Work", ["https://a.example/", "https://b.example/"]], ["Notes", ["https://x.example/"]]]);
+  assert.equal(importBookmarks(P, dia([folder("Work", [link("A", "https://a.example/"), link("B", "https://b.example/"), link("C", "https://c.example/")]), folder("Notes", [link("Y", "https://y.example/")])]), "Dia"), 2);
+  assert.deepEqual(bar(), [
+    ["Work", ["https://a.example/", "https://b.example/", "https://c.example/"]],
+    ["Notes", ["https://x.example/"]],
+    ["Imported from Dia", [["Notes", ["https://y.example/"]]]],
+  ]);
+});
+
+test("a page too costly to count doesn't stop cheaper evidence after it from counting", () => {
+  const holders = new Map([
+    ["a-common", Array.from({ length: 709 }, (_, i) => i)],
+    ["z-key", Array.from({ length: 709 }, (_, i) => i)],
+  ]);
+  const pagesOf = Array.from({ length: 709 }, (_, i) => (i === 0 ? ["a-common", "z-key"] : ["a-common"]));
+  assert.ok(709 * 709 > EDGE_WORK_BUDGET);
+  assert.deepEqual([...countedPages(pagesOf, holders)], ["z-key"]);
+});
+
+test("1,000 folders of the same name holding 150 pages, each page in 16 existing folders, stay within the matching budget", () => {
+  start(["Mine", "https://mine.example/"]);
+  const page = (p) => link("p", `https://p${p}.example/`);
+  importBookmarks(P, dia(Array.from({ length: 2400 }, (_, j) => folder("Same", [page(Math.floor(j / 16)), link("own", `https://own${j}.example/`)]))), "Dia");
+  const began = performance.now();
+  const all = Array.from({ length: 150 }, (_, p) => page(p));
+  assert.equal(importBookmarks(P, dia(Array.from({ length: 1000 }, (_, i) => folder("Same", [...all, link("new", `https://new${i}.example/`)]))), "Dia"), 1000);
+  assert.ok(performance.now() - began < 5000, `took ${performance.now() - began} ms`);
+  const folders = wrapperFolders();
+  assert.equal(folders.reduce((n, urls) => n + urls.filter((u) => u.startsWith("https://new")).length, 0), 1000);
+});
+
+test("a folder an import made inside an Imported from Dia folder made by hand counts as reused when it takes more", () => {
+  start();
+  S().addBookmarkFolder({ profileId: P, title: "Imported from Dia" });
+  importBookmarks(P, dia([folder("Work", [link("A", "https://a.example/")])]), "Dia");
+  takeImportRuns();
+  importBookmarks(P, dia([folder("Work", [link("A", "https://a.example/"), link("B", "https://b.example/")])]), "Dia");
+  assert.deepEqual(bar(), [["Imported from Dia", [["Work", ["https://a.example/", "https://b.example/"]]]]]);
+  assert.equal(takeImportRuns().import_bookmark_folders_reused, 1);
 });

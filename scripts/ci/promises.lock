@@ -104,12 +104,17 @@ issue	hash	file	test
 2245	73e18a6e4be80bc4	apps/browser/src/state/extensions/extensions.test.mjs	Add on an install prompt the engine no longer holds says so in the dialog, and Cancel on one rejects nothing
 2245	fe17442fdad3de61	apps/desktop/src/pageFocus.test.mjs	focusIfUnfocused gives the page the keyboard unless a shell field has it, and answers whether it did
 2260	cb2884a57b51a848	apps/browser/src/state/sync/scopeWrites.test.mjs	a sync record or base is written only through putRecord, dropRecord, putBase and dropBase, so the cycle's journal sees every change
+2389	da397b4fdf247874	apps/browser/src/state/import/repeatBookmarks.test.mjs	1,000 folders of the same name holding 150 pages, each page in 16 existing folders, stay within the matching budget
 2389	a1fa0c9b0013537f	apps/browser/src/state/import/repeatBookmarks.test.mjs	18 folders of the same name that share most of their links each take their own new link, whatever order they come in
 2389	79657b1f00aacd5b	apps/browser/src/state/import/repeatBookmarks.test.mjs	3,000 folders of the same name each take their own new link, in one store write
 2389	da4a4e2c2f6fa62d	apps/browser/src/state/import/repeatBookmarks.test.mjs	3,000 folders of the same name that all hold one common page still pair by their own pages, quickly
 2389	f8eb0d0ada2244eb	apps/browser/src/state/import/repeatBookmarks.test.mjs	65 folders of the same name linked in a ring of shared pages are all paired by their links, not by position
+2389	f54db78149ce3c51	apps/browser/src/state/import/repeatBookmarks.test.mjs	a folder an import from before this fix put on the bar takes the links its source adds, while a folder of the same name made by hand doesn't
+2389	b11b8d29b7383b2c	apps/browser/src/state/import/repeatBookmarks.test.mjs	a folder an import made inside an Imported from Dia folder made by hand counts as reused when it takes more
+2389	8a1486aaebb09611	apps/browser/src/state/import/repeatBookmarks.test.mjs	a folder another browser's import made keeps that browser's name on it when moved out of its parent into Imported from Dia
 2389	da5ab572d9dd685a	apps/browser/src/state/import/repeatBookmarks.test.mjs	a folder that went straight onto the bar keeps taking its new links after a later import made an Imported from folder
 2389	3bc97c412eeb97ea	apps/browser/src/state/import/repeatBookmarks.test.mjs	a link with the scheme's default port is the page already bookmarked without it
+2389	1e6bd74678aedb80	apps/browser/src/state/import/repeatBookmarks.test.mjs	a page too costly to count doesn't stop cheaper evidence after it from counting
 2389	e2a5d38489f0c2bb	apps/browser/src/state/import/repeatBookmarks.test.mjs	a port written with leading zeros is the scheme's default port, or the same port without them
 2389	b128328bd686f29c	apps/browser/src/state/import/repeatBookmarks.test.mjs	a repeat import brings only what's new, into the folders it made, and keeps what the person added or moved (#2389)
 2389	9bf1a8563dc099e2	apps/browser/src/state/import/repeatBookmarks.test.mjs	a repeat import of bookmarks that went straight onto an empty bar adds nothing (#2389)

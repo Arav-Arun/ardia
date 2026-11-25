@@ -16,25 +16,26 @@ type Merging = {
   before: Nodes;
   seen: ReadonlySet<string>;
   pages: Map<string, ReadonlySet<string>>;
-  ownsNested: (folderId: string) => boolean;
+  nested: (folderId: string) => Candidate | null;
+  record: (folderId: string, kind?: FolderKind) => void;
   now: number;
   out: BookmarkMerge;
 };
 
-type Place = { id: string; earlier: boolean; takes: (folderId: string) => boolean };
-type Candidate = { id: string; earlier: boolean };
+type FolderKind = { wrapper?: boolean; adopted?: boolean };
+type Candidate = { id: string; earlier: boolean; needsEvidence: boolean };
+type Place = { id: string; candidate: (folderId: string) => Candidate | null };
 
-const RARE_PAGE_HOLDERS = 16;
-const EDGE_WORK_BUDGET = 500_000;
+export const EDGE_WORK_BUDGET = 200_000;
 
-function countedPages(pagesOf: string[][], holders: ReadonlyMap<string, number[]>): Set<string> {
+export function countedPages(pagesOf: string[][], holders: ReadonlyMap<string, readonly number[]>): Set<string> {
   const uses = new Map<string, number>();
   for (const pages of pagesOf) for (const page of pages) if (holders.has(page)) uses.set(page, (uses.get(page) ?? 0) + 1);
-  const byCost = [...uses].map(([page, n]) => ({ page, held: holders.get(page)!.length, cost: n * holders.get(page)!.length })).sort((a, z) => a.held - z.held || (a.page < z.page ? -1 : 1));
+  const byCost = [...uses].map(([page, n]) => ({ page, cost: n * holders.get(page)!.length })).sort((a, z) => a.cost - z.cost || (a.page < z.page ? -1 : 1));
   const counted = new Set<string>();
   let work = 0;
-  for (const { page, held, cost } of byCost) {
-    if (held > RARE_PAGE_HOLDERS && work + cost > EDGE_WORK_BUDGET) break;
+  for (const { page, cost } of byCost) {
+    if (work + cost > EDGE_WORK_BUDGET) continue;
     work += cost;
     counted.add(page);
   }
@@ -67,7 +68,12 @@ export function bookmarkedPages(nodes: Nodes, folderIds: string[]): Set<string> 
 function childFolders(m: Merging, place: Place): Candidate[] {
   const parent = m.before[place.id];
   if (parent?.kind !== "folder") return [];
-  return parent.children.filter((id) => m.before[id]?.kind === "folder" && place.takes(id)).map((id) => ({ id, earlier: place.earlier }));
+  const out: Candidate[] = [];
+  for (const id of parent.children) {
+    const c = m.before[id]?.kind === "folder" ? place.candidate(id) : null;
+    if (c) out.push(c);
+  }
+  return out;
 }
 
 function unseen(m: Merging, nodes: ImportedNode[]): ImportedNode[] {
@@ -87,6 +93,7 @@ function build(m: Merging, n: ImportedNode, parentId: string): string {
   } else {
     m.nodes[id] = { kind: "folder", id, parentId, title: n.title, children: (n.children ?? []).map((c) => build(m, c, id)), addedAt };
     m.out.folders += 1;
+    m.record(id);
   }
   return id;
 }
@@ -129,10 +136,18 @@ function matchFolders(m: Merging, folders: ImportedNode[], places: Place[]): Map
         if (!counted.has(page)) continue;
         for (const c of holders.get(page) ?? []) shared.set(c, (shared.get(c) ?? 0) + 1);
       }
-      for (const [candidate, count] of shared) edges.push({ source: s, candidate, shared: count });
+      for (const [candidate, count] of shared) {
+        const c = candidates[candidate]!;
+        if (c.needsEvidence && count * 2 <= pagesUnder(m, c.id).size) continue;
+        edges.push({ source: s, candidate, shared: count });
+      }
     });
-    pairFolders(sources.length, candidates.length, edges).forEach((c, s) => {
-      if (c >= 0) matched.set(sources[s]!, candidates[c]!);
+    const positional = candidates.map((c) => !c.needsEvidence);
+    pairFolders(sources.length, candidates.length, edges, positional).forEach((c, s) => {
+      if (c < 0) return;
+      const candidate = candidates[c]!;
+      matched.set(sources[s]!, candidate);
+      if (candidate.needsEvidence) m.record(candidate.id, { adopted: true });
     });
   }
   return matched;
@@ -147,7 +162,7 @@ function mergeLevel(m: Merging, nodes: ImportedNode[], places: Place[]): Importe
       fresh.push(...unseen(m, [n]));
       continue;
     }
-    const inner = mergeLevel(m, n.children ?? [], [{ id: folder.id, earlier: folder.earlier, takes: m.ownsNested }]);
+    const inner = mergeLevel(m, n.children ?? [], [{ id: folder.id, candidate: m.nested }]);
     append(m, folder.id, inner, folder.earlier);
   }
   return fresh;
@@ -159,28 +174,35 @@ export function mergeImportedBookmarks(
   placements: { rootId: string; nodes: ImportedNode[] }[],
   from: { source: string; engine: string; made: ImportedFolders },
 ): BookmarkMerge {
-  const ours = (id: string) => from.made[id]?.source === from.source;
-  const ownsNested = (id: string) => !from.made[id] || (ours(id) && !from.made[id]!.wrapper);
-  const m: Merging = { nodes, before: { ...nodes }, seen, pages: new Map(), ownsNested, now: Date.now(), out: { links: 0, folders: 0, skipped: 0, intoEarlier: false, made: {} } };
-  const record = (id: string, kind: { wrapper?: boolean; adopted?: boolean }) =>
-    (m.out.made[id] = { source: from.source, engine: from.engine, ...(kind.wrapper ? { wrapper: true as const } : {}), ...(kind.adopted ? { adopted: true as const } : {}) });
+  const recorded = (id: string) => from.made[id];
+  const ownFolder = (id: string): Candidate | null => {
+    const f = recorded(id);
+    return f && f.source === from.source && !f.wrapper ? { id, earlier: !f.adopted, needsEvidence: false } : null;
+  };
+  const nested = (id: string): Candidate | null => (recorded(id) ? ownFolder(id) : { id, earlier: false, needsEvidence: false });
+  const atRoot = (id: string): Candidate | null => (recorded(id) ? ownFolder(id) : { id, earlier: false, needsEvidence: true });
+  const out: BookmarkMerge = { links: 0, folders: 0, skipped: 0, intoEarlier: false, made: {} };
+  const record = (id: string, kind: FolderKind = {}) => {
+    out.made[id] = { source: from.source, engine: from.engine, ...(kind.wrapper ? { wrapper: true as const } : {}), ...(kind.adopted ? { adopted: true as const } : {}) };
+  };
+  const m: Merging = { nodes, before: { ...nodes }, seen, pages: new Map(), nested, record, now: Date.now(), out };
   const wrapperTitle = `Imported from ${from.source}`;
   for (const { rootId, nodes: incoming } of placements) {
     const root = m.before[rootId];
     if (!incoming.length || root?.kind !== "folder") continue;
     if (!root.children.length) {
-      for (const id of append(m, rootId, unseen(m, incoming), false)) if (m.nodes[id]?.kind === "folder") record(id, {});
+      append(m, rootId, unseen(m, incoming), false);
       continue;
     }
     const folders = root.children.filter((id) => m.before[id]?.kind === "folder");
-    const recorded = folders.find((id) => ours(id) && from.made[id]!.wrapper);
-    const adopted = recorded ? undefined : folders.find((id) => !from.made[id] && m.before[id]!.title === wrapperTitle);
-    const wrapper = recorded ?? adopted;
+    const ownWrapper = folders.find((id) => recorded(id)?.source === from.source && recorded(id)!.wrapper);
+    const adopted = ownWrapper ? undefined : folders.find((id) => !recorded(id) && m.before[id]!.title === wrapperTitle);
+    const wrapper = ownWrapper ?? adopted;
     if (adopted) record(adopted, { wrapper: true, adopted: true });
-    const madeByImport = !!recorded && !from.made[recorded]!.adopted;
+    const madeByImport = !!ownWrapper && !recorded(ownWrapper)!.adopted;
     const places: Place[] = [
-      ...(wrapper ? [{ id: wrapper, earlier: madeByImport, takes: ownsNested }] : []),
-      { id: rootId, earlier: true, takes: (id: string) => ours(id) && !from.made[id]!.wrapper },
+      ...(wrapper ? [{ id: wrapper, candidate: nested }] : []),
+      { id: rootId, candidate: (id: string) => (id === wrapper ? null : atRoot(id)) },
     ];
     const fresh = mergeLevel(m, incoming, places);
     if (!fresh.length) continue;
