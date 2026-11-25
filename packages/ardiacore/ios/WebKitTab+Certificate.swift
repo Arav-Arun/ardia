@@ -99,15 +99,20 @@ final class WebKitCertificates {
     policies.removeValue(forKey: store)
   }
 
-  func forgetTransportSecurity(profile: String, since: Date? = nil) {
+  func forgetTransportSecurity(profile: String, since: Date? = nil, done: @escaping (String?) -> Void = { _ in }) {
     let store = WebKitHub.shared.stores.id(of: profile)
+    var kept: [String: WebKitTransportSecurity]?
     if let since {
       change(store) { $0.forget(since: since) }
-      return scheduleSave(store)
+      kept = policies[store]?.savedTransportSecurity(now: Date()) ?? [:]
+    } else {
+      policies[store] = WebKitCertificatePolicy(transportSecurity: [:])
     }
-    policies[store] = WebKitCertificatePolicy(transportSecurity: [:])
-    guard let file = Self.file(for: store) else { return }
-    Self.files.async { try? FileManager.default.removeItem(at: file) }
+    guard let file = Self.file(for: store) else { return done(nil) }
+    Self.files.async {
+      let error = WebKitTransportSecurityFile.write(kept, to: file)
+      DispatchQueue.main.async { done(error) }
+    }
   }
 
   func noteTransportSecurity(_ header: String, host: String, fingerprint: String?, store: StoreID) {
@@ -145,10 +150,7 @@ final class WebKitCertificates {
   }
 
   private static func load(_ store: StoreID) -> [String: WebKitTransportSecurity] {
-    guard let file = file(for: store), let data = try? Data(contentsOf: file),
-      let saved = try? JSONDecoder().decode([String: WebKitTransportSecurity].self, from: data)
-    else { return [:] }
-    return saved
+    file(for: store).map(WebKitTransportSecurityFile.read) ?? [:]
   }
 
   private func scheduleSave(_ store: StoreID) {
@@ -157,11 +159,7 @@ final class WebKitCertificates {
       guard let self else { return }
       self.saveQueued.remove(store)
       guard let entries = self.policies[store]?.savedTransportSecurity(now: Date()) else { return }
-      Self.files.async {
-        guard let data = try? JSONEncoder().encode(entries) else { return }
-        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: file, options: .atomic)
-      }
+      Self.files.async { _ = WebKitTransportSecurityFile.write(entries, to: file) }
     }
   }
 }

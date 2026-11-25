@@ -15,7 +15,14 @@ struct WebKitTransportSecurity: Codable, Equatable, Sendable {
 struct WebKitCertificatePolicy: Sendable {
   struct Exception: Equatable, Sendable {
     let errors: Set<String>
-    let expires: Date
+    let granted: Date
+
+    var expires: Date { granted.addingTimeInterval(WebKitCertificatePolicy.exceptionLifetime) }
+  }
+
+  struct Bypass: Equatable, Sendable {
+    var errors: Set<String>
+    var granted: Date
   }
 
   static let exceptionLifetime: TimeInterval = 7 * 86_400
@@ -24,7 +31,7 @@ struct WebKitCertificatePolicy: Sendable {
   static let maxAgeLimit: TimeInterval = 365 * 86_400
 
   private(set) var exceptions: [String: [String: Exception]] = [:]
-  private(set) var bypassed: [String: [String: Set<String>]] = [:]
+  private(set) var bypassed: [String: [String: Bypass]] = [:]
   private(set) var transportSecurity: [String: WebKitTransportSecurity] = [:]
 
   init(transportSecurity: [String: WebKitTransportSecurity] = [:]) {
@@ -41,7 +48,7 @@ struct WebKitCertificatePolicy: Sendable {
 
   mutating func allow(host: String, fingerprint: String, errors: [String], now: Date) {
     guard Self.overridable(errors) else { return }
-    exceptions[Self.normalizedHost(host), default: [:]][fingerprint] = Exception(errors: Set(errors), expires: now.addingTimeInterval(Self.exceptionLifetime))
+    exceptions[Self.normalizedHost(host), default: [:]][fingerprint] = Exception(errors: Set(errors), granted: now)
   }
 
   func hasException(host: String, now: Date) -> Bool {
@@ -59,14 +66,17 @@ struct WebKitCertificatePolicy: Sendable {
       return false
     }
     guard Self.overridable(errors), Set(errors).isSubset(of: exception.errors) else { return false }
-    bypassed[name, default: [:]][fingerprint, default: []].formUnion(errors)
+    var bypass = bypassed[name]?[fingerprint] ?? Bypass(errors: [], granted: exception.granted)
+    bypass.errors.formUnion(errors)
+    bypass.granted = max(bypass.granted, exception.granted)
+    bypassed[name, default: [:]][fingerprint] = bypass
     return true
   }
 
   func bypassedErrors(host: String, fingerprint: String?) -> [String]? {
     guard let byPrint = bypassed[Self.normalizedHost(host)] else { return nil }
-    guard let fingerprint else { return Array(Set(byPrint.values.flatMap { $0 })).sorted() }
-    return byPrint[fingerprint].map { Array($0).sorted() }
+    guard let fingerprint else { return Array(Set(byPrint.values.flatMap(\.errors))).sorted() }
+    return byPrint[fingerprint].map { Array($0.errors).sorted() }
   }
 
   func trustedThroughBypass(host: String, fingerprint: String?) -> Bool {
@@ -99,15 +109,14 @@ struct WebKitCertificatePolicy: Sendable {
   mutating func forget(since: Date) {
     let cutoff = since.timeIntervalSince1970
     transportSecurity = transportSecurity.filter { ($0.value.observed ?? -.infinity) < cutoff }
-    for (host, byPrint) in exceptions {
-      let granted = byPrint.filter { $0.value.expires.addingTimeInterval(-Self.exceptionLifetime) >= since }
-      guard !granted.isEmpty else { continue }
-      for print in granted.keys {
-        exceptions[host]?.removeValue(forKey: print)
-        bypassed[host]?.removeValue(forKey: print)
-      }
-      if exceptions[host]?.isEmpty == true { exceptions.removeValue(forKey: host) }
-      if bypassed[host]?.isEmpty == true { bypassed.removeValue(forKey: host) }
+    exceptions = Self.keeping(exceptions) { $0.granted < since }
+    bypassed = Self.keeping(bypassed) { $0.granted < since }
+  }
+
+  private static func keeping<Value>(_ byHost: [String: [String: Value]], _ keep: (Value) -> Bool) -> [String: [String: Value]] {
+    byHost.compactMapValues { byPrint in
+      let kept = byPrint.filter { keep($0.value) }
+      return kept.isEmpty ? nil : kept
     }
   }
 
@@ -144,5 +153,29 @@ struct WebKitCertificatePolicy: Sendable {
       }
     }
     return maxAge.map { ($0, subdomains) }
+  }
+}
+
+enum WebKitTransportSecurityFile {
+  static func read(_ file: URL) -> [String: WebKitTransportSecurity] {
+    guard let data = try? Data(contentsOf: file),
+      let saved = try? JSONDecoder().decode([String: WebKitTransportSecurity].self, from: data)
+    else { return [:] }
+    return saved
+  }
+
+  static func write(_ entries: [String: WebKitTransportSecurity]?, to file: URL) -> String? {
+    do {
+      guard let entries else {
+        if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+        return nil
+      }
+      let data = try JSONEncoder().encode(entries)
+      try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try data.write(to: file, options: .atomic)
+      return nil
+    } catch {
+      return "couldn't save the HSTS list: \(error.localizedDescription)"
+    }
   }
 }

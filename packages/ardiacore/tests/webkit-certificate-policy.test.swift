@@ -139,6 +139,34 @@ struct DynamicTransportSecurity {
     #expect(policy.bypassedErrors(host: "new.example", fingerprint: "BB") == nil)
   }
 
+  @Test func `a ranged clear forgets a used proceed even after its exception expired and was pruned`() {
+    var policy = WebKitCertificatePolicy()
+    let granted = now.addingTimeInterval(-8 * 86_400)
+    policy.allow(host: "old.example", fingerprint: "AA", errors: ["authorityInvalid"], now: granted)
+    let used = policy.admits(host: "old.example", fingerprint: "AA", errors: ["authorityInvalid"], now: granted)
+    #expect(used)
+    let retried = policy.admits(host: "old.example", fingerprint: "AA", errors: ["authorityInvalid"], now: now)
+    #expect(!retried)
+    #expect(policy.exceptions["old.example"] == nil)
+    #expect(policy.hasException(host: "old.example", now: now))
+    policy.forget(since: now.addingTimeInterval(-28 * 86_400))
+    #expect(policy.bypassedErrors(host: "old.example", fingerprint: "AA") == nil)
+    #expect(!policy.hasException(host: "old.example", now: now))
+    let header = policy.noteHeader("max-age=600", host: "old.example", fingerprint: "AA", now: now)
+    #expect(header)
+  }
+
+  @Test func `a ranged clear keeps a used proceed granted before the range`() {
+    var policy = WebKitCertificatePolicy()
+    let granted = now.addingTimeInterval(-8 * 86_400)
+    policy.allow(host: "old.example", fingerprint: "AA", errors: ["authorityInvalid"], now: granted)
+    _ = policy.admits(host: "old.example", fingerprint: "AA", errors: ["authorityInvalid"], now: granted)
+    _ = policy.admits(host: "old.example", fingerprint: "AA", errors: ["authorityInvalid"], now: now)
+    policy.forget(since: now.addingTimeInterval(-3_600))
+    #expect(policy.bypassedErrors(host: "old.example", fingerprint: "AA") == ["authorityInvalid"])
+    #expect(policy.hasException(host: "old.example", now: now))
+  }
+
   @Test func `max-age 0 removes the host and entries expire`() {
     var policy = WebKitCertificatePolicy()
     _ = policy.noteHeader("max-age=600", host: "a.example", now: now)
