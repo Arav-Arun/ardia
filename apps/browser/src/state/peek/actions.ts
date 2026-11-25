@@ -45,16 +45,16 @@ export function dismissPeek(windowId: string) {
   else finishPeek(peek.tabId);
 }
 
-let closingByKeyWithFind: { tabId: string; consent: ConsentToken | null } | null = null;
+const closingByKeyWithFind = new Map<string, ConsentToken | null>();
 
 export function finishPeek(tabId: string) {
-  if (closingByKeyWithFind?.tabId === tabId) {
-    const { consent } = closingByKeyWithFind;
-    closingByKeyWithFind = null;
-    notePeekClosedByCloseKeyWithFind(consent);
-  }
+  const withFind = closingByKeyWithFind.has(tabId);
+  const consent = closingByKeyWithFind.get(tabId) ?? null;
+  closingByKeyWithFind.delete(tabId);
   const source = peekSourceOf(store(), tabId);
-  if (source) store().closePeek(source);
+  if (!source) return;
+  store().closePeek(source);
+  if (withFind && !peekSourceOf(store(), tabId)) notePeekClosedByCloseKeyWithFind(consent);
 }
 
 const focusSoon = (windowId: string, tabId: string) =>
@@ -64,6 +64,7 @@ const focusSoon = (windowId: string, tabId: string) =>
   }, 50);
 
 export function promotePeekNow(windowId: string, tabId: string) {
+  closingByKeyWithFind.delete(tabId);
   const peek = shownPeek(store(), windowId);
   if (peek?.tabId !== tabId) {
     endPeekToolbarPreview(windowId, tabId);
@@ -106,7 +107,12 @@ export function closePeekOnEscape(tabId: string): boolean {
   const s = store();
   const tab = s.tabs[tabId];
   const peek = tab ? shownPeek(s, tab.windowId) : undefined;
-  if (!tab || !peek || (peek.tabId !== tabId && peek.sourceId !== tabId) || s.find[tabId]?.open || s.windowUi[tab.windowId]?.panel.open) return false;
+  if (!tab || !peek || (peek.tabId !== tabId && peek.sourceId !== tabId) || s.windowUi[tab.windowId]?.panel.open) return false;
+  if (s.find[peek.tabId]?.open) {
+    closeFind(peek.tabId);
+    return true;
+  }
+  if (s.find[tabId]?.open) return false;
   dismissPeek(tab.windowId);
   return true;
 }
@@ -120,9 +126,10 @@ export function runPeekCommand(command: string, windowId: string, consent: Conse
     return true;
   }
   if (command !== "closeTab" || s.windowUi[windowId]?.panel.open) return false;
-  const findOpen = !!s.find[peek.tabId]?.open;
-  if (findOpen) closeFind(peek.tabId, { refocus: false });
-  closingByKeyWithFind = findOpen ? { tabId: peek.tabId, consent } : null;
+  if (s.find[peek.tabId]?.open) {
+    closeFind(peek.tabId, { refocus: false });
+    closingByKeyWithFind.set(peek.tabId, consent);
+  }
   dismissPeek(windowId);
   return true;
 }
