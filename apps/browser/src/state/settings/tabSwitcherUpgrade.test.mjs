@@ -88,3 +88,23 @@ test("the same records give the same result whichever order sync delivers them i
   assert.deepEqual(outcome([modes, keys]), together, "modes first, shortcuts second");
   assert.deepEqual(outcome([keys, modes]), together, "shortcuts first, modes second");
 });
+
+test("with only one mode record synced, every arrival order of it and the legacy shortcuts ends the same", () => {
+  const permutations = (items) => (items.length <= 1 ? [items] : items.flatMap((item, i) => permutations([...items.slice(0, i), ...items.slice(i + 1)]).map((rest) => [item, ...rest])));
+  const outcome = (batches) => {
+    S().hydrate({});
+    const visible = new Map();
+    for (const batch of batches) {
+      for (const [key, record] of batch) visible.set(key, record);
+      settingsAdapter.apply(visible, batch.map(([key]) => key));
+    }
+    const { tabSwitcherOrder, tabSwitcherView, shortcuts } = S().settings;
+    return { tabSwitcherOrder, tabSwitcherView, shortcuts };
+  };
+  const keys = ["set:shortcuts", { v: { ...STEP } }];
+  for (const mode of [["set:tabSwitcherOrder", { v: "recent" }], ["set:tabSwitcherOrder", { v: "inOrder" }], ["set:tabSwitcherView", { v: "compactList" }], ["set:tabSwitcherView", { v: "none" }]]) {
+    const together = outcome([[mode, keys]]);
+    for (const order of permutations([[mode], [keys]])) assert.deepEqual(outcome(order), together, `${mode[0]}=${mode[1].v}, ${order.map((b) => b[0][0]).join(" then ")}`);
+    assert.deepEqual(together.shortcuts, { ...STEP }, `${mode[0]}: a current record keeps the shortcuts as they came`);
+  }
+});

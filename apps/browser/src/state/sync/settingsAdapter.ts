@@ -52,10 +52,14 @@ function applySettingRecords(visible: ReadonlyMap<string, unknown>, changedKeys:
     const value = fromRecord(name, record.v);
     if (validSettingValue(name as SettingKey, value)) patch[name] = value;
   }
-  const modeKeys = [recordKey("tabSwitcherOrder"), recordKey("tabSwitcherView")];
-  const modesSynced = modeKeys.some((key) => visible.has(key));
+  const modes = ["tabSwitcherOrder", "tabSwitcherView"] as const;
+  const modesSynced = modes.some((name) => visible.has(recordKey(name)));
   const shortcutsRecord = visible.get(recordKey("shortcuts")) as { v: unknown } | undefined;
-  if (modesSynced && !("shortcuts" in patch) && modeKeys.some((key) => changed.includes(key)) && shortcutsRecord && validSettingValue("shortcuts", shortcutsRecord.v)) patch.shortcuts = shortcutsRecord.v;
+  if (modesSynced && modes.some((name) => changed.includes(recordKey(name))) && shortcutsRecord && validSettingValue("shortcuts", shortcutsRecord.v)) {
+    const chosen = store().settingsMeta.chosen;
+    if (!("shortcuts" in patch)) patch.shortcuts = shortcutsRecord.v;
+    for (const name of modes) if (!visible.has(recordKey(name)) && !(name in patch) && !chosen.includes(name)) patch[name] = DEFAULT_SETTINGS[name];
+  }
   if (Object.keys(patch).length) store().updateSettings(withSyncedTabSwitcherModes(patch as Partial<Settings>, modesSynced), { fromSync: true });
 }
 

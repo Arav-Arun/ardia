@@ -97,7 +97,9 @@ export function ctrlTabUpgrade(overrides: ShortcutOverrides, sources: readonly S
     const shortcuts = without(overrides, STEP, combos);
     return pairHolds(after(shortcuts), combos, SWITCHER) ? { shortcuts, stepped: true } : unchanged;
   }
+  const kept = (candidate: ShortcutOverrides, d: (typeof DIRECTIONS)[number]) =>
+    switcherElsewhere ? heldOnlyBy(after(candidate), combos[d], STEP[d]) : after(candidate).holdersOf(combos[d]).length > 0;
   let shortcuts = overrides;
-  for (const d of stepping) if (!after(shortcuts).holdersOf(combos[d]).length) shortcuts = { ...shortcuts, [STEP[d]]: stored(combos[d]) };
-  return stepping.every((d) => after(shortcuts).holdersOf(combos[d]).length) ? { shortcuts, stepped: false } : unchanged;
+  for (const d of stepping) if (!kept(shortcuts, d)) shortcuts = { ...shortcuts, [STEP[d]]: stored(combos[d]) };
+  return stepping.every((d) => kept(shortcuts, d)) ? { shortcuts, stepped: false } : unchanged;
 }

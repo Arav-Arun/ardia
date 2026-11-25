@@ -161,3 +161,35 @@ test("in order with a switcher picked, the only other tab is still reached when 
   assert.equal(shown(w), "b");
   assert.equal(sidebarUi().switcher, null, "a single destination needs no switcher");
 });
+
+test("a collapsed group is reached through the newest open tab it shows, and cycling never sticks or repeats", () => {
+  const [w, a, b, c, d] = setup("inOrder", "none", "a", "b", "c", "d");
+  const group = S().createGroup([b, c]);
+  S().activate(b);
+  S().activate(c);
+  S().updateGroup(group, { collapsed: true });
+  S().activate(a);
+  switcherStep(w, false);
+  assert.equal(shown(w), "c", "from A, ⌃Tab lands on C, the group's newest open tab");
+  const visited = [];
+  for (let i = 0; i < 9; i++) {
+    switcherStep(w, false);
+    visited.push(shown(w));
+    const ids = inOrderTabIds(S(), w);
+    assert.equal(new Set(ids).size, ids.length, `no row twice after ${visited.join(" ")}`);
+  }
+  assert.deepEqual(visited, ["d", "a", "c", "d", "a", "c", "d", "a", "c"]);
+  assert.ok(S().tabs[d] && S().tabs[b]);
+});
+
+test("collapsing a group the shown tab isn't in still gives one stop at its newest open tab", () => {
+  const [w, a, b, c] = setup("inOrder", "none", "a", "b", "c", "d");
+  const group = S().createGroup([b, c]);
+  S().activate(c);
+  S().activate(b);
+  S().activate(a);
+  S().updateGroup(group, { collapsed: true });
+  const ids = inOrderTabIds(S(), w);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.ok(ids.includes(b) && !ids.includes(c), `one stop, the newest: ${ids.join(",")}`);
+});

@@ -131,3 +131,16 @@ test("each ⌃Tab direction that stepped keeps working on its own when the other
   assert.deepEqual(hints(resolved, "tabSwitcher:forward"), ["⌥⇥"]);
   assert.equal("previousTab" in shortcuts, false);
 });
+
+test("a switcher with only one direction of its own leaves the other ⌃Tab direction stepping too", () => {
+  for (const [own, other] of [["tabSwitcher:forward", "tabSwitcher:backward"], ["tabSwitcher:backward", "tabSwitcher:forward"]]) {
+    const before = { [own]: own.endsWith("forward") ? ["\t", "option"] : ["\t", "option", "shift"] };
+    const { shortcuts, stepped } = upgradeMac(before);
+    assert.equal(stepped, false, own);
+    const resolved = mac(shortcuts);
+    assert.deepEqual(resolved.holdersOf(parseShortcut("⌃⇥")), ["nextTab"], `${own}: ⌃Tab`);
+    assert.deepEqual(resolved.holdersOf(parseShortcut("⌃⇧⇥")), ["previousTab"], `${own}: ⌃⇧Tab`);
+    assert.deepEqual(hints(resolved, own), [own.endsWith("forward") ? "⌥⇥" : "⌥⇧⇥"], `${own} keeps its own key`);
+    assert.deepEqual(hints(resolved, other), [], `${other} gives its ⌃Tab key back`);
+  }
+});

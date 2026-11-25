@@ -27,13 +27,21 @@ export function inOrderTabIds(s: BrowserState, windowId: string): string[] {
   const active = activeTabId(s, windowId);
   const eligible = (id: string) => id === active || isSwitchableTab(s, id);
   const owners = collapsedOwners(s, windowId);
+  const newest = (groupId: string) =>
+    s.groups[groupId]!.tabIds.filter((id) => owners.get(id) === groupId && eligible(id)).reduce<string | undefined>((a, b) => (!a || s.tabs[b]!.lastActiveAt > s.tabs[a]!.lastActiveAt ? b : a), undefined);
   const stops: string[] = [];
+  const groupsSeen = new Set<string>();
   for (const id of numberedTabs(s, windowId, eligible)) {
     if (!eligible(id) || stops.includes(id)) continue;
     const owner = owners.get(id);
-    const at = owner ? stops.findIndex((stop) => owners.get(stop) === owner) : -1;
-    if (at < 0) stops.push(id);
-    else if (id === active) stops[at] = id;
+    if (!owner) {
+      stops.push(id);
+      continue;
+    }
+    if (groupsSeen.has(owner)) continue;
+    groupsSeen.add(owner);
+    const stop = active && owners.get(active) === owner ? active : newest(owner);
+    if (stop && !stops.includes(stop)) stops.push(stop);
   }
   return stops;
 }
