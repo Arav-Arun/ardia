@@ -77,8 +77,8 @@ export function claimSettingsOpenAt(): number | null {
 export function openSettings(pane?: SettingsPane, profileId?: string | null, detail?: string | null, reveal?: string | null) {
   if (pane) {
     const consent = consentToken();
-    targetedOpenListeners.forEach((listener) => listener(consent, reveal ?? null));
     goToSettingsPane(pane, profileId ?? null, detail ?? null);
+    targetedOpenListeners.forEach((listener) => listener(consent, reveal ?? null));
   }
   const nav = useSettingsNav.getState();
   pendingOpenAt = Date.now();
