@@ -1044,8 +1044,9 @@ try {
       if (returned.asked.length || returned.opened || returned.open) throw new Error(`coming back 500 ms after covering still asked the page or popped it out: ${JSON.stringify(returned)}`);
       const coverAndWatch = async (what, during) => {
         const base = await pipState(call.t);
+        const coveredAt = Date.now();
         await win("fakeOcclusion:occluded");
-        const extra = await during();
+        const extra = await during(coveredAt);
         const popped = await until(`${what}: the call popped out`, async () => {
           const p = await pipState(call.t);
           return p.open ? p : null;
@@ -1070,14 +1071,13 @@ try {
       });
       await js(call.t, "leave()");
       await sleep(2500);
-      const lateCall = await coverAndWatch("a call that starts after the cover", async () => {
+      const lateCall = await coverAndWatch("a call that starts after the cover", async (coveredAt) => {
         const before = (await pipState(call.t)).camera;
         if (before === "live") throw new Error("the camera was still live when the window was covered");
         await sleep(100);
-        const started = Date.now();
         const rejoined = await js(call.t, "join()");
         if (rejoined !== "ok") throw new Error(`rejoining while covered: ${rejoined}`);
-        const liveAtMs = 100 + Date.now() - started;
+        const liveAtMs = Date.now() - coveredAt;
         if (liveAtMs >= 400) throw new Error(`the camera went live ${liveAtMs} ms after the cover, past the 400 ms this phase tests`);
         return { cameraBeforeJoin: before, liveAtMs };
       });
