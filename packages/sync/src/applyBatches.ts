@@ -78,11 +78,29 @@ export async function writeAhead(state: ScopeState, prefix: string, keys: Iterab
   }
 }
 
+const owedRetirements = new WeakMap<ScopeState, ApplyBatch[]>();
+
+async function retire(state: ScopeState, batch: ApplyBatch, options: ScopeOptions) {
+  try {
+    await options.persistApplying?.({ ...batch, k: {} });
+  } catch (error) {
+    owedRetirements.set(state, [...(owedRetirements.get(state) ?? []).filter((b) => b.id !== batch.id), batch]);
+    throw error;
+  }
+}
+
 export async function cancelIfRaced(state: ScopeState, batch: ApplyBatch | null, raced: Set<string>, options: ScopeOptions = {}): Promise<boolean> {
   if (!batch || !Object.keys(batch.k).some((key) => raced.has(key))) return false;
   dropBatch(state, batch);
-  await options.persistApplying?.({ ...batch, k: {} });
+  await retire(state, batch, options);
   return true;
+}
+
+export async function settleOwedRetirements(state: ScopeState, options: ScopeOptions = {}) {
+  const owed = owedRetirements.get(state);
+  if (!owed?.length) return;
+  owedRetirements.delete(state);
+  for (const batch of owed) await retire(state, batch, options);
 }
 
 export function finishBatch(batch: ApplyBatch | null, applied: boolean, options: ScopeOptions = {}) {
@@ -97,7 +115,9 @@ export function startApplying(state: ScopeState, now: number, options: ScopeOpti
   const launch = launchOf(options);
   const steady = monotonicOf(options);
   const saveMs = options.nativeSaveMs ?? NATIVE_SAVE_MS;
+  const retrying = new Set(state.unapplied);
   const live = (b: ApplyBatch) => {
+    if (b.l === launch && b.f && Object.keys(b.k).some((key) => retrying.has(key))) return true;
     if (b.l === launch) return b.done === undefined || steady - b.done < saveMs;
     return !b.r || now - b.at < UNSEEN_KEPT_MS;
   };

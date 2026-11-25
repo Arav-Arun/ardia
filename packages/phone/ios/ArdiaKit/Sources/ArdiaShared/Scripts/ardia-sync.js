@@ -190,7 +190,7 @@ const { holdsBack, noteFileHealth } = __require("packages/sync/src/fileHealth.ts
 const { baseKeysWith, baseWritesUnder, dropBase, dropRecord, putBase, putRecord, visible } = __require("packages/sync/src/scopeKeys.ts");
 
 const { covered, isApplied, markApplied, raiseApplied } = __require("packages/sync/src/applied.ts");
-const { awaitsRecovery, cancelIfRaced, countReapplied, failedTargets, finishBatch, startApplying, takeReapplied, writeAhead } = __require("packages/sync/src/applyBatches.ts");
+const { awaitsRecovery, cancelIfRaced, countReapplied, failedTargets, finishBatch, settleOwedRetirements, startApplying, takeReapplied, writeAhead } = __require("packages/sync/src/applyBatches.ts");
 const { recoverBatches } = __require("packages/sync/src/applyRecovery.ts");
 const { parseSyncFile } = __require("packages/sync/src/syncFile.ts");
 const { DEFAULTS, newestSnapshot, prune, retiredBy, compactionDue } = __require("packages/sync/src/compaction.ts");
@@ -485,6 +485,7 @@ async function syncScope(args
   const { scope, state, transport, adapters, clock, device, options } = args;
   const now = args.now ?? Date.now;
   startApplying(state, now(), options);
+  await settleOwedRetirements(state, options);
   let published = 0;
   const stamps = new Map                 ();
   for (const adapter of adapters) {
@@ -843,6 +844,7 @@ __define("packages/sync/src/applyBatches.ts", function (exports, __require) {
   __export(exports, "validBatches", () => validBatches);
   __export(exports, "writeAhead", () => writeAhead);
   __export(exports, "cancelIfRaced", () => cancelIfRaced);
+  __export(exports, "settleOwedRetirements", () => settleOwedRetirements);
   __export(exports, "finishBatch", () => finishBatch);
   __export(exports, "startApplying", () => startApplying);
   __export(exports, "queueRecovered", () => queueRecovered);
@@ -930,11 +932,29 @@ async function writeAhead(state            , prefix        , keys               
   }
 }
 
+const owedRetirements = new WeakMap                          ();
+
+async function retire(state            , batch            , options              ) {
+  try {
+    await options.persistApplying?.({ ...batch, k: {} });
+  } catch (error) {
+    owedRetirements.set(state, [...(owedRetirements.get(state) ?? []).filter((b) => b.id !== batch.id), batch]);
+    throw error;
+  }
+}
+
 async function cancelIfRaced(state            , batch                   , raced             , options               = {})                   {
   if (!batch || !Object.keys(batch.k).some((key) => raced.has(key))) return false;
   dropBatch(state, batch);
-  await options.persistApplying?.({ ...batch, k: {} });
+  await retire(state, batch, options);
   return true;
+}
+
+async function settleOwedRetirements(state            , options               = {}) {
+  const owed = owedRetirements.get(state);
+  if (!owed?.length) return;
+  owedRetirements.delete(state);
+  for (const batch of owed) await retire(state, batch, options);
 }
 
 function finishBatch(batch                   , applied         , options               = {}) {
@@ -949,7 +969,9 @@ function startApplying(state            , now        , options               = {
   const launch = launchOf(options);
   const steady = monotonicOf(options);
   const saveMs = options.nativeSaveMs ?? NATIVE_SAVE_MS;
+  const retrying = new Set(state.unapplied);
   const live = (b            ) => {
+    if (b.l === launch && b.f && Object.keys(b.k).some((key) => retrying.has(key))) return true;
     if (b.l === launch) return b.done === undefined || steady - b.done < saveMs;
     return !b.r || now - b.at < UNSEEN_KEPT_MS;
   };

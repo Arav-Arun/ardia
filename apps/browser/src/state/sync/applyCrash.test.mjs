@@ -81,7 +81,7 @@ class Mac {
         scope: "p",
         state: this.state,
         transport: this.folder.transport(),
-        adapters: [bookmarksAdapter("default"), historyAdapter("default")],
+        adapters: [this.bookmarksReportFailure ? reportingFailure(bookmarksAdapter("default")) : bookmarksAdapter("default"), historyAdapter("default")],
         clock: this.clock,
         device: this.id,
         options: {
@@ -99,6 +99,8 @@ class Mac {
     }
   }
 }
+
+const reportingFailure = (adapter) => ({ ...adapter, apply: async (...args) => (await adapter.apply(...args), false) });
 
 async function syncAll(macs, rounds = 2) {
   for (let i = 0; i < rounds; i++) for (const mac of macs) await mac.sync();
@@ -336,4 +338,24 @@ test("history: Chrome saved a synced deletion but not the visits added with it, 
   await syncAll([p, a], 3);
   assert.deepEqual(urlsOn(a), [urls.x, urls.y, urls.z]);
   assert.deepEqual(urlsOn(p), urlsOn(a));
+});
+
+test("bookmarks: a rename whose write to Chrome timed out isn't sent over a deletion that arrives more than 30 s later", async () => {
+  const { a, p } = await savedPair();
+  a.with(() => S().addBookmark({ profileId: "default", url: "https://kept.example/", title: "Kept" }));
+  a.with(() => S().addBookmark({ profileId: "default", url: "https://renamed.example/", title: "Before" }));
+  await settled(a, p);
+  a.with(() => S().updateBookmark(idOf(a, "Before"), { title: "After" }));
+  await a.sync();
+  p.bookmarksReportFailure = true;
+  await p.sync();
+  p.bookmarksReportFailure = false;
+  assert.ok(titles(p).flat().includes("After"), "the store holds the rename Chrome never confirmed");
+  a.with(() => S().removeBookmark(idOf(a, "After")));
+  await a.sync();
+  p.steady += 31_000;
+  assert.equal((await p.sync()).published, 0, "the unconfirmed rename isn't sent as this Mac's edit");
+  await syncAll([a, p], 2);
+  assert.deepEqual(titles(a).flat(), ["Kept"]);
+  assert.deepEqual(titles(p), titles(a));
 });

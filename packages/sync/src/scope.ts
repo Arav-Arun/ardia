@@ -4,7 +4,7 @@ import { holdsBack, noteFileHealth } from "./fileHealth.ts";
 import { baseKeysWith, baseWritesUnder, dropBase, dropRecord, putBase, putRecord, visible } from "./scopeKeys.ts";
 export * from "./scopeKeys.ts";
 import { covered, isApplied, markApplied, raiseApplied } from "./applied.ts";
-import { awaitsRecovery, cancelIfRaced, countReapplied, failedTargets, finishBatch, startApplying, takeReapplied, writeAhead, type WriteAhead } from "./applyBatches.ts";
+import { awaitsRecovery, cancelIfRaced, countReapplied, failedTargets, finishBatch, settleOwedRetirements, startApplying, takeReapplied, writeAhead, type WriteAhead } from "./applyBatches.ts";
 import { recoverBatches } from "./applyRecovery.ts";
 import { parseSyncFile } from "./syncFile.ts";
 import { DEFAULTS, newestSnapshot, prune, retiredBy, compactionDue } from "./compaction.ts";
@@ -299,6 +299,7 @@ export async function syncScope(args: {
   const { scope, state, transport, adapters, clock, device, options } = args;
   const now = args.now ?? Date.now;
   startApplying(state, now(), options);
+  await settleOwedRetirements(state, options);
   let published = 0;
   const stamps = new Map<Adapter, Stamps>();
   for (const adapter of adapters) {
