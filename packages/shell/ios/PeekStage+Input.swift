@@ -26,7 +26,7 @@ extension PeekStage {
   func remap(_ event: NSEvent, at windowPoint: NSPoint) -> NSEvent? {
     let p = convert(windowPoint, from: nil)
     let through = settlesEntrance(event, at: p)
-    guard let window, mapsInput else { return nil }
+    guard let window, mapsInput || through != nil || pressMapping != nil else { return nil }
     let shown = through.map { _ in true } ?? lastFrame.shownPage.contains(p)
     var mapping = through ?? lastFrame.page
     switch event.type {

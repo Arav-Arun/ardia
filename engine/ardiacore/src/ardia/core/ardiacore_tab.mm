@@ -480,6 +480,9 @@ using ardiacore::NS;
     return NO;
   }
   ardiacore::TabBridge* bridge = ardiacore::TabBridge::FromWebContents(_contents);
+  if (bridge && bridge->asking_before_leaving()) {
+    return YES;
+  }
   return !(bridge && bridge->closing_after_unload()) &&
          _contents->NeedToFireBeforeUnload();
 }

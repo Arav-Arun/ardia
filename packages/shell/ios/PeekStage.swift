@@ -141,7 +141,7 @@ final class PeekStage: ExpoView {
   func close(_ generation: Int) -> Bool { command(generation, "close") { motion.close(at: $0) } }
 
   func close(_ generation: Int, answer: @escaping (Bool) -> Void) {
-    guard generation == motion.generation, !motion.terminal else { return answer(false) }
+    guard generation == motion.generation, !motion.terminal, !askingToLeave else { return answer(false) }
     guard let web = pageWebView, web.asksBeforeLeaving else { return answer(close(generation)) }
     askToLeave(web) { [weak self] leave in answer(leave && self?.close(generation) == true) }
   }
@@ -196,8 +196,8 @@ final class PeekStage: ExpoView {
     case "changed":
       motion.gestureChanged(total, at: now)
     default:
-      let asking = pageWebView.flatMap { $0.asksBeforeLeaving ? $0 : nil }
-      let outcome = motion.gestureEnded(total, cancelled: phase == "cancelled", closes: asking == nil, at: now)
+      let asking = askingToLeave ? nil : pageWebView.flatMap { $0.asksBeforeLeaving ? $0 : nil }
+      let outcome = motion.gestureEnded(total, cancelled: phase == "cancelled", closes: asking == nil && !askingToLeave, at: now)
       note("release", ["total": total, "outcome": outcome.rawValue])
       let generation = motion.generation
       if outcome == .close, let asking {

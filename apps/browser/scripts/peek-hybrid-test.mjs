@@ -41,8 +41,13 @@ const PAGE = `<!doctype html><title>peek target</title><style>body{margin:0;font
 <script>window.__nonce=Math.random().toString(36).slice(2);window.__resizes=0;window.__sizes=[];addEventListener("resize",()=>{__resizes++;__sizes.push([innerWidth,innerHeight,performance.now()])});window.__vis=[];document.addEventListener("visibilitychange",()=>__vis.push([document.visibilityState,performance.now()]));window.__over=[];addEventListener("mouseover",e=>__over.push(e.target.id),true);window.__wheel=[];addEventListener("wheel",e=>__wheel.push([e.clientX,e.clientY,e.deltaY]),true);
 window.__clicks=[];addEventListener("mousedown",e=>__clicks.push({x:e.clientX,y:e.clientY,target:e.target.id}),true);window.__ups=[];addEventListener("mouseup",e=>__ups.push({x:e.clientX,y:e.clientY}),true);window.__domClicks=0;addEventListener("click",()=>__domClicks++,true);</script>`;
 const SOURCE = `<!doctype html><title>peek source</title><body style="margin:0;font:16px system-ui"><p style="margin:80px">source <a id=l href="/page.html">link</a></p>${rows}<script>window.__wheel=[];addEventListener("wheel",e=>__wheel.push(e.deltaY),true);</script>`;
+const beacons = [];
 const server = createServer((req, res) => {
   const path = (req.url ?? "/").split("?")[0];
+  if (path === "/beacon") {
+    beacons.push(req.url);
+    return res.writeHead(204).end();
+  }
   if (path === "/tone.wav") return res.writeHead(200, { "content-type": "audio/wav" }).end(tone);
   res.writeHead(200, { "content-type": "text/html" }).end(path.startsWith("/page") ? PAGE : SOURCE);
 });
@@ -504,7 +509,7 @@ try {
     await page.send("Page.enable");
     const dialogs = [];
     page.on("Page.javascriptDialogOpening", (d) => dialogs.push(d.type));
-    await page.eval(`addEventListener("beforeunload", (e) => { e.preventDefault(); e.returnValue = ""; }); document.querySelector("#f").value = "draft"; 0`, { userGesture: true });
+    await page.eval(`addEventListener("beforeunload", (e) => { navigator.sendBeacon("/beacon?bu=" + Date.now()); e.preventDefault(); e.returnValue = ""; }); document.querySelector("#f").value = "draft"; 0`, { userGesture: true });
     const close = rest.chromeTargets?.find((t) => t.label.startsWith("Close ("));
     record.closeButton = close ?? null;
     assert.ok(close?.reaches, "the Close button is on screen");
@@ -527,6 +532,16 @@ try {
     const stillOpen = () => store(`({ peek: st().peeks.a?.tabId === ${JSON.stringify(tabId)}, tab: !!st().tabs[${JSON.stringify(tabId)}] })`);
     record.asked = 0;
     record.stays = {};
+    await ways.closeTab();
+    await sleep(1200);
+    await ways.closeTab();
+    await ways.escape();
+    await sleep(600);
+    record.repeatWhileAsking = { ...(await stillOpen()), dialogs: dialogs.length };
+    assert.ok(await answer(false), "the first close asked");
+    await sleep(500);
+    assert.equal(record.repeatWhileAsking.peek, true, "closing again while the prompt is up never closes the Peek behind it");
+    assert.equal((await stillOpen()).peek, true, "Stay after repeated closes keeps the Peek");
     for (const [via, act] of Object.entries(ways)) {
       await act();
       const asked = await answer(false);
@@ -540,13 +555,16 @@ try {
       assert.equal(shown?.phase, "open", `${via}: the card is back at rest`);
       assert.equal(value, "draft", `${via}: what was typed is still there`);
     }
+    const beaconsBeforeLeave = beacons.length;
     await ways.escape();
     record.leaveAsked = await answer(true);
-    await sleep(900);
+    await sleep(1500);
     record.left = await stillOpen();
+    record.leaveHandlerRuns = beacons.length - beaconsBeforeLeave;
     page.close();
     assert.ok(record.leaveAsked, "Leave was asked");
     assert.deepEqual(record.left, { peek: false, tab: false }, "Leave closes the Peek and its page");
+    assert.equal(record.leaveHandlerRuns, 1, "Leave runs the page's beforeunload handler once");
     assert.deepEqual(dialogs.every((t) => t === "beforeunload"), true);
 
     const promoted = await run(`return open("bp");`);
@@ -620,6 +638,7 @@ try {
       const at = { x: o.x + tx + k * (g.x + g.width / 2), y: o.y + ty + k * (g.y + g.height / 2) };
       await run(`return ac.shell.devClick("w1", { x: ${at.x}, y: ${at.y}, queued: true, wait: 60 });`);
       const done = await waitFor((x) => x.phase === "open", 3000);
+      const viewport = await (await app.page("page.html?n=pz")).eval(`({ w: innerWidth, h: innerHeight })`);
       await sleep(300);
       const page = await app.page("page.html?n=pz");
       const seen = await page.eval(`({ down: __clicks.at(-1) ?? null, up: __ups.at(-1) ?? null, clicks: __domClicks })`);
@@ -630,6 +649,9 @@ try {
       assert.ok(seen.down && seen.up, "the page saw the press and its release");
       assert.deepEqual([seen.up.x, seen.up.y], [seen.down.x, seen.down.y], "the release lands where the press did");
       assert.equal(seen.clicks, 1, "the page got one click");
+      record.viewport = viewport;
+      near(seen.down.x, viewport.w / 2, 3, "the press reached the point under the pointer (x)");
+      near(seen.down.y, viewport.h / 2, 3, "the press reached the point under the pointer (y)");
     });
   }
   if (wanted("chrome-press-mid-pinch") || wanted("chrome-hidden-mid-spread") || wanted("chrome-press-held-into-spread") || wanted("chrome-press-held-into-pinch-in") || wanted("side-press-on-invisible-dim")) {
