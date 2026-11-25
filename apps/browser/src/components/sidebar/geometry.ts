@@ -42,6 +42,7 @@ export const sidebarFieldToolbarRow = perLook(() => ({
   ...TOOLBAR_ROWS.regular,
   fieldButton: SIDEBAR_FIELD_CONTROL.box,
   fieldButtonRadius: SIDEBAR_FIELD_CONTROL.radius,
+  extensionButton: SIDEBAR_FIELD_CONTROL.box,
   fieldTrailingInset: 0,
 }));
 

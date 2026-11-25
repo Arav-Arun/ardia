@@ -16,6 +16,7 @@ test("sidebar URL controls use concentric button metrics and keep both edge inse
     const row = sidebarFieldToolbarRow();
     assert.equal(row.fieldButton, 24);
     assert.equal(row.fieldButtonRadius, 9);
+    assert.equal(row.extensionButton, 24);
     assert.equal(row.fieldTrailingInset, 0);
     assert.equal(sidebarFieldToolbarRow(), row);
     const toolbar = readFileSync(new URL("../toolbar/Toolbar.tsx", import.meta.url), "utf8");
