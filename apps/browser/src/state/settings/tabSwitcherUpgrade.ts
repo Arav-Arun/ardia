@@ -30,7 +30,8 @@ export function withTabSwitcherModes<S extends object>(saved: S | undefined, met
 }
 
 export function withSyncedTabSwitcherModes(patch: Partial<Settings>, modesExplicit: boolean): Partial<Settings> {
-  if (modesExplicit || !isOverrides(patch.shortcuts) || "tabSwitcherOrder" in patch || "tabSwitcherView" in patch) return patch;
+  if (!isOverrides(patch.shortcuts)) return patch;
   const { shortcuts, stepped } = ctrlTabUpgrade(patch.shortcuts, staticShortcutSources(), { usedToStep: false });
+  if (modesExplicit || "tabSwitcherOrder" in patch || "tabSwitcherView" in patch) return shortcuts === patch.shortcuts ? patch : { ...patch, shortcuts };
   return { ...patch, shortcuts, ...(stepped ? STEPPED : DEFAULT_MODES) };
 }

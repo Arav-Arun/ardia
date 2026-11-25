@@ -54,10 +54,10 @@ test("a fresh install only marks the upgrade done", () => {
 
 test("a synced patch from an older Ardia that steps with ⌃Tab turns into stepping here, and one from a newer Ardia is left alone", () => {
   assert.deepEqual(withSyncedTabSwitcherModes({ shortcuts: { ...STEP } }, false), { shortcuts: {}, tabSwitcherOrder: "inOrder", tabSwitcherView: "none" });
-  const newer = { shortcuts: { ...STEP }, tabSwitcherOrder: "recent" };
-  assert.equal(withSyncedTabSwitcherModes(newer, false), newer);
-  const alongside = { shortcuts: { ...STEP } };
-  assert.equal(withSyncedTabSwitcherModes(alongside, true), alongside, "a mode record already in sync means the shortcuts are someone's own");
+  assert.deepEqual(withSyncedTabSwitcherModes({ shortcuts: { ...STEP }, tabSwitcherOrder: "recent" }, false), { shortcuts: {}, tabSwitcherOrder: "recent" }, "a mode that came with them stays, and ⌃Tab goes back to the switcher");
+  assert.deepEqual(withSyncedTabSwitcherModes({ shortcuts: { ...STEP } }, true), { shortcuts: {} }, "an explicit mode is never inferred over, but the stepping keys still go");
+  const own = { shortcuts: { "tabSwitcher:forward": ["\t", "option"], "tabSwitcher:backward": ["\t", "option", "shift"], ...STEP } };
+  assert.equal(withSyncedTabSwitcherModes(own, true), own, "with the switcher on keys of its own, ⌃Tab keeps stepping");
 });
 
 test("a legacy shortcuts record that sync applies after launch keeps ⌃Tab and the settings in agreement", () => {
@@ -84,7 +84,7 @@ test("the same records give the same result whichever order sync delivers them i
     return { tabSwitcherOrder, tabSwitcherView, shortcuts };
   };
   const together = outcome([[...modes, ...keys]]);
-  assert.deepEqual(together, { tabSwitcherOrder: "recent", tabSwitcherView: "compactList", shortcuts: { ...STEP } });
+  assert.deepEqual(together, { tabSwitcherOrder: "recent", tabSwitcherView: "compactList", shortcuts: {} });
   assert.deepEqual(outcome([modes, keys]), together, "modes first, shortcuts second");
   assert.deepEqual(outcome([keys, modes]), together, "shortcuts first, modes second");
 });
@@ -105,6 +105,6 @@ test("with only one mode record synced, every arrival order of it and the legacy
   for (const mode of [["set:tabSwitcherOrder", { v: "recent" }], ["set:tabSwitcherOrder", { v: "inOrder" }], ["set:tabSwitcherView", { v: "compactList" }], ["set:tabSwitcherView", { v: "none" }]]) {
     const together = outcome([[mode, keys]]);
     for (const order of permutations([[mode], [keys]])) assert.deepEqual(outcome(order), together, `${mode[0]}=${mode[1].v}, ${order.map((b) => b[0][0]).join(" then ")}`);
-    assert.deepEqual(together.shortcuts, { ...STEP }, `${mode[0]}: a current record keeps the shortcuts as they came`);
+    assert.deepEqual(together.shortcuts, {}, `${mode[0]}: the legacy stepping keys go, so ⌃Tab opens the switcher`);
   }
 });

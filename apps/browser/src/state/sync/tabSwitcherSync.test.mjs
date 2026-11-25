@@ -5,6 +5,7 @@ const { useBrowser } = await import("../browser/store.ts");
 const { Clock, emptyScope, syncScope } = await import("@ardia/sync");
 const { useEditClock } = await import("./editClock.ts");
 const { settingsAdapter } = await import("./settingsAdapter.ts");
+const { ctrlTabKeys } = await import("../commands/commandShortcuts.ts");
 
 const S = () => useBrowser.getState();
 const STEP = { nextTab: ["\t", "control"], previousTab: ["\t", "control", "shift"] };
@@ -126,4 +127,35 @@ test("with no mode records, a legacy peer switching from stepping back to the re
   const separate = await run(true);
   assert.deepEqual(separate.modes, { tabSwitcherOrder: "recent", tabSwitcherView: "thumbnails" });
   assert.deepEqual(separate, await run(false));
+});
+
+test("a Compact list chosen here stays chosen and ⌃Tab still opens it after an older Mac syncs its stepping keys", async () => {
+  const folder = new Folder();
+  const device = new Device("B", folder);
+  device.with(() => S().updateSettings({ tabSwitcherView: "compactList" }));
+  const legacy = new Peer("old", folder, { shortcuts: STEP });
+  await legacy.sync();
+  await device.sync();
+  await device.sync();
+  assert.deepEqual(device.modes(), { tabSwitcherOrder: "recent", tabSwitcherView: "compactList" });
+  assert.equal(device.with(() => ctrlTabKeys()), "switcher", "⌃Tab opens the switcher, not Next Tab");
+  assert.deepEqual(device.with(() => S().settings.shortcuts), {});
+});
+
+test("two upgraded Macs that inferred stepping from an older Mac both keep it when one remaps an unrelated shortcut, and so does a Mac joining later", async () => {
+  const folder = new Folder();
+  const a = new Device("A", folder);
+  const b = new Device("B", folder);
+  const legacy = new Peer("old", folder, { shortcuts: STEP });
+  await legacy.sync();
+  for (const device of [a, b]) await device.sync();
+  for (const device of [a, b]) assert.deepEqual(device.modes(), { tabSwitcherOrder: "inOrder", tabSwitcherView: "none" }, device.id);
+  a.with(() => S().updateSettings({ shortcuts: { ...S().settings.shortcuts, reload: ["r", "command", "shift"] } }));
+  for (let i = 0; i < 2; i++) for (const device of [a, b]) await device.sync();
+  for (const device of [a, b]) assert.deepEqual(device.modes(), { tabSwitcherOrder: "inOrder", tabSwitcherView: "none" }, `${device.id} after A remaps Reload`);
+  assert.deepEqual(b.with(() => S().settings.shortcuts.reload), ["r", "command", "shift"], "B takes the remap");
+  const c = new Device("C", folder);
+  await c.sync();
+  assert.deepEqual(c.modes(), { tabSwitcherOrder: "inOrder", tabSwitcherView: "none" }, "a Mac joining later agrees");
+  for (const device of [a, b, c]) assert.equal(device.with(() => ctrlTabKeys()), "switcher", device.id);
 });

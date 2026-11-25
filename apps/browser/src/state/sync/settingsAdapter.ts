@@ -14,6 +14,7 @@ const toRecord = (name: string, value: unknown) => (name === CLEAN_UP_KEY ? hour
 const fromRecord = (name: string, value: unknown) => (name === CLEAN_UP_KEY ? minutesFromHours(value) : value);
 
 export const SYNCED_SETTINGS = SETTING_KEYS.filter((key) => SETTING_SPECS[key].synced);
+const TAB_SWITCHER_MODES = ["tabSwitcherOrder", "tabSwitcherView"] as const;
 
 export const settingsAdapter: Adapter = {
   prefix: "set:",
@@ -37,6 +38,12 @@ export const settingsAdapter: Adapter = {
       if (!chosen.has(name) || filledIn(name, value) || fromNewerVersion(name)) continue;
       values.set(recordKey(name), { v: toRecord(name, value) });
     }
+    if (values.has(recordKey("shortcuts"))) {
+      for (const name of TAB_SWITCHER_MODES) {
+        if (values.has(recordKey(name)) || settings[name] === DEFAULT_SETTINGS[name] || fromNewerVersion(name)) continue;
+        values.set(recordKey(name), { v: settings[name] });
+      }
+    }
     return { values, ignore: (key) => !values.has(key) };
   },
   apply: (visible, changed) => applySettingRecords(visible, changed),
@@ -52,7 +59,7 @@ function applySettingRecords(visible: ReadonlyMap<string, unknown>, changedKeys:
     const value = fromRecord(name, record.v);
     if (validSettingValue(name as SettingKey, value)) patch[name] = value;
   }
-  const modes = ["tabSwitcherOrder", "tabSwitcherView"] as const;
+  const modes = TAB_SWITCHER_MODES;
   const chosen = store().settingsMeta.chosen;
   const modesSynced = modes.some((name) => visible.has(recordKey(name)));
   const modesExplicit = modesSynced || modes.some((name) => chosen.includes(name));
