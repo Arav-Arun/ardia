@@ -42,31 +42,45 @@ extensions::PermissionSet HostPermissions(const URLPattern& pattern) {
                                    std::move(hosts), std::move(scriptable));
 }
 
-void RestoreRemainingGrants(base::WeakPtr<Profile> profile,
-                            const std::string& id,
-                            Reply reply) {
+void RestoreKeptGrants(base::WeakPtr<Profile> profile,
+                       const std::string& id,
+                       std::unique_ptr<extensions::PermissionSet> kept,
+                       Reply reply) {
   const extensions::Extension* extension =
       profile ? extensions::ExtensionRegistry::Get(profile.get())
                     ->GetExtensionById(id,
                                        extensions::ExtensionRegistry::EVERYTHING)
               : nullptr;
-  if (!extension) {
-    return reply.Ok();
-  }
-  std::unique_ptr<const extensions::PermissionSet> remaining =
-      extensions::PermissionsManager::Get(profile.get())
-          ->GetRuntimePermissionsFromPrefs(*extension);
-  if (!remaining || remaining->effective_hosts().is_empty()) {
+  if (!extension || kept->effective_hosts().is_empty()) {
     return reply.Ok();
   }
   extensions::PermissionsUpdater(profile.get())
       .GrantRuntimePermissions(
-          *extension,
-          extensions::PermissionSet(extensions::APIPermissionSet(),
-                                    extensions::ManifestPermissionSet(),
-                                    remaining->explicit_hosts().Clone(),
-                                    remaining->scriptable_hosts().Clone()),
+          *extension, *kept,
           base::BindOnce([](Reply done) { done.Ok(); }, std::move(reply)));
+}
+
+std::unique_ptr<extensions::PermissionSet> GrantsKeptAfterRemoving(
+    const extensions::PermissionSet* stored,
+    const URLPattern& removed) {
+  extensions::URLPatternSet explicit_hosts;
+  extensions::URLPatternSet scriptable_hosts;
+  const std::string removed_text = removed.GetAsString();
+  if (stored) {
+    for (const URLPattern& host : stored->explicit_hosts()) {
+      if (host.GetAsString() != removed_text) {
+        explicit_hosts.AddPattern(host);
+      }
+    }
+    for (const URLPattern& host : stored->scriptable_hosts()) {
+      if (host.GetAsString() != removed_text) {
+        scriptable_hosts.AddPattern(host);
+      }
+    }
+  }
+  return std::make_unique<extensions::PermissionSet>(
+      extensions::APIPermissionSet(), extensions::ManifestPermissionSet(),
+      std::move(explicit_hosts), std::move(scriptable_hosts));
 }
 
 }
@@ -128,10 +142,13 @@ void ChangeSite(Profile* profile,
   if (granted->IsEmpty()) {
     return reply.Ok();
   }
+  std::unique_ptr<const extensions::PermissionSet> stored =
+      manager->GetRuntimePermissionsFromPrefs(extension);
   extensions::PermissionsUpdater(profile).RevokeRuntimePermissions(
       extension, *granted,
-      base::BindOnce(&RestoreRemainingGrants, profile->GetWeakPtr(),
-                     extension.id(), std::move(reply)));
+      base::BindOnce(&RestoreKeptGrants, profile->GetWeakPtr(), extension.id(),
+                     GrantsKeptAfterRemoving(stored.get(), *pattern),
+                     std::move(reply)));
 }
 
 }

@@ -70,7 +70,7 @@ export function watchPasswordAppPairing() {
   onExtensionInstallPrompt((prompt) => {
     if (prompt.type !== "install" || !pairsWithPasswordApp(prompt.id)) return;
     if (useExtensions.getState().lists[prompt.profile]?.some((x) => x.id === prompt.id)) return;
-    asked.set(installKey(prompt.profile, prompt.id), { consent: consentToken(), at: Date.now(), windowId: windowShowing(prompt.profile, null) });
+    asked.set(installKey(prompt.profile, prompt.id), { consent: consentToken(), at: Date.now(), windowId: windowShowing(prompt.profile, (prompt.tabId && useBrowser.getState().tabs[prompt.tabId]?.windowId) || null) });
   });
   onExtensionsChanged((e) => {
     if (e.event === "installed") showPairing(installKey(e.profile, e.id));
