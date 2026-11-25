@@ -61,12 +61,9 @@ std::string SiteProblem(Profile* profile,
   if (asked.ShouldWarnAllHosts(false)) {
     return "That covers every site. Choose On all sites instead";
   }
-  std::unique_ptr<extensions::PermissionSet> requested =
-      extensions::PermissionSet::CreateUnion(
-          extensions::PermissionsParser::GetRequiredPermissions(&extension),
-          extensions::PermissionsParser::GetOptionalPermissions(&extension));
   if (extensions::PermissionSet::CreateIntersection(
-          asked, *requested,
+          asked,
+          extensions::PermissionsParser::GetRequiredPermissions(&extension),
           extensions::URLPatternSet::IntersectionBehavior::kDetailed)
           ->effective_hosts()
           .is_empty()) {

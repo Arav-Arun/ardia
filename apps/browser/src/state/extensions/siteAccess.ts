@@ -7,7 +7,7 @@ import { extensionSitePattern } from "./sitePatterns";
 
 export { extensionSiteLabel, extensionSitePattern } from "./sitePatterns";
 
-const INVALID_SITE = "Enter a site like example.com or https://*.example.com.";
+const INVALID_SITE = "Enter a site like example.com or https://*.example.com. A port needs http:// or https:// in front.";
 
 const reason = (error: unknown, fallback: string) => {
   const message = (error as { message?: unknown } | null)?.message;
