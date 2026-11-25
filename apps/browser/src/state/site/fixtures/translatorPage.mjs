@@ -76,5 +76,9 @@ export function fakePage(body, { whiteSpace = "normal" } = {}) {
     vm.runInContext(`{\n${translatorCall(op, ...args)}\n}`, context);
     return results.pop();
   };
-  return { call };
+  const run = (code) => {
+    vm.runInContext(`{\n${code}\n}`, context);
+    return results.pop();
+  };
+  return { call, run };
 }

@@ -141,6 +141,28 @@ final class PackedPassagesTests: XCTestCase {
     XCTAssertNil(parts[1])
   }
 
+  func testAPassageOf200CharactersOrMoreGetsItsOwnPack() {
+    let long = [String(repeating: "x", count: 200)]
+    let packs = PackedPassages.packs([["a"], ["b"], long, ["c"], long, long, ["d"]], limit: 600, count: 24)
+    XCTAssertEqual(packs, [0..<2, 2..<3, 3..<4, 4..<5, 5..<6, 6..<7])
+  }
+
+  func testAGapThatCarriesWordsFailsBothPassagesBesideIt() {
+    let parts = PackedPassages.parts(
+      of: answer([.piece("Settings", 0, 0), .gap(" · Helpful ", 1), .piece("Links", 1, 0), .gap(" · ", 2), .piece("Help", 2, 0)]),
+      over: [["Einstellungen"], ["Links"], ["Hilfe"]])
+    XCTAssertNil(parts[0])
+    XCTAssertNil(parts[1])
+    XCTAssertEqual(parts[2], ["Help"])
+  }
+
+  func testAGapOfOnlyTheSeparatorOrSpaceStaysValid() {
+    let parts = PackedPassages.parts(
+      of: answer([.piece("Settings", 0, 0), .gap(" ·  ", 1), .piece("Links", 1, 0), .gap("  ", 2), .piece("Help", 2, 0)]),
+      over: [["Einstellungen"], ["Links"], ["Hilfe"]])
+    XCTAssertEqual(parts.compactMap { $0 }.count, 3)
+  }
+
   func testPacksCountTheSeparatorsBetweenPassages() {
     let passages = (0..<4).map { _ in [String(repeating: "x", count: 150)] }
     let packs = PackedPassages.packs(passages, limit: 600, count: 24)

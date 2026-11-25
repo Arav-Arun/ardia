@@ -162,8 +162,8 @@ export async function translatePack(model: BlockTranslator, source: string, targ
   return out;
 }
 
-type Progress = { applied: number; unlinked: number; failed: number; packs: number; firstAppliedAt: number | null };
-const newProgress = (): Progress => ({ applied: 0, unlinked: 0, failed: 0, packs: 0, firstAppliedAt: null });
+type Progress = { applied: number; unlinked: number; failed: number; packs: number; firstAppliedAt: number | null; failedStage: TranslateStage | null };
+const newProgress = (): Progress => ({ applied: 0, unlinked: 0, failed: 0, packs: 0, firstAppliedAt: null, failedStage: null });
 
 function untilReleased(tabId: string, token: string) {
   let stop = () => {};
@@ -199,6 +199,7 @@ async function drain(tabId: string, token: string, onProgress?: (done: number, t
       apply: (results) => page().evaluate(translatorCall("apply", token, results)),
       onStage: (stage) => atStage(tabId, stage),
       onAbandoned: (passages) => void (progress.failed += passages),
+      onOutage: () => void (progress.failedStage ??= stages[tabId] ?? null),
       onApplied: (passages, total) => {
         progress.firstAppliedAt ??= Date.now();
         progress.applied += passages;
@@ -252,7 +253,7 @@ export async function translatePage(tabId: string, target = defaultTarget(), fro
   let started = 0;
   let token: string | null = null;
   const progress = newProgress();
-  const report = (outcome: "done" | "stopped" | "failed") => reportFirstPass(outcome, started, progress, from, outcome === "failed" ? (stages[tabId] ?? null) : null, consent);
+  const report = (outcome: "done" | "stopped" | "failed") => reportFirstPass(outcome, started, progress, from, outcome === "failed" ? (progress.failedStage ?? stages[tabId] ?? null) : null, consent);
   try {
     const status = await translation.status(source, target);
     if (status === "unsupported") return toast(tabId, `Translation error (${languageName(source)} to ${languageName(target)} isn't available)`);

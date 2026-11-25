@@ -21,6 +21,7 @@ type DrainPort = {
   onApplied?(passages: number, total: number): void;
   onFailed?(passages: number): void;
   onAbandoned?(passages: number): void;
+  onOutage?(): void;
 };
 
 const MAX_PIECES = 40;
@@ -109,7 +110,7 @@ export async function drainPassages(port: DrainPort): Promise<boolean> {
           if (!live()) return;
           const translated = translatedIn(pack, results);
           const answered = new Set(results.filter(([, text]) => text !== null).map(([id]) => id));
-          settleRetries(pack, ([, pieces]) => pieces.some(([id]) => answered.has(id)));
+          settleRetries(pack, ([, pieces]) => pieces.every(([id]) => answered.has(id)));
           if (translated && !failure) failedInARow = 0;
           if (translated) succeeded++;
           stage("apply");
@@ -125,12 +126,15 @@ export async function drainPassages(port: DrainPort): Promise<boolean> {
           if (fresh && ++failedInARow >= FAILED_PACKS_IN_A_ROW && !failure) {
             port.onStage?.("model");
             failure = { error };
+            port.onOutage?.();
           }
           await port.apply(pack.flatMap(untranslated)).catch(() => {});
         },
       )
       .catch((error: unknown) => {
-        if (live()) failure ??= { error };
+        if (!live() || failure) return;
+        failure = { error };
+        port.onOutage?.();
       })
       .finally(() => running.delete(job));
     running.add(job);

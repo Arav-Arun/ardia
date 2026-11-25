@@ -313,3 +313,46 @@ test("a pack that lands after an outage ended the drain doesn't change the stage
   assert.equal(stages.at(-1), "model");
   assert.ok(page.applied.some(([id, text]) => id === 4000 && text === "TEXT 4.0"));
 });
+
+test("a passage answered only in part waits for its retry, so the outage still counts every passage it left", async () => {
+  const fresh = (id, pieces = 1) => ({ passages: [passage(id, pieces)], more: true, gone: false, done: id, total: 8 });
+  const retryOf = (id, piece) => ({ passages: [[id * 10, [[piece, `text ${id} again`]], 1]], more: true, gone: false, done: id, total: 8 });
+  const page = scriptedPage([fresh(1), fresh(2, 2), retryOf(1, 1000), retryOf(2, 2001), fresh(3), fresh(4), { ...fresh(5), more: false }]);
+  const translate = page.port.translate;
+  page.port.translate = (pack) => {
+    if (pack[0][0] === 2) return Promise.resolve([[2000, "TEXT 2.0"], [2001, null]]);
+    return translate(pack);
+  };
+  const abandoned = [];
+  page.port.onAbandoned = (n) => abandoned.push(n);
+  const drained = drainPassages(page.port).then(() => "done", (e) => e.message);
+  await page.settle(1, false);
+  await page.settle(20, true);
+  await page.settle(3, false);
+  await page.settle(4, false);
+  await page.settle(5, false);
+  await page.settle(10, false);
+  assert.equal(await drained, "the model went away");
+  assert.deepEqual(abandoned, [4]);
+});
+
+test("an outage is reported the moment it's recorded, before the failed pack's apply or any pack in flight settles", async () => {
+  const page = scriptedPage([1, 2, 3, 4].map((id) => ({ passages: [passage(id)], more: id < 4, gone: false, done: id, total: 4 })));
+  const events = [];
+  const applying = deferred();
+  page.port.apply = async (results) => {
+    events.push(`apply ${results[0][0]}`);
+    if (results[0][0] === 3000) await applying.promise;
+  };
+  page.port.onStage = (name) => events.push(`stage ${name}`);
+  page.port.onOutage = () => events.push("outage");
+  const drained = drainPassages(page.port).then(() => "done", (e) => e.message);
+  await page.settle(1, false);
+  await page.settle(2, false);
+  await page.settle(3, false);
+  assert.deepEqual(events.slice(-3), ["stage model", "outage", "apply 3000"]);
+  await page.settle(4, true);
+  applying.resolve();
+  assert.equal(await drained, "the model went away");
+  assert.equal(events.filter((e) => e === "outage").length, 1);
+});

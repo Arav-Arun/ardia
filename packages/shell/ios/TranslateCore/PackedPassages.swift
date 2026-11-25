@@ -4,6 +4,7 @@ enum PackedPassages {
   static let separator = " · "
   static let defaultLimit = 600
   static let defaultCount = 24
+  static let longPassage = 200
 
   static func size(_ passage: [String]) -> Int { passage.reduce(0) { $0 + $1.count } }
 
@@ -12,6 +13,13 @@ enum PackedPassages {
     var start = 0
     var used = 0
     for (i, passage) in passages.enumerated() {
+      if size(passage) >= longPassage {
+        if i > start { out.append(start..<i) }
+        out.append(i..<(i + 1))
+        start = i + 1
+        used = 0
+        continue
+      }
       let length = size(passage) + (i > start ? separator.count : 0)
       if i > start, used + length > limit || i - start >= count {
         out.append(start..<i)
@@ -60,7 +68,12 @@ enum PackedPassages {
       if link.scheme == "ac-gap" {
         last = nil
         lead = ""
-        gapBefore = Int(link.absoluteString.dropFirst("ac-gap:".count)) ?? -1
+        let next = Int(link.absoluteString.dropFirst("ac-gap:".count)) ?? -1
+        gapBefore = next
+        if words.contains(where: { !$0.isWhitespace && !separator.contains($0) }) {
+          if let current { broken[current] = true }
+          if broken.indices.contains(next) { broken[next] = true }
+        }
         continue
       }
       guard link.scheme == "ac-piece", let (p, i) = index(link), passages.indices.contains(p), passages[p].indices.contains(i) else {
