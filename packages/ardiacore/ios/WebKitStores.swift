@@ -14,9 +14,9 @@ final class WebKitStores {
     }
   }
 
-  typealias SiteKey = WebKitSiteKey
-  typealias ExternalGrant = WebKitExternalGrant
-  typealias StoreState = WebKitStoreState
+  typealias SiteKey = WebKitSiteChoices.Key
+  typealias ExternalGrant = WebKitSiteChoices.ExternalGrant
+  typealias StoreState = WebKitSiteChoices
 
   private struct PrivateSession {
     let store: WKWebsiteDataStore

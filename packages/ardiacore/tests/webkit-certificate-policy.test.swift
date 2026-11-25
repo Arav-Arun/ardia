@@ -184,6 +184,30 @@ struct DynamicTransportSecurity {
     #expect(!current)
   }
 
+  @Test func `a max-age 0 seen before the saved list could be read keeps that host out when the list is read`() {
+    var policy = WebKitCertificatePolicy(awaitingSavedList: true)
+    let revoked = policy.noteHeader("max-age=0", host: "bank.example", now: now)
+    #expect(!revoked)
+    _ = policy.noteHeader("max-age=0", host: "shop.example", now: now)
+    _ = policy.noteHeader("max-age=600", host: "shop.example", now: now)
+    let saved = [
+      "bank.example": WebKitTransportSecurity(expires: now.timeIntervalSince1970 + 86_400, subdomains: true, observed: now.timeIntervalSince1970 - 86_400),
+      "mail.example": WebKitTransportSecurity(expires: now.timeIntervalSince1970 + 86_400, subdomains: false, observed: now.timeIntervalSince1970 - 86_400),
+    ]
+    policy.adoptSaved(saved, now: now)
+    #expect(!policy.requiresHTTPS(host: "bank.example", now: now))
+    #expect(policy.requiresHTTPS(host: "mail.example", now: now))
+    #expect(policy.requiresHTTPS(host: "shop.example", now: now))
+    #expect(!policy.awaitingSavedList)
+    #expect(policy.revokedBeforeSavedList.isEmpty)
+  }
+
+  @Test func `a policy loaded from its saved list records no revocations`() {
+    var policy = WebKitCertificatePolicy()
+    _ = policy.noteHeader("max-age=0", host: "bank.example", now: now)
+    #expect(policy.revokedBeforeSavedList.isEmpty)
+  }
+
   @Test func `max-age 0 removes the host and entries expire`() {
     var policy = WebKitCertificatePolicy()
     _ = policy.noteHeader("max-age=600", host: "a.example", now: now)

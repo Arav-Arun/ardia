@@ -1,40 +1,40 @@
 import Foundation
 
-struct WebKitSiteKey: Hashable {
-  let site: String
-  let kind: String
-}
+struct WebKitSiteChoices {
+  struct Key: Hashable {
+    let site: String
+    let kind: String
+  }
 
-struct WebKitExternalGrant {
-  let origin: String
-  let scheme: String
-  let app: String
-  let appPath: String
-}
+  struct ExternalGrant {
+    let origin: String
+    let scheme: String
+    let app: String
+    let appPath: String
+  }
 
-struct WebKitStoreState {
-  private(set) var remembered: [WebKitSiteKey: Bool] = [:]
-  private(set) var externalAllowances: [WebKitSiteKey: WebKitExternalGrant] = [:]
+  private(set) var remembered: [Key: Bool] = [:]
+  private(set) var externalAllowances: [Key: ExternalGrant] = [:]
   var zoom: [String: Double] = [:]
-  private var rememberedAt: [WebKitSiteKey: Date] = [:]
-  private var allowedAt: [WebKitSiteKey: Date] = [:]
+  private var rememberedAt: [Key: Date] = [:]
+  private var allowedAt: [Key: Date] = [:]
 
-  mutating func remember(_ key: WebKitSiteKey, allowed: Bool, at now: Date = Date()) {
+  mutating func remember(_ key: Key, allowed: Bool, at now: Date = Date()) {
     remembered[key] = allowed
     rememberedAt[key] = now
   }
 
-  mutating func forgetAnswer(_ key: WebKitSiteKey) {
+  mutating func forgetAnswer(_ key: Key) {
     remembered.removeValue(forKey: key)
     rememberedAt.removeValue(forKey: key)
   }
 
-  mutating func allowExternal(_ key: WebKitSiteKey, _ grant: WebKitExternalGrant, at now: Date = Date()) {
+  mutating func allowExternal(_ key: Key, _ grant: ExternalGrant, at now: Date = Date()) {
     externalAllowances[key] = grant
     allowedAt[key] = now
   }
 
-  mutating func removeExternal(_ key: WebKitSiteKey) {
+  mutating func removeExternal(_ key: Key) {
     externalAllowances.removeValue(forKey: key)
     allowedAt.removeValue(forKey: key)
   }

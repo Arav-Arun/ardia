@@ -5,17 +5,17 @@ struct RangedSiteChoiceClears {
   let lastWeek = Date(timeIntervalSince1970: 1_800_000_000)
   let tenMinutesAgo = Date(timeIntervalSince1970: 1_800_600_000)
   let lastHour = Date(timeIntervalSince1970: 1_800_599_000)
-  let camera = WebKitSiteKey(site: "https://meet.example", kind: "camera")
-  let popups = WebKitSiteKey(site: "https://shop.example", kind: "popups")
-  let zoomLink = WebKitSiteKey(site: "https://meet.example", kind: "zoommtg")
-  let mailLink = WebKitSiteKey(site: "https://mail.example", kind: "mailto")
+  let camera = WebKitSiteChoices.Key(site: "https://meet.example", kind: "camera")
+  let popups = WebKitSiteChoices.Key(site: "https://shop.example", kind: "popups")
+  let zoomLink = WebKitSiteChoices.Key(site: "https://meet.example", kind: "zoommtg")
+  let mailLink = WebKitSiteChoices.Key(site: "https://mail.example", kind: "mailto")
 
-  func grant(_ key: WebKitSiteKey) -> WebKitExternalGrant {
-    WebKitExternalGrant(origin: key.site, scheme: key.kind, app: "App", appPath: "/Applications/App.app")
+  func grant(_ key: WebKitSiteChoices.Key) -> WebKitSiteChoices.ExternalGrant {
+    WebKitSiteChoices.ExternalGrant(origin: key.site, scheme: key.kind, app: "App", appPath: "/Applications/App.app")
   }
 
-  func profileWithOldAndNewChoices() -> WebKitStoreState {
-    var state = WebKitStoreState()
+  func profileWithOldAndNewChoices() -> WebKitSiteChoices {
+    var state = WebKitSiteChoices()
     state.remember(camera, allowed: true, at: lastWeek)
     state.allowExternal(zoomLink, grant(zoomLink), at: lastWeek)
     state.remember(popups, allowed: false, at: tenMinutesAgo)
@@ -48,7 +48,7 @@ struct RangedSiteChoiceClears {
   }
 
   @Test func `a forgotten choice set again later is timed from the new choice`() {
-    var state = WebKitStoreState()
+    var state = WebKitSiteChoices()
     state.remember(camera, allowed: true, at: tenMinutesAgo)
     state.forgetAnswer(camera)
     state.remember(camera, allowed: true, at: lastWeek)
@@ -59,10 +59,10 @@ struct RangedSiteChoiceClears {
 
   @Test(arguments: [0.0, -1.0, .infinity, .nan])
   func `a missing or unusable since means all time`(since: Double) {
-    #expect(WebKitStoreState.rangeStart(sinceMilliseconds: since) == nil)
+    #expect(WebKitSiteChoices.rangeStart(sinceMilliseconds: since) == nil)
   }
 
   @Test func `since is read as milliseconds since 1970`() {
-    #expect(WebKitStoreState.rangeStart(sinceMilliseconds: 1_800_599_000_000) == lastHour)
+    #expect(WebKitSiteChoices.rangeStart(sinceMilliseconds: 1_800_599_000_000) == lastHour)
   }
 }

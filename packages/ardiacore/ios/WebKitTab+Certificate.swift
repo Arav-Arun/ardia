@@ -115,7 +115,7 @@ final class WebKitCertificates {
     }
     guard let file = Self.file(for: store) else { return done(nil) }
     Self.files.async {
-      let error = WebKitTransportSecurityFile.write(kept, to: file)
+      let error = WebKitCertificatePolicy.SavedList.write(kept, to: file)
       DispatchQueue.main.async { done(error) }
     }
   }
@@ -136,7 +136,7 @@ final class WebKitCertificates {
 
   private func policy(_ store: StoreID) -> WebKitCertificatePolicy {
     if let known = policies[store] { return known }
-    var loaded = WebKitCertificatePolicy()
+    var loaded = WebKitCertificatePolicy(awaitingSavedList: true)
     do {
       loaded = WebKitCertificatePolicy(transportSecurity: try Self.load(store))
     } catch {
@@ -147,14 +147,15 @@ final class WebKitCertificates {
   }
 
   private func readAgainIfUnreadable(_ store: StoreID) -> String? {
+    _ = policy(store)
     guard unreadable.contains(store) else { return nil }
     do {
       let saved = try Self.load(store)
       unreadable.remove(store)
-      change(store) { $0.adoptSaved(saved) }
+      change(store) { $0.adoptSaved(saved, now: Date()) }
       return nil
     } catch {
-      return (error as? WebKitTransportSecurityFile.Unreadable)?.message ?? "couldn't read the HSTS list"
+      return (error as? WebKitCertificatePolicy.SavedList.Unreadable)?.message ?? "couldn't read the HSTS list"
     }
   }
 
@@ -173,7 +174,7 @@ final class WebKitCertificates {
 
   private static func load(_ store: StoreID) throws -> [String: WebKitTransportSecurity] {
     guard let file = file(for: store) else { return [:] }
-    return try WebKitTransportSecurityFile.read(file)
+    return try WebKitCertificatePolicy.SavedList.read(file)
   }
 
   private func scheduleSave(_ store: StoreID) {
@@ -182,7 +183,7 @@ final class WebKitCertificates {
       guard let self else { return }
       self.pendingSaves.removeValue(forKey: store)
       guard !self.unreadable.contains(store), let entries = self.policies[store]?.savedTransportSecurity(now: Date()) else { return }
-      Self.files.async { _ = WebKitTransportSecurityFile.write(entries, to: file) }
+      Self.files.async { _ = WebKitCertificatePolicy.SavedList.write(entries, to: file) }
     }
     pendingSaves[store] = save
     DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: save)

@@ -39,9 +39,12 @@ struct WebKitCertificatePolicy: Sendable {
   private(set) var exceptions: [String: [String: Exception]] = [:]
   private(set) var bypassed: [String: [String: Bypass]] = [:]
   private(set) var transportSecurity: [String: WebKitTransportSecurity] = [:]
+  private(set) var awaitingSavedList: Bool
+  private(set) var revokedBeforeSavedList = Set<String>()
 
-  init(transportSecurity: [String: WebKitTransportSecurity] = [:]) {
+  init(transportSecurity: [String: WebKitTransportSecurity] = [:], awaitingSavedList: Bool = false) {
     self.transportSecurity = transportSecurity
+    self.awaitingSavedList = awaitingSavedList
   }
 
   static func normalizedHost(_ host: String) -> String {
@@ -91,7 +94,11 @@ struct WebKitCertificatePolicy: Sendable {
     guard !trustedThroughBypass(host: host, fingerprint: fingerprint), let parsed = Self.parse(header) else { return false }
     let name = Self.normalizedHost(host)
     guard !name.isEmpty else { return false }
-    if parsed.maxAge <= 0 { return transportSecurity.removeValue(forKey: name) != nil }
+    if parsed.maxAge <= 0 {
+      if awaitingSavedList { revokedBeforeSavedList.insert(name) }
+      return transportSecurity.removeValue(forKey: name) != nil
+    }
+    revokedBeforeSavedList.remove(name)
     let entry = WebKitTransportSecurity(expires: now.addingTimeInterval(parsed.maxAge).timeIntervalSince1970, subdomains: parsed.subdomains, observed: now.timeIntervalSince1970)
     guard transportSecurity[name] != entry else { return false }
     transportSecurity[name] = entry
@@ -116,8 +123,11 @@ struct WebKitCertificatePolicy: Sendable {
     bypassed = Self.keeping(bypassed) { $0.granted(before: since) }
   }
 
-  mutating func adoptSaved(_ saved: [String: WebKitTransportSecurity]) {
-    transportSecurity = saved.merging(transportSecurity) { _, noted in noted }
+  mutating func adoptSaved(_ saved: [String: WebKitTransportSecurity], now: Date) {
+    transportSecurity = saved.filter { !revokedBeforeSavedList.contains($0.key) }.merging(transportSecurity) { _, noted in noted }
+    revokedBeforeSavedList = []
+    awaitingSavedList = false
+    trim(now: now)
   }
 
   private static func keeping<Value>(_ byHost: [String: [String: Value]], _ keep: (Value) -> Value?) -> [String: [String: Value]] {
@@ -163,41 +173,43 @@ struct WebKitCertificatePolicy: Sendable {
   }
 }
 
-enum WebKitTransportSecurityFile {
-  struct Unreadable: Error {
-    let message: String
-  }
-
-  static func read(_ file: URL) throws -> [String: WebKitTransportSecurity] {
-    let data: Data
-    do {
-      data = try Data(contentsOf: file)
-    } catch where isMissing(error) {
-      return [:]
-    } catch {
-      throw Unreadable(message: "couldn't read the HSTS list: \(error.localizedDescription)")
+extension WebKitCertificatePolicy {
+  enum SavedList {
+    struct Unreadable: Error {
+      let message: String
     }
-    return (try? JSONDecoder().decode([String: WebKitTransportSecurity].self, from: data)) ?? [:]
-  }
 
-  static func write(_ entries: [String: WebKitTransportSecurity]?, to file: URL) -> String? {
-    do {
-      guard let entries else {
-        do { try FileManager.default.removeItem(at: file) } catch where isMissing(error) {}
-        return nil
+    static func read(_ file: URL) throws -> [String: WebKitTransportSecurity] {
+      let data: Data
+      do {
+        data = try Data(contentsOf: file)
+      } catch where isMissing(error) {
+        return [:]
+      } catch {
+        throw Unreadable(message: "couldn't read the HSTS list: \(error.localizedDescription)")
       }
-      let data = try JSONEncoder().encode(entries)
-      try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try data.write(to: file, options: .atomic)
-      return nil
-    } catch {
-      return "couldn't save the HSTS list: \(error.localizedDescription)"
+      return (try? JSONDecoder().decode([String: WebKitTransportSecurity].self, from: data)) ?? [:]
     }
-  }
 
-  static func isMissing(_ error: Error) -> Bool {
-    let failure = error as NSError
-    if failure.domain == NSCocoaErrorDomain, [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(failure.code) { return true }
-    return failure.domain == NSPOSIXErrorDomain && failure.code == Int(ENOENT)
+    static func write(_ entries: [String: WebKitTransportSecurity]?, to file: URL) -> String? {
+      do {
+        guard let entries else {
+          do { try FileManager.default.removeItem(at: file) } catch where isMissing(error) {}
+          return nil
+        }
+        let data = try JSONEncoder().encode(entries)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: file, options: .atomic)
+        return nil
+      } catch {
+        return "couldn't save the HSTS list: \(error.localizedDescription)"
+      }
+    }
+
+    static func isMissing(_ error: Error) -> Bool {
+      let failure = error as NSError
+      if failure.domain == NSCocoaErrorDomain, [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(failure.code) { return true }
+      return failure.domain == NSPOSIXErrorDomain && failure.code == Int(ENOENT)
+    }
   }
 }

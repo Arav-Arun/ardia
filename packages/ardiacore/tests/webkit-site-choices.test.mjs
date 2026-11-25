@@ -87,13 +87,14 @@ precondition(log == ["data 1800000000"] && cacheReplies == 1, log.joined(separat
 
 test("WebKit's HSTS list: a clear is on disk when it reports done, an unreadable list is never overwritten, and a clear cancels the pending save", (t) => {
   const source = ios("WebKitTab+Certificate.swift");
-  const pieces = ["func forgetTransportSecurity(profile: String", "private func policy(", "private func readAgainIfUnreadable(", "private func change<T>(",
-    "private static func load(", "private func scheduleSave("].map((signature) => method(source, signature));
+  const pieces = ["func forgetTransportSecurity(profile: String", "func noteTransportSecurity(", "private func policy(", "private func readAgainIfUnreadable(",
+    "private func change<T>(", "private static func load(", "private func scheduleSave("].map((signature) => method(source, signature));
   compile(t, "webkit-hsts-persist", `${ios("WebKitCertificatePolicy.swift")}
 import Foundation
 enum StoreID: Hashable { case profile(String) }
 final class Stores { func id(of profile: String) -> StoreID { .profile(profile) } }
 final class WebKitHub { static let shared = WebKitHub(); let stores = Stores() }
+enum WebKitPreloadedHSTS { static func isIPAddress(_ host: String) -> Bool { false } }
 let folder = URL(fileURLWithPath: CommandLine.arguments[1])
 final class Certificates {
   static let files = DispatchQueue(label: "files")
@@ -101,7 +102,7 @@ final class Certificates {
   var pendingSaves: [StoreID: DispatchWorkItem] = [:]
   var unreadable = Set<StoreID>()
   static func file(for store: StoreID) -> URL? { folder.appendingPathComponent("p.json") }
-  func note(_ host: String, at date: Date) { change(.profile("p")) { _ = $0.noteHeader("max-age=86400", host: host, now: date) }; scheduleSave(.profile("p")) }
+  func note(_ header: String, _ host: String) { noteTransportSecurity(header, host: host, fingerprint: nil, store: .profile("p")) }
   func requires(_ host: String) -> Bool { policy(.profile("p")).requiresHTTPS(host: host, now: Date()) }
   ${pieces.join("\n  ")}
 }
@@ -118,35 +119,35 @@ func clear(_ certificates: Certificates, since: Date?) -> String? {
 }
 let now = Date()
 let file = Certificates.file(for: .profile("p"))!
-let saved = [
-  "old.example": WebKitTransportSecurity(expires: now.timeIntervalSince1970 + 86_400, subdomains: false, observed: now.timeIntervalSince1970 - 7 * 86_400),
-  "new.example": WebKitTransportSecurity(expires: now.timeIntervalSince1970 + 86_400, subdomains: false, observed: now.timeIntervalSince1970 - 60),
-]
+let day: Double = 86_400
+let entry = { (observedAgo: Double) in WebKitTransportSecurity(expires: now.timeIntervalSince1970 + day, subdomains: false, observed: now.timeIntervalSince1970 - observedAgo) }
+let saved = ["old.example": entry(7 * day), "revoked.example": entry(7 * day), "new.example": entry(60)]
 let lastHour = now.addingTimeInterval(-3_600)
-let keys = { Set((try? WebKitTransportSecurityFile.read(file))?.keys.map { $0 } ?? []) }
+let keys = { Set((try? WebKitCertificatePolicy.SavedList.read(file))?.keys.map { $0 } ?? []) }
+let lock = { (mode: Int) in try! FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: file.path) }
 
-precondition(WebKitTransportSecurityFile.write(saved, to: file) == nil)
+precondition(WebKitCertificatePolicy.SavedList.write(saved, to: file) == nil)
 precondition(clear(Certificates(), since: lastHour) == nil)
-precondition(keys() == ["old.example"], "a ranged clear wasn't on disk when it finished: \\(keys())")
+precondition(keys() == ["old.example", "revoked.example"], "a ranged clear wasn't on disk when it finished: \\(keys())")
 precondition(clear(Certificates(), since: nil) == nil && !FileManager.default.fileExists(atPath: file.path))
 
-precondition(WebKitTransportSecurityFile.write(saved, to: file) == nil)
+precondition(WebKitCertificatePolicy.SavedList.write(saved, to: file) == nil)
 let before = try! Data(contentsOf: file)
-try! FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path)
-let locked = Certificates()
-precondition(!locked.requires("old.example"))
-let refused = clear(locked, since: lastHour)
-precondition(refused?.hasPrefix("couldn't read the HSTS list") == true, String(describing: refused))
-locked.note("seen.example", at: now)
+lock(0o000)
+let cold = Certificates()
+let coldRefusal = clear(cold, since: lastHour)
+precondition(coldRefusal?.hasPrefix("couldn't read the HSTS list") == true, "a cold ranged clear on an unreadable list: \\(String(describing: coldRefusal))")
+cold.note("max-age=0", "revoked.example")
+cold.note("max-age=600", "seen.example")
 spin(until: { false }, seconds: 2.4)
-try! FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+lock(0o600)
 precondition(try! Data(contentsOf: file) == before, "an unreadable HSTS list was overwritten")
-precondition(clear(locked, since: lastHour) == nil, "the retry failed")
-precondition(keys() == ["old.example"], "the retry lost the older host: \\(keys())")
-precondition(locked.requires("old.example"))
+precondition(clear(cold, since: lastHour) == nil, "the retry failed")
+precondition(keys() == ["old.example"], "the retry lost the older host or brought back a revoked one: \\(keys())")
+precondition(cold.requires("old.example") && !cold.requires("revoked.example") && !cold.requires("new.example"))
 
 let debounced = Certificates()
-debounced.note("late.example", at: now.addingTimeInterval(-7 * 86_400))
+debounced.note("max-age=600", "late.example")
 precondition(clear(debounced, since: nil) == nil)
 spin(until: { false }, seconds: 2.4)
 precondition(!FileManager.default.fileExists(atPath: file.path), "a save queued before the clear wrote the list back")
