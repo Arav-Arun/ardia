@@ -22,19 +22,19 @@ function useLineMetrics(key: string) {
   return { metrics, onTextLayout };
 }
 
-
 const RETINA_PIXELS_PER_POINT = 2;
 
-const retinaSnapped = (points: number) => snappedToGrid(points, RETINA_PIXELS_PER_POINT * currentInterfaceScale());
+const retinaPixelsPerPoint = () => RETINA_PIXELS_PER_POINT * currentInterfaceScale();
 
-export function inkCentered(box: number, shiftX: number, inkRise: number, metrics: LineMetrics, inset = 0): ViewStyle {
+export function inkCentered(box: number, shiftX: number, inkRise: number, metrics: LineMetrics, inset = 0, pixelsPerPoint = retinaPixelsPerPoint()): ViewStyle {
+  const snapped = (points: number) => snappedToGrid(points, pixelsPerPoint);
   const top = box / 2 - Math.round(metrics.ascender) + inkRise;
   return {
     position: "absolute",
     left: -inset,
     top: Math.floor(top) - inset,
     width: box,
-    transform: [{ translateX: retinaSnapped(shiftX) }, { translateY: retinaSnapped(top - Math.floor(top)) }],
+    transform: [{ translateX: snapped(shiftX) }, { translateY: snapped(top - Math.floor(top)) }],
   };
 }
 
@@ -49,7 +49,8 @@ export function CapCenteredLetter({
   color,
   tracking = 0,
   inset = 0,
-  leadInset = 0,
+  lineShiftX = 0,
+  pixelsPerPoint,
   children,
 }: {
   box: number;
@@ -58,7 +59,8 @@ export function CapCenteredLetter({
   color: string;
   tracking?: number;
   inset?: number;
-  leadInset?: number;
+  lineShiftX?: number;
+  pixelsPerPoint?: number;
   children: string;
 }) {
   const face = typeFace();
@@ -66,14 +68,14 @@ export function CapCenteredLetter({
   const snaps = PLATFORM_FEATURES.snapsTextBaselines;
   const metrics = line.metrics ?? { ascender: fontSize * SYSTEM_FONT.ascender, capHeight: fontSize * SYSTEM_FONT.capHeight };
   return (
-    <InkHolder style={snaps ? inkCentered(box, tracking / 2, metrics.capHeight / 2, metrics, inset) : null}>
+    <InkHolder style={snaps ? inkCentered(box, tracking / 2, metrics.capHeight / 2, metrics, inset, pixelsPerPoint) : null}>
       <Text
         numberOfLines={1}
         onTextLayout={snaps ? line.onTextLayout : undefined}
         style={{
           ...face,
           width: box,
-          paddingLeft: snaps ? leadInset : 0,
+          paddingLeft: snaps ? 2 * lineShiftX : 0,
           textAlign: "center",
           fontSize,
           letterSpacing: tracking,

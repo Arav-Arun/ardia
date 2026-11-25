@@ -4,6 +4,7 @@ import { test } from "node:test";
 globalThis.__DEV__ = false;
 
 const { initialGlyph } = await import("./initialGlyph.ts");
+const { inkCentered } = await import("../glyph/CapCenteredLetter.tsx");
 const { SYSTEM_FONT } = await import("../glyph/capFit.ts");
 const { appliedInterfaceScale, devicePixelsPerRootPoint } = await import("../../state/settings/interfaceScale.ts");
 
@@ -29,10 +30,13 @@ test("on a 1x display the cap height fits the 1x pixel grid, not the Retina one"
   assert.equal((12 - Math.round(capPixels(compact.fontSize, 1))) % 2, 0);
 });
 
-test("the quarter-point nudge only lands where a device pixel can carry it", () => {
-  assert.equal(initialGlyph(14, 2, true).leadInset, 0.5);
-  assert.equal(initialGlyph(14, 1, true).leadInset, 0);
-  assert.equal(initialGlyph(14, 2.5, true).leadInset, 0.4);
+test("the line moves right a quarter point, in half device pixels the subpixel-positioned text can land on", () => {
+  for (const [pixelsPerPoint, pixels] of [[1, 0], [2, 0.5], [2.5, 0.5], [3, 0.5]]) {
+    const { lineShiftX } = initialGlyph(14, pixelsPerPoint, true);
+    assert.equal(lineShiftX * pixelsPerPoint, pixels, `${pixelsPerPoint}x moves the glyph ${lineShiftX * pixelsPerPoint} px`);
+    assert.ok(lineShiftX <= 0.25);
+    assert.equal(Number.isInteger(2 * lineShiftX * pixelsPerPoint), true, "the padding that centres it is whole device pixels");
+  }
 });
 
 test("an Interface Size change refits the initial to the new device pixels per point", () => {
@@ -47,7 +51,18 @@ test("an Interface Size change refits the initial to the new device pixels per p
 });
 
 test("Linux and Windows keep the rounded font size and no nudge", () => {
-  assert.deepEqual(initialGlyph(12, 2, false), { fontSize: 8, leadInset: 0 });
-  assert.deepEqual(initialGlyph(14, 2, false), { fontSize: 9, leadInset: 0 });
-  assert.deepEqual(initialGlyph(18, 1, false), { fontSize: 12, leadInset: 0 });
+  assert.deepEqual(initialGlyph(12, 2, false), { fontSize: 8, lineShiftX: 0 });
+  assert.deepEqual(initialGlyph(14, 2, false), { fontSize: 9, lineShiftX: 0 });
+  assert.deepEqual(initialGlyph(18, 1, false), { fontSize: 12, lineShiftX: 0 });
+});
+
+test("the baseline's sub-point offset snaps to the density it is given, not to 2x", () => {
+  const metrics = { ascender: 17.4, capHeight: 12.68 };
+  const translateY = (pixelsPerPoint) => inkCentered(18, 0, metrics.capHeight / 2, metrics, 0, pixelsPerPoint).transform[1].translateY;
+  for (const pixelsPerPoint of [1, 1.25, 2, 2.5]) {
+    const pixels = translateY(pixelsPerPoint) * pixelsPerPoint;
+    assert.ok(Math.abs(pixels - Math.round(pixels)) < 1e-9, `${pixelsPerPoint}x translates ${pixels} px`);
+  }
+  assert.equal(translateY(1.25), 0);
+  assert.equal(translateY(2), 0.5);
 });
