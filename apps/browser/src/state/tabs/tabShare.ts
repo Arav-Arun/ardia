@@ -206,7 +206,7 @@ function conformList(input: BrowserState, windowId: string, profileId: string, s
   return removeTabs(keepShownProfile(next, windowId, gone), gone, false);
 }
 
-function keepShownProfile(s: BrowserState, windowId: string, gone: readonly string[]): BrowserState {
+export function keepShownProfile(s: BrowserState, windowId: string, gone: readonly string[]): BrowserState {
   const w = s.windows[windowId];
   if (!w || !w.tabIds.some((id) => gone.includes(id))) return s;
   const shownHere = w.tabIds.filter((id) => s.tabs[id]?.profileId === w.profileId && !gone.includes(id));
@@ -271,16 +271,18 @@ function withoutSplitPaneCopies(s: BrowserState, windowIds: string[], byProfile:
   if (!copies.length) return s;
   let next = s;
   const gone: string[] = [];
+  const closing: string[] = [];
   for (const copy of copies) {
     const pane = next.tabs[panes.get(familyKeyOf(copy))!]!;
     if (hasPage(copy) && !hasPage(pane)) {
       next = swapPlaces(next, copy.id, pane.id);
       panes.set(familyKeyOf(copy), copy.id);
       gone.push(pane.id);
-    } else gone.push(copy.id);
+    } else (hasPage(copy) ? closing : gone).push(copy.id);
   }
-  for (const id of new Set(gone.map((x) => next.tabs[x]!.windowId))) next = keepShownProfile(next, id, gone);
-  return removeTabs(next, gone, false);
+  const leaving = [...gone, ...closing];
+  for (const id of new Set(leaving.map((x) => next.tabs[x]!.windowId))) next = keepShownProfile(next, id, leaving);
+  return removeTabs(removeTabs(next, closing, true), gone, false);
 }
 
 export function mirrorTabs(s: BrowserState, prev: BrowserState): BrowserState | null {

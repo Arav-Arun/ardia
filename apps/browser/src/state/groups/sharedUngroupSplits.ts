@@ -4,6 +4,7 @@ import { inPinnedContainer, pinKeyOf } from "../browser/model";
 import { frozenOn, hasPage, withNavigationAt } from "../tabs/pageSession";
 import { splitTabIds, withPaneIds } from "../splits/splits";
 import { removeTabs } from "../tabs/tabs";
+import { keepShownProfile } from "../tabs/tabShare";
 
 const swapIn = (ids: string[], a: string, b: string) => (ids.includes(a) || ids.includes(b) ? ids.map((x) => (x === a ? b : x === b ? a : x)) : ids);
 
@@ -47,6 +48,7 @@ export function keepUngroupedSplitsHome(s: BrowserState, homeId: string, members
   if (!away.length) return s;
   let next = s;
   const gone: string[] = [];
+  const closing: string[] = [];
   for (const v of away) {
     for (const id of splitTabIds(v)) {
       const pane = next.tabs[id]!;
@@ -55,8 +57,10 @@ export function keepUngroupedSplitsHome(s: BrowserState, homeId: string, members
         next = handPageOver(next, pane, mine);
         home.set(pinKeyOf(pane), pane.id);
         gone.push(mine.id);
-      } else gone.push(pane.id);
+      } else (hasPage(pane) ? closing : gone).push(pane.id);
     }
   }
-  return removeTabs(next, gone, false);
+  const leavingIds = [...gone, ...closing];
+  for (const w of new Set(leavingIds.map((x) => next.tabs[x]!.windowId))) next = keepShownProfile(next, w, leavingIds);
+  return removeTabs(removeTabs(next, closing, true), gone, false);
 }

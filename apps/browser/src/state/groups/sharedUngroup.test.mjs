@@ -209,6 +209,52 @@ test("a split made after ungrouping, while another window is focused, doesn't re
   oneCopyInSplitWindows([a, b, c, d]);
 });
 
+function splitOnlyFolder(extra) {
+  S().hydrate({});
+  const a = S().createWindow({ url: site("one") });
+  S().updateSettings({ shareTabsAcrossWindows: true });
+  const b = S().createWindow({ url: site("two") });
+  if (extra) S().newTab(b, { url: site(extra), background: true });
+  const group = S().groupTabs([tabIn(b, "one"), tabIn(b, "two")], { pinned: true });
+  S().setFocusedWindow(b);
+  S().createSplit(S().groups[group].tabIds);
+  assert.equal(splitsIn(a).length, 1, "the pinned split is mirrored");
+  return { a, b, group };
+}
+
+test("ungrouping a split folder keeps open a window that held only its mirrored panes", () => {
+  const { a, b, group } = splitOnlyFolder();
+  S().ungroup(folderOf(b, group).id);
+  assert.ok(S().windows[a], "the other window stays open");
+  assert.ok(S().windowOrder.includes(a));
+  assert.equal(S().windows[a].tabIds.filter((id) => S().tabs[id].profileId === "default").length, 1, "with a new tab in place of the panes");
+  assert.equal(splitsIn(b).length, 1, "the split stays where it was ungrouped");
+  oneCopyInSplitWindows([a, b]);
+});
+
+test("ungrouping a split folder keeps a page loaded in both windows' panes recoverable", () => {
+  const { a, b, group } = splitOnlyFolder("keep");
+  const away = S().tabs[splitTabIds(splitsIn(a)[0]).find((id) => S().tabs[id].url === site("one"))];
+  const home = S().tabs[splitTabIds(splitsIn(b)[0]).find((id) => S().tabs[id].url === site("one"))];
+  const later = `${site("one")}later`;
+  useBrowser.setState((st) => ({
+    tabs: {
+      ...st.tabs,
+      [home.id]: { ...home, page: { kind: "loaded", nav: { url: home.url, seq: 3, userInitiated: true } } },
+      [away.id]: { ...away, url: later, page: { kind: "loaded", nav: { url: later, seq: 9, userInitiated: true } } },
+    },
+  }));
+  const closed = S().closedTabs.length;
+  S().ungroup(folderOf(b, group).id);
+  assert.equal(S().tabs[away.id], undefined, "the other window's pane leaves with the split");
+  assert.ok(hasPage(S().tabs[home.id]), "the home pane keeps its page");
+  assert.deepEqual(S().closedTabs.slice(closed).map((t) => t.tab.url), [later], "the other page can be reopened from Recently Closed");
+  assert.ok(S().windows[a]);
+  oneCopyInSplitWindows([a, b]);
+  S().reopenClosed(a);
+  assert.equal(Object.values(S().tabs).filter((t) => t.url === later && hasPage(t)).length, 1, "and reopening it brings the page back, live once");
+});
+
 test("without shared tabs, ungrouping a pinned folder keeps its tabs in the invoking window", () => {
   const { b, one, two, group } = windows(false);
   const key = pinKeyOf(S().groups[group]);
