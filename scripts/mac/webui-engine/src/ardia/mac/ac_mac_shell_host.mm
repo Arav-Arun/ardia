@@ -21,6 +21,7 @@
 #include "ardia/mac/ac_mac_popover.h"
 #include "ardia/mac/ac_mac_share.h"
 #include "ardia/mac/ac_mac_shared_folders.h"
+#include "ardia/mac/ac_mac_swipe.h"
 #include "ardia/mac/ac_mac_system.h"
 #include "ardia/mac/ac_mac_window.h"
 #include "ardia/mac/ac_mac_window_policy.h"
@@ -723,6 +724,9 @@ void ShellHostView::BindingGone(PageBinding* binding) {
   if (pip_) {
     pip_->CheckSource();
   }
+  if (scroll_gestures_) {
+    scroll_gestures_->Revalidate();
+  }
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(
                      [](base::WeakPtr<ShellHostView> host, int id) {
@@ -837,6 +841,9 @@ void ShellHostView::Restack() {
 }
 
 void ShellHostView::ReattachViewports() {
+  if (scroll_gestures_) {
+    scroll_gestures_->Revalidate();
+  }
   std::set<content::WebContents*> taken;
   for (BrowserWindowInterface* member : Members()) {
     BrowserView* view = BrowserView::GetBrowserViewForBrowser(member);
@@ -955,6 +962,9 @@ void ShellHostView::RetireRenderer() {
       binding->viewport->SetVisible(false);
       binding->viewport->SetWebContents(nullptr);
     }
+  }
+  if (scroll_gestures_) {
+    scroll_gestures_->Revalidate();
   }
   pass_.clear();
   unclaimed_listener_.reset();
@@ -1348,6 +1358,9 @@ void ShellHostView::ReleaseTab(const base::DictValue& args, Done done) {
   if (binding->viewport) {
     binding->viewport->SetVisible(false);
     binding->viewport->SetWebContents(nullptr);
+  }
+  if (scroll_gestures_) {
+    scroll_gestures_->Revalidate();
   }
   UpdateGlassSurface();
   std::move(done).Run(true, base::Value());
