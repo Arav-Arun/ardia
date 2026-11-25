@@ -251,7 +251,7 @@ test("a Mac killed after Chrome saved takes the applied value and publishes noth
   const { published, reapplied } = await b.sync();
   assert.equal(published, 0);
   assert.equal(reapplied, 0);
-  assert.equal(b.state.applying, undefined);
+  assert.equal(!!b.state.applying?.some((batch) => batch.l !== b.launch), false);
 });
 
 test("the batch clears only once Chrome's save window has passed after the apply finished, on the steady clock", async () => {
@@ -309,7 +309,7 @@ test("a stale apply another Mac reverted before the restart leaves no batch to s
   await a.sync();
   b.tick(60_000);
   await settle([b, a], 2);
-  assert.equal(b.state.applying, undefined);
+  assert.equal(!!b.state.applying?.some((batch) => batch.l !== b.launch), false);
   b.memory.set("b:t1", "B");
   await settle([b, a], 2);
   assert.equal(a.memory.get("b:t1"), "B");
@@ -577,4 +577,20 @@ test("a recovered key the other Mac already put back to what Chrome holds isn't 
   const { reapplied } = await b.sync();
   assert.equal(reapplied, 0);
   assert.equal(b.memory.get("b:t1"), "A");
+});
+
+test("a batch cut short before its cycle record was saved still counts as possibly partial, so a key it never reached isn't sent as an edit", async () => {
+  const { a, b } = await pairWith({ "b:a": "A0", "b:b": "B0", "b:c": "C0", "b:z": "Z0" });
+  b.mode = { failsAfter: "b:z", killedBeforeCycleRecord: true };
+  await remoteChange(a, b, () => ["a", "b", "c", "z"].forEach((k) => a.memory.set(`b:${k}`, `${k.toUpperCase()}1`)));
+  assert.equal(b.memory.get("b:z"), "Z0");
+  b.chromeSaves();
+  b.killed();
+  b.mode = { whole: true };
+  b.tick(60_000);
+  const { published } = await b.sync();
+  assert.equal(published, 0);
+  await settle([b, a], 2);
+  assert.equal(b.memory.get("b:z"), "Z1");
+  assert.equal(a.memory.get("b:z"), "Z1");
 });

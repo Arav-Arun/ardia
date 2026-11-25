@@ -318,6 +318,27 @@ test("history: Chrome kept two of the three visits it was given before the kill:
   assert.deepEqual(timesOn(a), times);
 });
 
+test("history: a visit applied again after one crash is applied again after a second crash before Chrome saved it", async () => {
+  const { a, p } = await savedPair();
+  const url = "https://visited.example/";
+  const times = [Date.now() - 90_000, Date.now() - 60_000, Date.now() - 30_000];
+  const visit = (list) => ({ url, title: "Visited", favicon: null, visits: list.length, lastVisit: list.at(-1), visitTimes: list });
+  const timesOn = (mac) => mac.with(() => historyOf(S(), "default").find((e) => e.url === url)?.visitTimes);
+  a.with(() => useBrowser.setState({ history: { "": { list: [visit(times.slice(0, 1))], floor: -Infinity, ready: true } } }));
+  await settled(a, p);
+  a.with(() => useBrowser.setState({ history: { "": { list: [visit(times)], floor: -Infinity, ready: true } } }));
+  await a.sync();
+  await p.sync();
+  p.disk = { ...p.disk, history: { "": { list: [visit(times.slice(0, 2))], floor: -Infinity, ready: true } } };
+  p.killed();
+  await p.sync();
+  assert.deepEqual(timesOn(p), times);
+  p.killed();
+  assert.deepEqual(timesOn(p), times.slice(0, 2));
+  await syncAll([p, a], 2);
+  assert.deepEqual(timesOn(p), times);
+});
+
 test("history: Chrome saved a synced deletion but not the visits added with it, and the page is visited again elsewhere: the visit survives on both", async () => {
   const { a, p } = await savedPair();
   const visit = (url, at) => ({ url, title: url, favicon: null, visits: 1, lastVisit: at, visitTimes: [at] });

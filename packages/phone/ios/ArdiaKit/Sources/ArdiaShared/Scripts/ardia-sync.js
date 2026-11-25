@@ -884,7 +884,7 @@ function isApplyBatch(v         )                  {
   const b = v                           ;
   if (!isFiniteNumber(b.id) || typeof b.p !== "string" || typeof b.l !== "string" || !isFiniteNumber(b.at)) return false;
   if (b.done !== undefined && !isFiniteNumber(b.done)) return false;
-  if ((b.r !== undefined && b.r !== 1) || (b.f !== undefined && b.f !== 1)) return false;
+  if ([b.r, b.f, b.ok].some((flag) => flag !== undefined && flag !== 1)) return false;
   if (b.cut !== undefined && !(Array.isArray(b.cut) && b.cut.every((key) => typeof key === "string"))) return false;
   return typeof b.k === "object" && b.k !== null && !Array.isArray(b.k) && Object.values(b.k).every(isStep);
 }
@@ -899,7 +899,7 @@ function noteBatch(state            , prefix        , keys                  , no
     if (!key.startsWith(prefix)) continue;
     const from = state.base[key];
     const to = view.has(key) ? canonical(view.get(key)) : ABSENT;
-    if ((from ?? ABSENT) === to) continue;
+    if ((from ?? ABSENT) === to && !awaitsRecovery(state, key)) continue;
     k[key] = [from ?? null, to === ABSENT ? null : to];
     noted = true;
   }
@@ -960,7 +960,8 @@ async function settleOwedRetirements(state            , options               = 
 function finishBatch(batch                   , applied         , options               = {}) {
   if (!batch) return;
   batch.done = monotonicOf(options);
-  if (!applied) batch.f = 1;
+  if (applied) batch.ok = 1;
+  else batch.f = 1;
 }
 
 function startApplying(state            , now        , options               = {}) {
@@ -1059,7 +1060,7 @@ function chainsOf(batches              , skip                          ) {
       if (skip(key)) continue;
       let chain = chains.get(key);
       if (!chain) chains.set(key, (chain = []));
-      chain.push({ at, from: from ?? ABSENT, to: to ?? ABSENT, partial: !!batch.f });
+      chain.push({ at, from: from ?? ABSENT, to: to ?? ABSENT, partial: !batch.ok });
     }
   });
   return chains;
@@ -1169,7 +1170,7 @@ __define("packages/sync/src/scopeState.ts", function (exports, __require) {
   
                                               
 
-                                                                                                                                                                                    
+                                                                                                                                                                                            
 
                                                                                                                               
 

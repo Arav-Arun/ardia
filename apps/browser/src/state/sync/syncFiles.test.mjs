@@ -368,7 +368,7 @@ test("keys a batch no longer covers, and its residual mark, stay that way across
   const full = batchOf(60, { "bm:a": ['{"t":"A"}', '{"t":"B"}'], "bm:b": ['{"t":"X"}', '{"t":"Y"}'], "bm:c": [null, '{"t":"Z"}'] });
   await files.persistApplying("p:s1")(full);
   const settled = files.watchScope("p:s1", state, new Clock("devA"));
-  const trimmed = { ...full, r: 1, f: 1, cut: ["bm:a", "bm:c"], k: { "bm:b": full.k["bm:b"] } };
+  const trimmed = { ...full, r: 1, f: 1, ok: 1, cut: ["bm:a", "bm:c"], k: { "bm:b": full.k["bm:b"] } };
   state.applying = [trimmed];
   await settled();
   const { doc: once } = await restart(doc);

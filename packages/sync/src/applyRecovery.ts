@@ -24,7 +24,7 @@ function chainsOf(batches: ApplyBatch[], skip: (key: string) => boolean) {
       if (skip(key)) continue;
       let chain = chains.get(key);
       if (!chain) chains.set(key, (chain = []));
-      chain.push({ at, from: from ?? ABSENT, to: to ?? ABSENT, partial: !!batch.f });
+      chain.push({ at, from: from ?? ABSENT, to: to ?? ABSENT, partial: !batch.ok });
     }
   });
   return chains;
