@@ -40,7 +40,7 @@ struct WebKitCertificatePolicy: Sendable {
   private(set) var bypassed: [String: [String: Bypass]] = [:]
   private(set) var transportSecurity: [String: WebKitTransportSecurity] = [:]
   private(set) var awaitingSavedList: Bool
-  private(set) var revokedBeforeSavedList = Set<String>()
+  private(set) var supersededBeforeSavedList = Set<String>()
 
   init(transportSecurity: [String: WebKitTransportSecurity] = [:], awaitingSavedList: Bool = false) {
     self.transportSecurity = transportSecurity
@@ -94,10 +94,8 @@ struct WebKitCertificatePolicy: Sendable {
     guard !trustedThroughBypass(host: host, fingerprint: fingerprint), let parsed = Self.parse(header) else { return false }
     let name = Self.normalizedHost(host)
     guard !name.isEmpty else { return false }
-    if parsed.maxAge <= 0 {
-      if awaitingSavedList { revokedBeforeSavedList.insert(name) }
-      return transportSecurity.removeValue(forKey: name) != nil
-    }
+    if awaitingSavedList { supersededBeforeSavedList.insert(name) }
+    if parsed.maxAge <= 0 { return transportSecurity.removeValue(forKey: name) != nil }
     let entry = WebKitTransportSecurity(expires: now.addingTimeInterval(parsed.maxAge).timeIntervalSince1970, subdomains: parsed.subdomains, observed: now.timeIntervalSince1970)
     guard transportSecurity[name] != entry else { return false }
     transportSecurity[name] = entry
@@ -122,9 +120,9 @@ struct WebKitCertificatePolicy: Sendable {
   }
 
   mutating func adoptSaved(_ saved: [String: WebKitTransportSecurity], now: Date, clearingSince since: Date? = nil) {
-    let merged = saved.filter { !revokedBeforeSavedList.contains($0.key) }.merging(transportSecurity) { _, noted in noted }
+    let merged = saved.filter { !supersededBeforeSavedList.contains($0.key) }.merging(transportSecurity) { _, noted in noted }
     transportSecurity = since.map { Self.observed(before: $0, merged) } ?? merged
-    revokedBeforeSavedList = []
+    supersededBeforeSavedList = []
     awaitingSavedList = false
     trim(now: now)
   }
