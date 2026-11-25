@@ -120,18 +120,27 @@ function indexWhenQuiet(engine: string) {
   indexTimers.set(engine, { timer, list });
 }
 
-type Load = { running: Promise<void>; again: boolean; queued: HistoryChange[] };
+type Load = { running: Promise<void>; again: boolean; queued: HistoryChange[]; epoch: string };
 const loads = new Map<string, Load>();
+let syncSession = 0;
+const unloads = new Map<string, number>();
+const readEpoch = (engine: string) => `${syncSession}:${unloads.get(engine) ?? 0}`;
+
+function currentLoad(engine: string): Load | undefined {
+  const running = loads.get(engine);
+  return running && running.epoch === readEpoch(engine) ? running : undefined;
+}
 const loaded = new Set<string>();
 const migrating = new Set<string>();
 
 function load(engine: string): Promise<void> {
-  const running = loads.get(engine);
+  const running = currentLoad(engine);
   if (running) {
     running.again = true;
     return running.running;
   }
-  const state: Load = { running: Promise.resolve(), again: false, queued: [] };
+  const epoch = readEpoch(engine);
+  const state: Load = { running: Promise.resolve(), again: false, queued: [], epoch };
   loads.set(engine, state);
   const consent = consentToken();
   state.running = (async () => {
@@ -140,8 +149,9 @@ function load(engine: string): Promise<void> {
         state.again = false;
         state.queued = [];
         await watchHistory(engine);
-        if (!inApp(engine)) return;
+        if (!inApp(engine) || readEpoch(engine) !== epoch) return;
         const read = await queryHistory(engine, MAX_HISTORY, MAX_VISIT_TIMES);
+        if (readEpoch(engine) !== epoch) return;
         const floor = read.length >= MAX_HISTORY ? read.reduce((oldest, e) => Math.min(oldest, e.visitTimes.at(-1) ?? 0), Infinity) : -Infinity;
         let list = read.filter((e) => isWebPageUrl(e.url)).map(toEntry).sort(byLastVisit);
         const replayed = state.queued.filter(isListChange);
@@ -150,12 +160,12 @@ function load(engine: string): Promise<void> {
         setView(engine, list, floor);
         if (inApp(engine)) loaded.add(engine);
         if (replayed.length && loaded.has(engine)) indexWhenQuiet(engine);
-      } while (state.again && inApp(engine));
+      } while (state.again && inApp(engine) && readEpoch(engine) === epoch);
     } catch (error) {
       const failure = ardiaError(error);
       warnFor(consent, `[history] couldn't read ${profileLabel(engine)}'s history: ${failure.code} ${failure.message}`, error);
     } finally {
-      loads.delete(engine);
+      if (loads.get(engine) === state) loads.delete(engine);
     }
   })();
   return state.running;
@@ -187,7 +197,7 @@ function applyPending() {
       noteGap(engine, `${change.kind}-moving`);
       continue;
     }
-    const running = loads.get(engine);
+    const running = currentLoad(engine);
     if (running) {
       running.queued.push(change);
       continue;
@@ -241,7 +251,7 @@ async function moveHistory(file: LegacyFile) {
 export function startHistory() {
   const events = onHistoryChanged(changed);
   const loadAll = (s: Pick<BrowserState, "profiles">) => {
-    for (const engine of openedEngineProfiles(s)) if (!loaded.has(engine) && !loads.has(engine)) void load(engine);
+    for (const engine of openedEngineProfiles(s)) if (!loaded.has(engine) && !currentLoad(engine)) void load(engine);
   };
   let moving = readDocument(LEGACY_FILE) !== null;
   let stopped = false;
@@ -271,6 +281,7 @@ export function startHistory() {
   });
   const unloaded = onProfilesUnloaded((engines) => {
     for (const engine of engines) {
+      unloads.set(engine, (unloads.get(engine) ?? 0) + 1);
       loaded.delete(engine);
       forgetIndexTimer(engine);
     }
@@ -279,6 +290,7 @@ export function startHistory() {
   const replaced = useBrowser.subscribeTo(["history"], (s, prev) => s.history !== prev.history && indexTimers.size > 0 && forgetReplacedIndexTimers());
   return () => {
     stopped = true;
+    syncSession++;
     events.remove();
     stop();
     opened();
@@ -293,6 +305,6 @@ export function startHistory() {
   };
 }
 
-export const reloadEngineHistory = (engine: string) => (loaded.has(engine) || loads.has(engine) ? load(engine) : Promise.resolve());
+export const reloadEngineHistory = (engine: string) => (loaded.has(engine) || currentLoad(engine) ? load(engine) : Promise.resolve());
 
 export const reloadHistory = () => Promise.all(openedEngineProfiles(store()).map(load));

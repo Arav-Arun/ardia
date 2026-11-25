@@ -44,6 +44,23 @@ const finish = (stop) => {
   mock.timers.reset();
 };
 
+async function heldReload(engine) {
+  let release;
+  stub.heldHistoryQueries.reply = new Promise((resolve) => (release = resolve));
+  const reload = reloadHistory();
+  await settle();
+  stub.chromeHistoryEvent({ kind: "modified", profile: engine, rows: [{ url: `https://${engine || "home"}3.example/`, title: "retitled during a held read", visits: 1 }] });
+  await settle();
+  return {
+    release: async () => {
+      stub.heldHistoryQueries.reply = null;
+      release();
+      await reload;
+      await settle();
+    },
+  };
+}
+
 test("a profile's list is indexed once its history has been quiet for 2 s, not before", async () => {
   const stop = await started();
   try {
@@ -166,6 +183,51 @@ test("once quitting starts nothing pending is built, and a batch during the quit
     assert.equal(historyListIndexed(before), false);
     assert.equal(historyListIndexed(during), false);
   } finally {
+    finish(stop);
+  }
+});
+
+test("a held reload that finishes after history sync stopped is ignored: no list, no timer, no build", async () => {
+  const stop = await started();
+  try {
+    const before = listOf("work");
+    const held = await heldReload("work");
+    stop();
+    assert.equal(historyIndexesPending(), 0);
+    const builds = historyApplyStats.indexBuilds;
+    await held.release();
+    assert.equal(historyIndexesPending(), 0, "the stale read schedules nothing");
+    assert.equal(listOf("work"), before, "and sets no list");
+    mock.timers.tick(INDEX_WHEN_QUIET_MS * 2);
+    assert.equal(historyApplyStats.indexBuilds, builds, "no build");
+  } finally {
+    stub.heldHistoryQueries.reply = null;
+    setQuitting(false);
+    mock.timers.reset();
+  }
+});
+
+test("a held reload that finishes after its profile unloaded is ignored, and reopening the profile reads it again", async () => {
+  const stop = await started();
+  try {
+    const before = listOf("work");
+    const held = await heldReload("work");
+    markProfileUnloaded("work");
+    assert.equal(historyIndexesPending(), 0);
+    const builds = historyApplyStats.indexBuilds;
+    await held.release();
+    assert.equal(historyIndexesPending(), 0, "the stale read schedules nothing");
+    assert.equal(listOf("work"), before, "and sets no list");
+    mock.timers.tick(INDEX_WHEN_QUIET_MS * 2);
+    assert.equal(historyApplyStats.indexBuilds, builds, "no build");
+    stub.chromeVisit("work", "https://while-unloaded.example/", "Unloaded", Date.now());
+    await settle();
+    assert.ok(!listOf("work").some((h) => h.url === "https://while-unloaded.example/"), "an unloaded profile's list isn't touched");
+    openProfile("work");
+    await settle();
+    assert.ok(listOf("work").some((h) => h.url === "https://while-unloaded.example/"), "reopened: read again from Chrome");
+  } finally {
+    stub.heldHistoryQueries.reply = null;
     finish(stop);
   }
 });
