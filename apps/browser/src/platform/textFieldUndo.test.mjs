@@ -254,6 +254,29 @@ scenario("deleted") { editor, note in
   note("deleted")
   undoAll(editor, note)
 }
+scenario("wordDeleted") { editor, note in
+  type(editor, "exa")
+  suggest(editor, "exa", "mple.com")
+  editor.deleteWordBackward(nil)
+  note("deleted")
+  undoAll(editor, note)
+}
+scenario("lineDeleted") { editor, note in
+  type(editor, "exa")
+  suggest(editor, "exa", "mple.com")
+  editor.deleteToEndOfLine(nil)
+  note("deleted")
+  undoAll(editor, note)
+}
+scenario("composed") { editor, note in
+  type(editor, "exa")
+  suggest(editor, "exa", "mple.com")
+  editor.setMarkedText("へんかん", selectedRange: NSRange(location: 4, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+  note("marked")
+  editor.insertText("変換", replacementRange: NSRange(location: NSNotFound, length: 0))
+  note("committed")
+  undoAll(editor, note)
+}
 scenario("accepted") { editor, note in
   type(editor, "sidebar")
   suggest(editor, "sidebar", ".example.com")
@@ -280,6 +303,9 @@ test("the command bar's inline suggestion stays out of Undo and Redo: ⌘Z undoe
     assert.deepEqual(got.typedOver, { typed: "sidebarx", undo: "", redo: "sidebarx", changes: 9 }, "typing over a suggestion recorded the suggestion in the undo history");
     assert.deepEqual(got.keptThenTyped, { kept: "sidebar.example.com", typed: "sidebar.exq", undo: "", redo: "sidebar.exq", changes: 9 }, "letters typed ahead into a suggestion were left out of Undo and Redo");
     assert.deepEqual(got.deleted, { deleted: "sidebar.ex", undo: "", redo: "sidebar.ex", changes: 9 }, "deleting a suggestion recorded it in the undo history");
+    assert.deepEqual(got.wordDeleted, { deleted: "exa", undo: "", redo: "exa", changes: 5 }, "⌥⌫ on a suggestion put it in the undo history, so ⌘Z brought back the suggestion alone");
+    assert.deepEqual(got.lineDeleted, { deleted: "exa", undo: "", redo: "exa", changes: 5 }, "deleting to the end of the line put the suggestion in the undo history");
+    assert.deepEqual(got.composed, { marked: "exaへんかん", committed: "exa変換", undo: "", redo: "exa変換", changes: 6 }, "an input method's composition replaced the suggestion inside the undo history");
     assert.equal(got.accepted.typed, "sidebar.example.com/a");
     assert.equal(got.accepted.undo, "");
     assert.equal(got.accepted.redo, "sidebar.example.com/a", "an accepted suggestion is part of what Redo gives back");

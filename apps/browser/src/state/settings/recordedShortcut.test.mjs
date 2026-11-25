@@ -44,3 +44,31 @@ test("a chord another command holds is named as a conflict on the Auto-hide tabs
   assert.equal(conflictMessage(["New Tab"]), "This shortcut conflicts with another shortcut: New Tab");
   assert.equal(conflictMessage(["New Tab", "Print…"]), "This shortcut conflicts with other shortcuts: New Tab, Print…");
 });
+
+test("recording the fallback chord Auto-hide tabs shows saves it, so resetting the command that took ⌘S doesn't take it back", () => {
+  S().hydrate({});
+  S().updateSettings({ shortcuts: { print: ["s", "command"] } });
+  const fallback = resolved().bindings.get("toggleSidebar")?.[0];
+  assert.ok(fallback && !(fallback.key === "s" && fallback.modifiers.join() === "command"), "Print took ⌘S, so Auto-Hide Tabs shows its next default");
+  assert.equal(applyRecordedShortcut(autoHide, fallback, resolved()), "changed");
+  const { print: _, ...rest } = S().settings.shortcuts;
+  S().updateSettings({ shortcuts: rest });
+  assert.deepEqual(resolved().bindings.get("toggleSidebar")?.[0], fallback, "resetting Print pulled Auto-Hide Tabs back to ⌘S");
+  assert.equal(applyRecordedShortcut(autoHide, fallback, resolved()), null, "recording the saved shortcut again is no change");
+});
+
+test("recording the default chord while another command holds it keeps it as an explicit, visible conflict", () => {
+  S().hydrate({});
+  S().updateSettings({ shortcuts: { print: ["s", "command"] } });
+  assert.equal(applyRecordedShortcut(autoHide, { key: "s", modifiers: ["command"] }, resolved()), "changed");
+  assert.deepEqual(S().settings.shortcuts.toggleSidebar, ["s", "command"]);
+  assert.deepEqual(resolved().conflictsOf("toggleSidebar"), ["print"]);
+});
+
+test("recording a cleared command's default chord gives the default back", () => {
+  S().hydrate({});
+  assert.equal(clearShortcut(autoHide, resolved()), "cleared");
+  assert.equal(applyRecordedShortcut(autoHide, { key: "s", modifiers: ["command"] }, resolved()), "changed");
+  assert.equal(S().settings.shortcuts.toggleSidebar, undefined);
+  assert.equal(resolved().bindings.get("toggleSidebar")?.[0]?.key, "s");
+});

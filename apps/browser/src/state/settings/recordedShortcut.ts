@@ -1,4 +1,5 @@
-import { isMouseShortcut, sameShortcut, type ResolvedShortcuts, type Shortcut } from "../commands/shortcuts";
+import { isMouseShortcut, sameShortcut, storedShortcut, type ResolvedShortcuts, type Shortcut } from "../commands/shortcuts";
+import { useBrowser } from "../browser/store";
 import { setMouseShortcut, setShortcutOverride } from "./actions";
 
 export const NO_SHORTCUT: Shortcut = { key: "", modifiers: [] };
@@ -7,7 +8,12 @@ export type RecordedChange = "changed" | "cleared" | "mouse";
 
 type Bindable = { id: string; remappable: boolean; mouseBindable?: boolean };
 
-export function applyRecordedShortcut(item: Bindable, combo: Shortcut | null | undefined, resolved: ResolvedShortcuts): RecordedChange | null {
+export function applyRecordedShortcut(
+  item: Bindable,
+  combo: Shortcut | null | undefined,
+  resolved: ResolvedShortcuts,
+  saved: readonly string[] | undefined = useBrowser.getState().settings.shortcuts[item.id],
+): RecordedChange | null {
   if (!combo) return null;
   if (isMouseShortcut(combo)) {
     if (!item.remappable || !item.mouseBindable) return null;
@@ -16,9 +22,11 @@ export function applyRecordedShortcut(item: Bindable, combo: Shortcut | null | u
     setMouseShortcut(item.id, combo);
     return "mouse";
   }
-  if (sameShortcut(combo, resolved.bindings.get(item.id)?.[0] ?? NO_SHORTCUT)) return null;
-  const isDefault = sameShortcut(combo, resolved.defaultsOf(item.id)[0] ?? NO_SHORTCUT);
-  setShortcutOverride(item.id, isDefault ? null : combo);
+  const primary = resolved.defaultsOf(item.id)[0] ?? NO_SHORTCUT;
+  const current = resolved.bindings.get(item.id)?.[0] ?? NO_SHORTCUT;
+  if (saved?.[0] ? sameShortcut(combo, storedShortcut(saved)) : !saved && sameShortcut(combo, primary) && sameShortcut(current, primary)) return null;
+  const defaultIsFree = resolved.holdersOf(primary).every((holder) => holder === item.id);
+  setShortcutOverride(item.id, sameShortcut(combo, primary) && defaultIsFree ? null : combo);
   return "changed";
 }
 

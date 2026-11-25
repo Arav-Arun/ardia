@@ -167,13 +167,33 @@ enum InlineKeep {
       }
       class_replaceMethod(editorClass, insert, imp_implementationWithBlock(kept), method_getTypeEncoding(method))
     }
-    for action in [#selector(NSText.delete(_:)), #selector(NSResponder.deleteBackward(_:)), #selector(NSResponder.deleteForward(_:))] {
-      settleFirst(editorClass, action, removesSuggestion: true)
-    }
-    for action in [#selector(NSText.paste(_:)), #selector(NSTextView.pasteAsPlainText(_:)), #selector(NSTextView.pasteAsRichText(_:))] {
-      settleFirst(editorClass, action, removesSuggestion: false)
+    for action in removingActions { settleFirst(editorClass, action, removesSuggestion: true) }
+    for action in editingActions { settleFirst(editorClass, action, removesSuggestion: false) }
+    let mark = #selector(NSTextView.setMarkedText(_:selectedRange:replacementRange:))
+    if let method = class_getInstanceMethod(editorClass, mark) {
+      typealias Mark = @convention(c) (NSTextView, Selector, AnyObject, NSRange, NSRange) -> Void
+      let original = unsafeBitCast(method_getImplementation(method), to: Mark.self)
+      let marked: @convention(block) (NSTextView, AnyObject, NSRange, NSRange) -> Void = { field, value, selected, replacement in
+        if !field.hasMarkedText() { settle(field) }
+        original(field, mark, value, selected, replacement)
+      }
+      class_replaceMethod(editorClass, mark, imp_implementationWithBlock(marked), method_getTypeEncoding(method))
     }
   }
+
+  private static let removingActions: [Selector] = [
+    #selector(NSText.delete(_:)), #selector(NSResponder.deleteBackward(_:)), #selector(NSResponder.deleteForward(_:)),
+    #selector(NSResponder.deleteWordBackward(_:)), #selector(NSResponder.deleteWordForward(_:)),
+    #selector(NSResponder.deleteToBeginningOfLine(_:)), #selector(NSResponder.deleteToEndOfLine(_:)),
+    #selector(NSResponder.deleteToBeginningOfParagraph(_:)), #selector(NSResponder.deleteToEndOfParagraph(_:)),
+    #selector(NSResponder.deleteBackwardByDecomposingPreviousCharacter(_:)), #selector(NSResponder.deleteToMark(_:)),
+  ]
+
+  private static let editingActions: [Selector] = [
+    #selector(NSText.paste(_:)), #selector(NSTextView.pasteAsPlainText(_:)), #selector(NSTextView.pasteAsRichText(_:)),
+    #selector(NSResponder.yank(_:)), #selector(NSResponder.transpose(_:)), #selector(NSResponder.transposeWords(_:)),
+    #selector(NSResponder.capitalizeWord(_:)), #selector(NSResponder.lowercaseWord(_:)), #selector(NSResponder.uppercaseWord(_:)),
+  ]
 
   private static func settleFirst(_ editorClass: AnyClass, _ action: Selector, removesSuggestion: Bool) {
     guard let method = class_getInstanceMethod(editorClass, action) else { return }
