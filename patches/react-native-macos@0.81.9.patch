@@ -1096,7 +1096,7 @@ index 61242af88da2f235e5ae506e79dfb9898742eb51..dccbeb45af839f0e55953b458d886159
  #if TARGET_OS_OSX // [macOS
  @property (nonatomic, copy, nullable) NSString *text;
 diff --git a/Libraries/Text/TextInput/Singleline/RCTUITextField.mm b/Libraries/Text/TextInput/Singleline/RCTUITextField.mm
-index 137d0ee9f51616ea27c397a8bf595fe2c0ff5e91..a2c8f83ae53736f96ad339b34b7163b74a299d7e 100644
+index 137d0ee9f51616ea27c397a8bf595fe2c0ff5e91..b3f5f2a9c35804253f5a5d82c6cb03b175bee9ae 100644
 --- a/Libraries/Text/TextInput/Singleline/RCTUITextField.mm
 +++ b/Libraries/Text/TextInput/Singleline/RCTUITextField.mm
 @@ -10,6 +10,7 @@
@@ -1307,7 +1307,49 @@ index 137d0ee9f51616ea27c397a8bf595fe2c0ff5e91..a2c8f83ae53736f96ad339b34b7163b7
  #endif // macOS]
  }
  
-@@ -155,6 +316,11 @@ - (BOOL)hasMarkedText
+@@ -136,14 +297,38 @@ - (void)_textDidChange
+ {
+   _textWasPasted = NO;
+ #if TARGET_OS_OSX // [macOS
+-  [self setAttributedText:[[NSAttributedString alloc] initWithString:[self text]
+-                                                          attributes:[self defaultTextAttributes]]];
++  NSAttributedString *styledText = [[NSAttributedString alloc] initWithString:[self text]
++                                                                   attributes:[self defaultTextAttributes]];
++  if (![self ardia_restyleEditorKeepingUndo:styledText]) { // [Ardia Ardia]
++    [self setAttributedText:styledText];
++  }
+   if([[self text] length] == 0) {
+-    self.font = [[self defaultTextAttributes] objectForKey:NSFontAttributeName];
++    NSFont *font = [[self defaultTextAttributes] objectForKey:NSFontAttributeName];
++    if (![self.font isEqual:font]) { // [Ardia Ardia]
++      self.font = font;
++    }
+   }
+ #endif // macOS]
+ }
+ 
++#if TARGET_OS_OSX // [Ardia
++- (BOOL)ardia_restyleEditorKeepingUndo:(NSAttributedString *)styledText
++{
++  NSDictionary<NSAttributedStringKey, id> *attributes = [self defaultTextAttributes];
++  NSTextView *editor = [self.currentEditor isKindOfClass:[NSTextView class]] ? (NSTextView *)self.currentEditor : nil;
++  if (!attributes || !editor || editor.hasMarkedText || ![editor.string isEqualToString:styledText.string]) {
++    return NO;
++  }
++  NSTextStorage *storage = editor.textStorage;
++  if (storage.length > 0 && ![storage isEqualToAttributedString:styledText]) {
++    [storage beginEditing];
++    [storage setAttributes:attributes range:NSMakeRange(0, storage.length)];
++    [storage endEditing];
++  }
++  return YES;
++}
++#endif // Ardia]
++
+ #if TARGET_OS_OSX // [macOS
+ - (BOOL)hasMarkedText
+ {
+@@ -155,6 +340,11 @@ - (BOOL)hasMarkedText
  	return ((NSTextView *)self.currentEditor).validAttributesForMarkedText ?: @[];
  }
  
@@ -1319,7 +1361,7 @@ index 137d0ee9f51616ea27c397a8bf595fe2c0ff5e91..a2c8f83ae53736f96ad339b34b7163b7
  #endif // macOS]
  
  #pragma mark - Accessibility
-@@ -284,6 +450,25 @@ - (BOOL)isGrammarCheckingEnabled
+@@ -284,6 +474,25 @@ - (BOOL)isGrammarCheckingEnabled
  - (void)setSelectionColor:(RCTUIColor *)selectionColor
  {
    ((RCTUITextFieldCell*)self.cell).selectionColor = selectionColor;
@@ -1345,7 +1387,7 @@ index 137d0ee9f51616ea27c397a8bf595fe2c0ff5e91..a2c8f83ae53736f96ad339b34b7163b7
  }
  
  - (RCTUIColor*)selectionColor
-@@ -294,6 +479,7 @@ - (RCTUIColor*)selectionColor
+@@ -294,6 +503,7 @@ - (RCTUIColor*)selectionColor
  - (void)setCursorColor:(NSColor *)cursorColor
  {
      ((RCTUITextFieldCell*)self.cell).insertionPointColor = cursorColor;
@@ -1353,15 +1395,15 @@ index 137d0ee9f51616ea27c397a8bf595fe2c0ff5e91..a2c8f83ae53736f96ad339b34b7163b7
  }
  
  - (RCTUIColor*)cursorColor
-@@ -304,8 +490,110 @@ - (RCTUIColor*)cursorColor
+@@ -304,8 +514,110 @@ - (RCTUIColor*)cursorColor
  - (void)setFont:(UIFont *)font
  {
    ((RCTUITextFieldCell*)self.cell).font = font;
 +#if TARGET_OS_OSX // [Ardia
 +  [self ardia_applyOpticalLift];
 +#endif // Ardia]
- }
- 
++}
++
 +#if TARGET_OS_OSX
 +// [Ardia: typed and placeholder text get RCTTextView's optical lift. The field grows upward by the lift inside its
 +// unchanged layout box, so its text sits that much higher and the caret, which AppKit clips to the field's bounds,
@@ -1396,8 +1438,8 @@ index 137d0ee9f51616ea27c397a8bf595fe2c0ff5e91..a2c8f83ae53736f96ad339b34b7163b7
 +{
 +  _ardiaCentersCapitals = ardiaCentersCapitals;
 +  [self ardia_applyOpticalLift];
-+}
-+
+ }
+ 
 +- (void)ardia_applyOpticalLift
 +{
 +  if (_ardiaHasLayoutFrame) {
@@ -1464,7 +1506,7 @@ index 137d0ee9f51616ea27c397a8bf595fe2c0ff5e91..a2c8f83ae53736f96ad339b34b7163b7
  - (UIFont *)font
  {
    return ((RCTUITextFieldCell*)self.cell).font;
-@@ -330,7 +618,9 @@ - (void)setPlaceholder:(NSString *)placeholder
+@@ -330,7 +642,9 @@ - (void)setPlaceholder:(NSString *)placeholder
  #if !TARGET_OS_OSX // [macOS]
    [super setPlaceholder:placeholder];
  #else // [macOS
@@ -1474,7 +1516,7 @@ index 137d0ee9f51616ea27c397a8bf595fe2c0ff5e91..a2c8f83ae53736f96ad339b34b7163b7
  #endif // macOS]
    [self _updatePlaceholder];
  }
-@@ -367,6 +657,7 @@ - (void)setDefaultTextAttributes:(NSDictionary<NSAttributedStringKey, id> *)defa
+@@ -367,6 +681,7 @@ - (void)setDefaultTextAttributes:(NSDictionary<NSAttributedStringKey, id> *)defa
                                                            attributes:[self defaultTextAttributes]]];
  
    self.font = [[self defaultTextAttributes] objectForKey:NSFontAttributeName];
@@ -1482,7 +1524,7 @@ index 137d0ee9f51616ea27c397a8bf595fe2c0ff5e91..a2c8f83ae53736f96ad339b34b7163b7
  #endif // macOS]
  }
  
-@@ -385,6 +676,20 @@ - (void)_updatePlaceholder
+@@ -385,6 +700,20 @@ - (void)_updatePlaceholder
    _isUpdatingPlaceholderText = YES;
    self.placeholderAttributedString = [[NSAttributedString alloc] initWithString:self.placeholder ?: @""
  																	 attributes:[self _placeholderTextAttributes]];
@@ -1503,7 +1545,7 @@ index 137d0ee9f51616ea27c397a8bf595fe2c0ff5e91..a2c8f83ae53736f96ad339b34b7163b7
    _isUpdatingPlaceholderText = NO;
  #endif // macOS]
  }
-@@ -710,6 +1015,9 @@ - (void)keyUp:(NSEvent *)event {
+@@ -710,6 +1039,9 @@ - (void)keyUp:(NSEvent *)event {
  - (void)setReadablePasteBoardTypes:(NSArray<NSPasteboardType> *)readablePasteboardTypes
  {
    _readablePasteboardTypes = readablePasteboardTypes;
