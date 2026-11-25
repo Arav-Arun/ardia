@@ -5,6 +5,8 @@ import { AccessibilityInfo } from "react-native";
 
 const calls = [];
 const motionListeners = new Set();
+const initialMotion = Promise.withResolvers();
+AccessibilityInfo.isReduceMotionEnabled = () => initialMotion.promise;
 AccessibilityInfo.addEventListener = (event, listener) => {
   if (event === "reduceMotionChanged") motionListeners.add(listener);
   return { remove: () => motionListeners.delete(listener) };
@@ -31,12 +33,36 @@ const { FIELD_LOAD } = await import("./tokens.ts");
 const { parseColor } = await import("../../lib/color.ts");
 const { fieldGlowFixture } = await import("./fieldGlowFixture.mjs");
 const { colorRoles } = await import("../ui/tokens.ts");
+const { reduceMotionKnown } = await import("../ui/reduceMotion.ts");
 
 const S = () => useBrowser.getState();
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 S().hydrate({ profiles: { default: { id: "default", name: "Personal", color: "plum", icon: null, createdAt: 0 } }, profileOrder: ["default"] });
 const w = S().createWindow({ url: "https://a.example/" });
 const tab = S().windows[w].tabIds[0];
+
+test("the glow does not pulse before the startup Reduce Motion preference is known", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  calls.length = 0;
+  const drive = driveFieldLoad(tab, nativeSink("startup"));
+  try {
+    setLive(tab, { isLoading: true });
+    t.mock.timers.tick(150);
+    t.mock.timers.tick(FIELD_LOAD.pulse.wait);
+    assert.ok(calls.some(([name]) => name === "show"));
+    assert.equal(calls.some(([name]) => name === "pulse"), false);
+    initialMotion.resolve(true);
+    await reduceMotionKnown;
+    t.mock.timers.tick(FIELD_LOAD.pulse.wait);
+    assert.equal(calls.some(([name]) => name === "pulse"), false);
+  } finally {
+    initialMotion.resolve(true);
+    await reduceMotionKnown;
+    drive.stop();
+    setLive(tab, { isLoading: false });
+    reduceMotion(false);
+  }
+});
 
 test("with the native glow present, the field's fill is one native host with no layout callback, no Animated value and no timer", () => {
   assert.equal(FieldLoadFill, FieldGlowFill);

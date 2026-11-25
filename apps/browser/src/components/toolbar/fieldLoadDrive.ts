@@ -2,7 +2,7 @@ import { AccessibilityInfo } from "react-native";
 import { watchLastingLoad } from "../../state/tabs/lastingLoad";
 import { pageProgressOf, watchPageProgress } from "../../state/tabs/pageProgress";
 import { notePageOverlay } from "../../state/telemetry/usage";
-import { reduceMotion, type GradientStop } from "../ui";
+import { reduceMotion, reduceMotionKnown, type GradientStop } from "../ui";
 import { FIELD_LOAD } from "./tokens";
 
 export const lined = (glow: readonly GradientStop[], height: number): GradientStop[] => {
@@ -56,10 +56,10 @@ export function driveFieldLoad(tabId: string, sink: LoadSink): { refit: () => vo
   };
   const waitForProgress = () => {
     clearPulse();
-    if (!shown || reduceMotion()) return;
+    if (!shown || reduceMotion() !== false) return;
     timer = setTimeout(() => {
       timer = undefined;
-      if (shown && !reduceMotion()) pulse(true);
+      if (shown && reduceMotion() === false) pulse(true);
     }, FIELD_LOAD.pulse.wait);
   };
   const refit = () => {
@@ -98,6 +98,11 @@ export function driveFieldLoad(tabId: string, sink: LoadSink): { refit: () => vo
       waitForProgress();
     }
   });
+  if (reduceMotion() === null) {
+    void reduceMotionKnown.then(() => {
+      if (shown && timer === undefined && !pulsing && reduceMotion() === false) waitForProgress();
+    });
+  }
   return {
     refit,
     stop: () => {

@@ -283,11 +283,13 @@ public final class FieldGlowLayers: NSObject, FieldGlowTarget {
       clip.removeAnimation(forKey: "pulse")
       return
     }
-    guard clip.animation(forKey: "pulse") == nil else { return }
+    let duration = pulse.period / 2
+    if let current = clip.animation(forKey: "pulse") as? CABasicAnimation,
+       current.duration == duration, current.toValue as? Double == pulse.low { return }
     let animation = CABasicAnimation(keyPath: "opacity")
     animation.fromValue = 1
     animation.toValue = pulse.low
-    animation.duration = pulse.period / 2
+    animation.duration = duration
     animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
     animation.autoreverses = true
     animation.repeatCount = .infinity
