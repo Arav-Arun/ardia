@@ -147,7 +147,6 @@ function matchFolders(m: Merging, folders: ImportedNode[], places: Place[]): Map
       if (c < 0) return;
       const candidate = candidates[c]!;
       matched.set(sources[s]!, candidate);
-      if (candidate.needsEvidence) m.record(candidate.id, { adopted: true });
     });
   }
   return matched;
@@ -162,8 +161,10 @@ function mergeLevel(m: Merging, nodes: ImportedNode[], places: Place[]): Importe
       fresh.push(...unseen(m, [n]));
       continue;
     }
+    const before = m.out.links + m.out.folders;
     const inner = mergeLevel(m, n.children ?? [], [{ id: folder.id, candidate: m.nested }]);
     append(m, folder.id, inner, folder.earlier);
+    if (folder.needsEvidence && m.out.links + m.out.folders > before) m.record(folder.id, { adopted: true });
   }
   return fresh;
 }

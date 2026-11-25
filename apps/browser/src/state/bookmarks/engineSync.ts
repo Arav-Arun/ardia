@@ -43,6 +43,8 @@ const stateOf = (engine: string) => {
 };
 let legacyMoved = false;
 let adopting = false;
+let syncing = false;
+const BOOKMARKS_CURRENT_WAIT_MS = 15_000;
 
 function adopt(engine: string, flat: Flat, { ready = legacyMoved } = {}) {
   adopting = true;
@@ -270,7 +272,25 @@ async function moveBookmarks(file: LegacyFile, modelWaitMs: number) {
   }
 }
 
+export function bookmarksCurrent(engine: string, waitMs = BOOKMARKS_CURRENT_WAIT_MS): Promise<boolean> {
+  const read = () => !syncing || !!engines.get(engine)?.shadow;
+  if (read()) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const finish = (current: boolean) => {
+      clearTimeout(timer);
+      stop();
+      resolve(current);
+    };
+    const timer = setTimeout(() => finish(false), waitMs);
+    const stop = useBrowser.subscribeTo(["bookmarks"], () => {
+      if (read()) finish(true);
+    });
+    openProfile(engine);
+  });
+}
+
 export function startBookmarks() {
+  syncing = true;
   for (const [engine, flat] of Object.entries(launchTrees())) {
     if (!engineProfiles(store()).includes(engine)) continue;
     stateOf(engine).shown = flat;
@@ -311,6 +331,7 @@ export function startBookmarks() {
   });
   return () => {
     stopped = true;
+    syncing = false;
     clearTimeout(cacheTimer);
     if (cacheTimer) saveCache();
     cacheTimer = undefined;
