@@ -9,6 +9,8 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
+#include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
 #include "chrome/browser/ui/tabs/public/tab_dialog_manager.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "components/permissions/permission_request_manager.h"
@@ -27,6 +29,13 @@ namespace ardiacore {
 namespace {
 
 constexpr base::TimeDelta kHiddenPageWait = base::Milliseconds(400);
+constexpr base::TimeDelta kCallHiddenPageWait = base::Milliseconds(2000);
+
+bool InCall(content::WebContents* contents) {
+  return MediaCaptureDevicesDispatcher::GetInstance()
+      ->GetMediaStreamCaptureIndicator()
+      ->IsCapturingUserMedia(contents);
+}
 
 void UpdateTabDialogs(content::WebContents* contents) {
   if (auto* tab = tabs::TabInterface::MaybeGetFromContents(contents)) {
@@ -54,7 +63,9 @@ class HostVisibility : public content::WebContentsUserData<HostVisibility>,
       return;
     }
     awaiting_hidden_page_ = true;
-    hidden_page_wait_.Start(FROM_HERE, kHiddenPageWait,
+    hidden_page_wait_.Start(FROM_HERE,
+                            InCall(&GetWebContents()) ? kCallHiddenPageWait
+                                                      : kHiddenPageWait,
                             base::BindOnce(&HostVisibility::PageHiddenOrWaitedOut,
                                            weak_factory_.GetWeakPtr(), "waited out"));
   }
