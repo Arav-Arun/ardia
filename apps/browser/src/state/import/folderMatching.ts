@@ -80,6 +80,69 @@ function greedyPairs(edges: FolderEdge[]): [number, number][] {
   return out;
 }
 
+function mostPairs(rows: number[], cols: number[], edges: FolderEdge[]): [number, number][] {
+  const rowAt = new Map(rows.map((r, i) => [r, i]));
+  const colAt = new Map(cols.map((c, i) => [c, i]));
+  const adjacent: number[][] = rows.map(() => []);
+  for (const e of [...edges].sort((a, z) => z.shared - a.shared || a.candidate - z.candidate)) adjacent[rowAt.get(e.source)!]!.push(colAt.get(e.candidate)!);
+  const rowPair = new Array<number>(rows.length).fill(-1);
+  const colPair = new Array<number>(cols.length).fill(-1);
+  for (const [source, candidate] of greedyPairs(edges)) {
+    rowPair[rowAt.get(source)!] = colAt.get(candidate)!;
+    colPair[colAt.get(candidate)!] = rowAt.get(source)!;
+  }
+  const depth = new Array<number>(rows.length);
+  const cursor = new Array<number>(rows.length);
+  const layer = () => {
+    const queue: number[] = [];
+    for (let r = 0; r < rows.length; r++) {
+      depth[r] = rowPair[r] === -1 ? 0 : Infinity;
+      if (rowPair[r] === -1) queue.push(r);
+    }
+    let open = false;
+    for (let at = 0; at < queue.length; at++) {
+      const r = queue[at]!;
+      for (const c of adjacent[r]!) {
+        const owner = colPair[c]!;
+        if (owner === -1) open = true;
+        else if (depth[owner] === Infinity) {
+          depth[owner] = depth[r]! + 1;
+          queue.push(owner);
+        }
+      }
+    }
+    return open;
+  };
+  const augment = (start: number) => {
+    const stack = [start];
+    while (stack.length) {
+      const r = stack[stack.length - 1]!;
+      const c = adjacent[r]![cursor[r]!];
+      if (c === undefined) {
+        depth[r] = Infinity;
+        stack.pop();
+        continue;
+      }
+      const owner = colPair[c]!;
+      if (owner === -1) {
+        for (const x of stack) {
+          const y = adjacent[x]![cursor[x]!]!;
+          rowPair[x] = y;
+          colPair[y] = x;
+        }
+        return;
+      }
+      if (depth[owner] === depth[r]! + 1) stack.push(owner);
+      else cursor[r] = cursor[r]! + 1;
+    }
+  };
+  while (layer()) {
+    cursor.fill(0);
+    for (let r = 0; r < rows.length; r++) if (rowPair[r] === -1) augment(r);
+  }
+  return rowPair.flatMap((c, r) => (c === -1 ? [] : [[rows[r]!, cols[c]!] as [number, number]]));
+}
+
 export function pairFolders(sourceCount: number, candidateCount: number, edges: FolderEdge[], positional: readonly boolean[] = []): number[] {
   const parent = Array.from({ length: sourceCount + candidateCount }, (_, i) => i);
   const root = (x: number): number => {
@@ -99,7 +162,7 @@ export function pairFolders(sourceCount: number, candidateCount: number, edges: 
     const rows = [...new Set(group.map((e) => e.source))].sort((a, z) => a - z);
     const cols = [...new Set(group.map((e) => e.candidate))].sort((a, z) => a - z);
     const exact = Math.min(rows.length, cols.length) * (rows.length + cols.length + group.length) <= EXACT_WORK_LIMIT;
-    for (const [source, candidate] of exact ? bestPairs(rows, cols, group) : greedyPairs(group)) paired[source] = candidate;
+    for (const [source, candidate] of exact ? bestPairs(rows, cols, group) : mostPairs(rows, cols, group)) paired[source] = candidate;
   }
   const taken = new Set(paired.filter((c) => c >= 0));
   let next = 0;

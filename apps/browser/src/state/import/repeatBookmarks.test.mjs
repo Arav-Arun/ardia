@@ -394,3 +394,28 @@ test("a folder an import made inside an Imported from Dia folder made by hand co
   assert.deepEqual(bar(), [["Imported from Dia", [["Work", ["https://a.example/", "https://b.example/"]]]]]);
   assert.equal(takeImportRuns().import_bookmark_folders_reused, 1);
 });
+
+test("1,001 folders of the same name linked in a ring of shared pages, past the exact pairing's limit, still all pair by their links", () => {
+  start(["Mine", "https://mine.example/"]);
+  const n = 1001;
+  const u = (j) => `https://u${j}.example/`;
+  const v = (j) => `https://v${j}.example/`;
+  importBookmarks(P, dia(Array.from({ length: n }, (_, j) => folder("Same", [link("u", u(j)), link("v", v(j))]))), "Dia");
+  const incoming = Array.from({ length: n }, (_, i) =>
+    folder("Same", i === n - 1 ? [link("u", u(0)), link("new", `https://new${i}.example/`)] : [link("v", v(i)), link("u", u(i + 1)), link("new", `https://new${i}.example/`)]),
+  );
+  const began = performance.now();
+  assert.equal(importBookmarks(P, dia(incoming), "Dia"), n);
+  assert.ok(performance.now() - began < 3000, `took ${performance.now() - began} ms`);
+  wrapperFolders().forEach((urls, j) => assert.deepEqual(urls, [u(j), v(j), `https://new${(j + n - 1) % n}.example/`], `folder ${j}`));
+});
+
+test("a folder another browser's import nested inside its own Imported from folder doesn't take a Dia import after it is moved", () => {
+  start(["Mine", "https://mine.example/"]);
+  importBookmarks(P, dia([folder("Work", [link("A", "https://a.example/")])]), "Chrome");
+  importBookmarks(P, dia([link("Mail", "https://mail.example/")]), "Dia");
+  const chromeWork = childNamed(childNamed(barId(), "Imported from Chrome"), "Work");
+  S().moveBookmark(chromeWork, childNamed(barId(), "Imported from Dia"));
+  assert.equal(importBookmarks(P, dia([link("Mail", "https://mail.example/"), folder("Work", [link("A", "https://a.example/"), link("B", "https://b.example/")])]), "Dia"), 1);
+  assert.deepEqual(bar().at(-1), ["Imported from Dia", ["https://mail.example/", ["Work", ["https://a.example/"]], ["Work", ["https://b.example/"]]]]);
+});
