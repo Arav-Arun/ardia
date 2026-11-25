@@ -239,7 +239,7 @@ function AddSiteSheet({ ext, profile }: { ext: InstalledExtension; profile: stri
   };
   return (
     <Sheet onClose={cancel}>
-      <DialogTitle subtitle={`${ext.name} can read and change this site, and no others you haven't added.`}>Add Site</DialogTitle>
+      <DialogTitle subtitle={`${ext.name} reads and changes only the sites you add.`}>Add Site</DialogTitle>
       <FormField label="Site">
         <TextField value={site} onChangeText={(text) => (setSite(text), setError(null))} placeholder="example.com" onSubmit={() => void add()} onEscape={cancel} autoFocus />
       </FormField>
