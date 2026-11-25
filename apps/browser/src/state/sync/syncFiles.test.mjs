@@ -293,6 +293,27 @@ test("what a scope's sync applied is journaled for this device, and a restart re
   assert.deepEqual(after.scopes.app.unapplied, [], "replayed keys load as applied");
 });
 
+test("the keys a cycle is about to apply are on disk before it applies them, survive a restart mid-cycle, and the cycle's own part supersedes them", async () => {
+  const doc = newDoc({ profiles: { default: { syncId: "s1", enabled: true } } });
+  const { files } = await opening({ doc });
+  const state = (doc.scopes["p:s1"] = emptyScope());
+  putBase(state, "bm:t1", '{"t":"T1"}');
+  const entry = { w: ["old"], t: "new", at: 5, l: "launch-1" };
+  const before = parts().length;
+  await files.persistApplying("p:s1")({ "bm:t1": entry });
+  assert.equal(parts().length, before + 1, "written at once, not at the end of the cycle");
+  shell.docs.set("sync-journal-98.nns", sealed({ id: Date.now() + 1, device: "devA", applying: { "p:s1": { "bm:bad": { w: "x" } }, "p:gone": { "bm:t1": entry } }, version: 1 }));
+  const { doc: killed } = await restart(doc);
+  assert.deepEqual(killed.scopes["p:s1"].applying, { "bm:t1": entry });
+  assert.equal(killed.scopes["p:gone"], undefined, "a scope no longer linked isn't brought back");
+  shell.docs.delete("sync-journal-98.nns");
+  const settled = files.watchScope("p:s1", state, new Clock("devA"));
+  state.applying = { "bm:t1": { ...entry, at: 9 } };
+  await settled();
+  const { doc: after } = await restart(doc);
+  assert.deepEqual(after.scopes["p:s1"].applying, { "bm:t1": { ...entry, at: 9 } });
+});
+
 test("a scope's sync that changed nothing writes no part; one that changed only its bookkeeping does", async () => {
   const { doc, files } = await opening();
   const state = (doc.scopes.app = emptyScope());

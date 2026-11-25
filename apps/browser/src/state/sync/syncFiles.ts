@@ -1,5 +1,5 @@
 import { readDocument, removeDocument, saveDocument, writeDocument } from "../../platform/documents";
-import { Clock, emptyScope, restoreJournal, SyncNative, trackTouchedKeys, writtenSeq, type LogFile, type ScopeState, type SyncRecord } from "../../platform/sync";
+import { Clock, emptyScope, restoreJournal, SyncNative, trackTouchedKeys, writtenSeq, type Applying, type LogFile, type ScopeState, type SyncRecord } from "../../platform/sync";
 import { parseSaved, unchanged, versionedJson, type Migrations, type SavedObject } from "../../lib/savedDocument";
 import { profileScope } from "./records";
 import { APP_SCOPE, DOC, DOC_MIGRATIONS, DOC_VERSION, JOURNAL, STATE, defaultTypes, emptyDoc, type SyncDoc } from "./syncDoc";
@@ -9,7 +9,8 @@ import { warnFor } from "../telemetry/logs";
 
 type Journal = Record<string, LogFile[]>;
 type ScopeChange = { records: Record<string, SyncRecord | null>; base: Record<string, string | null>; rest: Partial<ScopeState> };
-type JournalPart = { id: number; journal?: Journal; device?: string | null; clock?: string; changes?: Record<string, ScopeChange> };
+type ApplyingByScope = Record<string, Record<string, Applying>>;
+type JournalPart = { id: number; journal?: Journal; device?: string | null; clock?: string; changes?: Record<string, ScopeChange>; applying?: ApplyingByScope };
 type Checkpoint = { covers: number; clock?: string; scopes: SyncDoc["scopes"] };
 
 const CHECKPOINT_VERSION = 1;
@@ -39,6 +40,7 @@ function readPart(doc: SavedObject | null): JournalPart {
     device: stringOr(doc.device, null),
     clock: stringOr(doc.clock, undefined),
     changes: isFields(doc.changes) ? (doc.changes as Record<string, ScopeChange>) : undefined,
+    applying: isFields(doc.applying) ? (doc.applying as ApplyingByScope) : undefined,
   };
 }
 
@@ -76,6 +78,17 @@ function entriesOf<T>(keys: Set<string>, now: Record<string, T>): Record<string,
   const entries: Record<string, T | null> = {};
   for (const key of keys) entries[key] = key in now ? now[key]! : null;
   return entries;
+}
+
+const isApplying = (v: unknown): v is Applying => isFields(v) && Array.isArray(v.w) && v.w.every((f) => typeof f === "string") && typeof v.t === "string" && typeof v.at === "number" && typeof v.l === "string";
+
+function replayApplying(scopes: SyncDoc["scopes"], applying: ApplyingByScope, live: Set<string>) {
+  for (const [scope, entries] of Object.entries(applying)) {
+    if (!live.has(scope) || !isFields(entries)) continue;
+    const kept = Object.fromEntries(Object.entries(entries).filter(([, entry]) => isApplying(entry)));
+    const scoped = (scopes[scope] ??= emptyScope());
+    if (Object.keys(kept).length) scoped.applying = { ...scoped.applying, ...kept };
+  }
 }
 
 function replayChanges(scopes: SyncDoc["scopes"], changes: Record<string, ScopeChange>, live: Set<string>) {
@@ -158,9 +171,10 @@ export function syncFiles(current: () => SyncDoc) {
         journal.lastId = Math.max(journal.lastId, part.id);
         if (part.id <= covers) continue;
         addBatches(batches, part.journal, added);
-        if (!part.changes || part.device !== doc.deviceId) continue;
+        if ((!part.changes && !part.applying) || part.device !== doc.deviceId) continue;
         if (part.clock) clock.observe(part.clock);
-        replayChanges(scopes, part.changes, live);
+        if (part.changes) replayChanges(scopes, part.changes, live);
+        if (part.applying) replayApplying(scopes, part.applying, live);
       }
       journal.batches = {};
       for (const [scope, files] of Object.entries(batches)) {
@@ -238,6 +252,11 @@ export function syncFiles(current: () => SyncDoc) {
       });
     };
   }
+
+  const persistApplying = (scope: string) => (applying: Record<string, Applying>) => {
+    const part = { device: current().deviceId, applying: { [scope]: { ...applying } } };
+    return serial(() => writePart(part));
+  };
 
   function clearJournal() {
     journal.batches = {};
@@ -326,5 +345,5 @@ export function syncFiles(current: () => SyncDoc) {
     });
   }
 
-  return { read, loadState, persistJournal, watchScope, save, startOver, checkpoint };
+  return { read, loadState, persistJournal, persistApplying, watchScope, save, startOver, checkpoint };
 }

@@ -44,7 +44,7 @@ let cycle: Promise<void> | null = null;
 let again = false;
 let forcePasswordsNext = false;
 let timer: ReturnType<typeof setTimeout> | undefined;
-const { read, loadState, persistJournal, watchScope, save, startOver, checkpoint } = syncFiles(() => doc);
+const { read, loadState, persistJournal, persistApplying, watchScope, save, startOver, checkpoint } = syncFiles(() => doc);
 
 function load() {
   const loaded = read();
@@ -137,7 +137,7 @@ async function cycleOnce(native: NonNullable<typeof SyncNative>, folder: string,
         adapters: appAdapters(doc, retiring),
         clock,
         device,
-        options: { persist: persistJournal(APP_SCOPE), holdApply: isQuitting },
+        options: { persist: persistJournal(APP_SCOPE), persistApplying: persistApplying(APP_SCOPE), holdApply: isQuitting },
       }));
     } finally {
       await appSettled();
@@ -162,7 +162,7 @@ async function cycleOnce(native: NonNullable<typeof SyncNative>, folder: string,
           adapters: profileAdapters(doc, profileId, retire, forcePasswords),
           clock,
           device,
-          options: { expired: historyExpired, persist: persistJournal(scope), holdApply: isQuitting },
+          options: { expired: historyExpired, persist: persistJournal(scope), persistApplying: persistApplying(scope), holdApply: isQuitting },
         }));
       } finally {
         await settled();

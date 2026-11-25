@@ -174,7 +174,6 @@ function assignPositions(existing                        )           {
 
 });
 __define("packages/sync/src/scope.ts", function (exports, __require) {
-  __export(exports, "parseSyncFile", () => parseSyncFile);
   __export(exports, "ingestSnapshot", () => ingestSnapshot);
   __export(exports, "flush", () => flush);
   __export(exports, "restoreJournal", () => restoreJournal);
@@ -184,15 +183,19 @@ __define("packages/sync/src/scope.ts", function (exports, __require) {
   __export(exports, "compact", () => compact);
   __export(exports, "syncScope", () => syncScope);
   __exportAll(exports, __require("packages/sync/src/scopeKeys.ts"));
+  __export(exports, "parseSyncFile", () => __require("packages/sync/src/syncFile.ts")["parseSyncFile"]);
 const { canonical } = __require("packages/sync/src/canon.ts");
 const { hlcWall } = __require("packages/sync/src/hlc.ts");
 const { holdsBack, noteFileHealth } = __require("packages/sync/src/fileHealth.ts");
 const { baseKeysWith, baseWritesUnder, dropBase, dropRecord, putBase, putRecord, visible } = __require("packages/sync/src/scopeKeys.ts");
 
 const { covered, isApplied, markApplied, raiseApplied } = __require("packages/sync/src/applied.ts");
+const { launchOf, noteApplyingTo, reapplyStale, startApplying, takeReapplied } = __require("packages/sync/src/applying.ts");
+const { parseSyncFile } = __require("packages/sync/src/syncFile.ts");
+
                                                                                                                                  
 
-const DEFAULTS                                                        = {
+const DEFAULTS                                                                                                        = {
   expired: () => false,
   tombstoneTTL: 45 * 86_400_000,
   compactAfterFiles: 40,
@@ -202,30 +205,6 @@ const DEFAULTS                                                        = {
   pruneGrace: 60 * 60_000,
   damagedGiveUp: 86_400_000,
 };
-
-const isObject = (v         )                               => typeof v === "object" && v !== null && !Array.isArray(v);
-const isCount = (v         )              => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
-const isTime = (v         )              => typeof v === "number" && Number.isFinite(v);
-const isMapOf = (v         , item                         ) => isObject(v) && Object.values(v).every(item);
-const isOrigin = (v         ) => Array.isArray(v) && v.length === 2 && typeof v[0] === "string" && isCount(v[1]);
-const isValue = (o                         ) => Object.prototype.hasOwnProperty.call(o, "v") && o.v !== undefined;
-const isOp = (v         ) => isObject(v) && typeof v.k === "string" && typeof v.h === "string" && isValue(v);
-const isRecord = (v         ) => isObject(v) && typeof v.h === "string" && isOrigin(v.o) && isValue(v);
-
-function parseSyncFile(payload        )                  {
-  let file         ;
-  try {
-    file = JSON.parse(payload);
-  } catch {
-    return null;
-  }
-  if (!isObject(file) || file.v !== 1 || typeof file.device !== "string" || !isTime(file.at)) return null;
-  if (file.kind === "log") return isCount(file.seq) && Array.isArray(file.ops) && file.ops.every(isOp) ? (file           ) : null;
-  if (file.kind === "snapshot") {
-    return isMapOf(file.vv, isCount) && isMapOf(file.seen, isTime) && isMapOf(file.records, isRecord) ? (file                ) : null;
-  }
-  return null;
-}
 
 function see(state            , device        , at        ) {
   if (!(device in state.seen) || at > state.seen[device] ) state.seen[device] = at;
@@ -299,7 +278,7 @@ function noteExtracted(state            , adapter         , source              
   byPrefix.set(adapter.prefix, { source, baseWrites: baseWritesUnder(state, adapter.prefix), joined: state.joined });
 }
 
-async function changesOf(state            , adapter         , now        ) {
+async function changesOf(state            , adapter         , now        , options               = {}) {
   if (adapter.adoptRemoteOnJoin && !state.joined) return null;
   const source = adapter.extractsOnlyFrom?.();
   if (unchangedSinceExtracted(state, adapter, source)) return { changes: [], settle: undefined, source: undefined };
@@ -309,9 +288,11 @@ async function changesOf(state            , adapter         , now        ) {
   if (!extraction) return null;
   const changes           = [];
   const { values, json: knownJson, republish, ignore } = extraction;
+  const jsonOf = (key        , value         ) => knownJson?.(key, value) ?? canonical(value);
+  if (state.applying) reapplyStale(state, adapter.prefix, values, jsonOf, ignore, now, launchOf(options));
   values.forEach((value, key) => {
     if (value === null || value === undefined) throw new Error(`[sync] ${key}: a live value can't be null`);
-    const json = knownJson?.(key, value) ?? canonical(value);
+    const json = jsonOf(key, value);
     if (state.base[key] === json && !republish?.(key)) return;
     changes.push({ key, value, json });
   });
@@ -329,14 +310,14 @@ function stampOf(state            , adapter         , clock       , { key, value
   return editedAt !== undefined ? clock.at(editedAt) : clock.tick();
 }
 
-async function candidateStamps(state            , adapter         , clock       , now        )                  {
-  const found = await changesOf(state, adapter, now);
+async function candidateStamps(state            , adapter         , clock       , now        , options               )                  {
+  const found = await changesOf(state, adapter, now, options);
   return new Map((found?.changes ?? []).map((change) => [change.key, { json: change.json, h: stampOf(state, adapter, clock, change) }]));
 }
 
-async function publishAdapter(state            , adapter         , clock       , device        , now        , stamps         )                       {
+async function publishAdapter(state            , adapter         , clock       , device        , now        , options                          , stamps         )                       {
   const published = new Set        ();
-  const found = await changesOf(state, adapter, now);
+  const found = await changesOf(state, adapter, now, options);
   if (!found) return published;
   for (const change of found.changes) {
     const { key, value, json } = change;
@@ -426,7 +407,7 @@ async function pull(state            , transport           , scope        , cloc
   return changed;
 }
 
-async function applyAdapter(state            , adapter         , keys             , now        , horizon        , held               , deferred             )                   {
+async function applyAdapter(state            , adapter         , keys             , now        , horizon        , held               , deferred             , options               = {})                   {
   const mine = new Set([...keys].filter((k) => k.startsWith(adapter.prefix)));
   if (!mine.size) return true;
   const view = visible(state, adapter.prefix);
@@ -448,6 +429,7 @@ async function applyAdapter(state            , adapter         , keys           
       landed: (key        ) => void landed.add(key),
       defer: (key        ) => void (mine.has(key) && deferred.add(key)),
     };
+    if (options.persistApplying && noteApplyingTo(state, mine, view, now, launchOf(options))) await options.persistApplying(state.applying );
     ok = await adapter.apply(view, mine, (key) => parseBase(state.base[key]), records);
   } catch (error) {
     console.warn(`[sync] applying ${adapter.prefix} failed`, error);
@@ -534,7 +516,7 @@ async function compact(state            , transport           , scope        , d
   return true;
 }
 
-                                                                                                                      
+                                                                                                                                         
 
 async function syncScope(args   
                 
@@ -548,11 +530,12 @@ async function syncScope(args
  )                       {
   const { scope, state, transport, adapters, clock, device, options } = args;
   const now = args.now ?? Date.now;
+  startApplying(state, now(), options);
   let published = 0;
   const stamps = new Map                 ();
   for (const adapter of adapters) {
-    if (adapter.publishAfterPull) stamps.set(adapter, await candidateStamps(state, adapter, clock, now()));
-    else published += (await publishAdapter(state, adapter, clock, device, now())).size;
+    if (adapter.publishAfterPull) stamps.set(adapter, await candidateStamps(state, adapter, clock, now(), options));
+    else published += (await publishAdapter(state, adapter, clock, device, now(), options)).size;
   }
   await flush(state, transport, scope, device, now(), options);
   const changed = await pull(state, transport, scope, clock, now(), options);
@@ -562,12 +545,13 @@ async function syncScope(args
   let heldApply = false;
   const applyHeld = () => !!options?.holdApply?.();
   for (const adapter of adapters) {
-    const late = adapter.publishAfterPull && held ? new Set        () : await publishAdapter(state, adapter, clock, device, now(), stamps.get(adapter));
+    const late = adapter.publishAfterPull && held ? new Set        () : await publishAdapter(state, adapter, clock, device, now(), options, stamps.get(adapter));
     published += late.size;
     for (const key of late) keys.delete(key);
+    for (const key of state.unapplied) if (key.startsWith(adapter.prefix) && !late.has(key)) keys.add(key);
     heldApply ||= applyHeld();
     const deferred = new Set        ();
-    const applied = !heldApply && (await applyAdapter(state, adapter, keys, now(), 2 * (options?.tombstoneTTL ?? DEFAULTS.tombstoneTTL), applyHeld, deferred));
+    const applied = !heldApply && (await applyAdapter(state, adapter, keys, now(), 2 * (options?.tombstoneTTL ?? DEFAULTS.tombstoneTTL), applyHeld, deferred, options));
     heldApply ||= applyHeld();
     if (!applied) for (const key of keys) if (key.startsWith(adapter.prefix)) unapplied.push(key);
     if (applied) for (const key of deferred) unapplied.push(key);
@@ -580,7 +564,7 @@ async function syncScope(args
   await flush(state, transport, scope, device, now(), options);
   const compacted = await compact(state, transport, scope, device, now(), options);
   const snapshotBytes = compacted ? (newestSnapshot(Object.entries(state.files), device)?.[1].b ?? 0) : 0;
-  return { published, changed: changed.size, pending: state.pending, compacted, snapshotBytes };
+  return { published, changed: changed.size, pending: state.pending, compacted, snapshotBytes, reapplied: takeReapplied(state) };
 }
 
 });
@@ -704,6 +688,35 @@ function dropBase(state            , key        ) {
 }
 
 });
+__define("packages/sync/src/syncFile.ts", function (exports, __require) {
+  __export(exports, "parseSyncFile", () => parseSyncFile);
+                                                                       
+
+const isObject = (v         )                               => typeof v === "object" && v !== null && !Array.isArray(v);
+const isCount = (v         )              => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+const isTime = (v         )              => typeof v === "number" && Number.isFinite(v);
+const isMapOf = (v         , item                         ) => isObject(v) && Object.values(v).every(item);
+const isOrigin = (v         ) => Array.isArray(v) && v.length === 2 && typeof v[0] === "string" && isCount(v[1]);
+const isValue = (o                         ) => Object.prototype.hasOwnProperty.call(o, "v") && o.v !== undefined;
+const isOp = (v         ) => isObject(v) && typeof v.k === "string" && typeof v.h === "string" && isValue(v);
+const isRecord = (v         ) => isObject(v) && typeof v.h === "string" && isOrigin(v.o) && isValue(v);
+
+function parseSyncFile(payload        )                  {
+  let file         ;
+  try {
+    file = JSON.parse(payload);
+  } catch {
+    return null;
+  }
+  if (!isObject(file) || file.v !== 1 || typeof file.device !== "string" || !isTime(file.at)) return null;
+  if (file.kind === "log") return isCount(file.seq) && Array.isArray(file.ops) && file.ops.every(isOp) ? (file           ) : null;
+  if (file.kind === "snapshot") {
+    return isMapOf(file.vv, isCount) && isMapOf(file.seen, isTime) && isMapOf(file.records, isRecord) ? (file                ) : null;
+  }
+  return null;
+}
+
+});
 __define("packages/sync/src/fileHealth.ts", function (exports, __require) {
   __export(exports, "noteFileHealth", () => noteFileHealth);
   __export(exports, "holdsBack", () => holdsBack);
@@ -791,6 +804,119 @@ function raiseApplied(state            , device        , seq        ) {
 }
 
 });
+__define("packages/sync/src/applying.ts", function (exports, __require) {
+  __export(exports, "launchOf", () => launchOf);
+  __export(exports, "noteApplyingTo", () => noteApplyingTo);
+  __export(exports, "startApplying", () => startApplying);
+  __export(exports, "takeReapplied", () => takeReapplied);
+  __export(exports, "reapplyStale", () => reapplyStale);
+const { canonical } = __require("packages/sync/src/canon.ts");
+const { dropBase, putBase } = __require("packages/sync/src/scopeKeys.ts");
+                                                                          
+
+const ABSENT = "null";
+const NATIVE_SAVE_MS = 30_000;
+const KEPT_PRIOR_VALUES = 8;
+
+const thisLaunch = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+const launchOf = (options               = {}) => options.launch ?? thisLaunch;
+
+function fingerprint(json        )         {
+  let h1 = 0xdeadbeef ^ json.length;
+  let h2 = 0x41c6ce57 ^ json.length;
+  for (let i = 0; i < json.length; i++) {
+    const c = json.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36);
+}
+
+function noteApplyingTo(state            , keys                  , view                      , now        , launch        )          {
+  let noted = false;
+  for (const key of keys) {
+    const from = state.base[key] ?? ABSENT;
+    const to = view.has(key) ? canonical(view.get(key)) : ABSENT;
+    if (from === to) continue;
+    const entry = state.applying?.[key];
+    const t = fingerprint(to);
+    const w = [...new Set([...(entry?.w ?? []), fingerprint(from)])].filter((f) => f !== t).slice(-KEPT_PRIOR_VALUES);
+    (state.applying ??= {})[key] = { w, t, at: now, l: launch };
+    noted = true;
+  }
+  return noted;
+}
+
+function startApplying(state            , now        , options               = {}) {
+  takeReapplied(state);
+  const applying = state.applying;
+  if (!applying) return;
+  const launch = launchOf(options);
+  const saveMs = options.nativeSaveMs ?? NATIVE_SAVE_MS;
+  for (const key in applying) {
+    const entry = applying[key] ;
+    if (entry.l === launch && now - entry.at >= saveMs) delete applying[key];
+  }
+  if (!Object.keys(applying).length) delete state.applying;
+}
+
+const reapplied = new WeakMap                    ();
+
+function takeReapplied(state            )         {
+  const count = reapplied.get(state) ?? 0;
+  reapplied.delete(state);
+  return count;
+}
+
+function reapplyStale(state            , prefix        , values                      , json                                         , ignore                                        , now        , launch        ) {
+  const native = (key        ) => (values.has(key) ? json(key, values.get(key)) : ABSENT);
+  const { stale } = recoverApplied(state, prefix, native, (key) => !!ignore?.(key), now, launch);
+  for (const key of stale) {
+    if (state.unapplied.includes(key)) continue;
+    state.unapplied.push(key);
+    reapplied.set(state, (reapplied.get(state) ?? 0) + 1);
+  }
+}
+
+                                                      
+
+function recoverApplied(state            , prefix        , native                         , ignored                          , now        , launch        )            {
+  const recovered            = { stale: [], adopted: 0 };
+  const applying = state.applying;
+  if (!applying) return recovered;
+  for (const key in applying) {
+    if (!key.startsWith(prefix)) continue;
+    const entry           = applying[key] ;
+    if (entry.l === launch) continue;
+    const json = ignored(key) ? undefined : native(key);
+    if (json === undefined) {
+      applying[key] = { ...entry, at: now, l: launch };
+      continue;
+    }
+    const base = state.base[key] ?? ABSENT;
+    const f = fingerprint(json);
+    if (f !== entry.t && entry.w.includes(f)) {
+      if (json !== base) {
+        if (json === ABSENT) dropBase(state, key);
+        else putBase(state, key, json);
+      }
+      recovered.stale.push(key);
+      continue;
+    }
+    if (f === entry.t && json !== base) {
+      if (json === ABSENT) dropBase(state, key);
+      else putBase(state, key, json);
+      recovered.adopted++;
+    }
+    applying[key] = { ...entry, at: now, l: launch };
+  }
+  return recovered;
+}
+
+});
 __define("packages/sync/src/scopeState.ts", function (exports, __require) {
   __export(exports, "emptyScope", () => emptyScope);
                                     
@@ -811,6 +937,8 @@ __define("packages/sync/src/scopeState.ts", function (exports, __require) {
   
                                               
 
+                                                                         
+
                                                                                                                               
 
                           
@@ -829,6 +957,7 @@ __define("packages/sync/src/scopeState.ts", function (exports, __require) {
                   
                         
                                                  
+                                      
                      
                   
   
@@ -909,6 +1038,9 @@ const emptyScope = ()             => ({
                          
                                                   
                             
+                                                                          
+                  
+                        
   
 
 });
