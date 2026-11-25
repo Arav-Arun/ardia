@@ -124,6 +124,10 @@ function PeekCard({
   const fromY = peek.from && origin ? peek.from.y - origin.y : null;
   const sideRoom = sideRoomFor(buttons);
   const [toTab, setToTab] = useState(false);
+  const toTabNow = useRef(toTab);
+  toTabNow.current = toTab;
+  const pendingPromote = useRef<((started: boolean) => void) | null>(null);
+  const promoteNow = () => (stage.current?.promote(generation) ?? Promise.resolve(false)).catch(() => false);
   const geometry = useMemo(
     () =>
       peekGeometry({
@@ -153,10 +157,22 @@ function PeekCard({
   useEffect(
     () => () => {
       begun.current = false;
+      pendingPromote.current?.(false);
+      pendingPromote.current = null;
       endPeekToolbarPreview(windowId, peek.tabId);
     },
     [],
   );
+
+  useEffect(() => {
+    const resolve = pendingPromote.current;
+    if (!toTab || !resolve) return;
+    pendingPromote.current = null;
+    void promoteNow().then((started) => {
+      if (!started) setToTab(false);
+      resolve(started);
+    });
+  }, [toTab]);
 
   const known = reduce !== null;
   const [started, setStarted] = useState(false);
@@ -178,9 +194,12 @@ function PeekCard({
       tabId: peek.tabId,
       close: () => stage.current?.close(generation) ?? Promise.resolve(false),
       promote: () => {
-        const promoting = stage.current?.promote(generation) ?? Promise.resolve(false);
-        void promoting.then((started) => started && setToTab(true));
-        return promoting;
+        if (toTabNow.current) return promoteNow();
+        return new Promise<boolean>((resolve) => {
+          pendingPromote.current?.(false);
+          pendingPromote.current = resolve;
+          setToTab(true);
+        });
       },
     });
   }, [started, shown]);

@@ -645,8 +645,8 @@ try {
       assert.equal(out.tabs, 2);
     });
   }
-  for (const via of ["native", "store"]) {
-    const name = via === "native" ? "window-close-during-leave-prompt" : "window-teardown-during-leave-prompt";
+  for (const via of ["native", "store", "storeStay"]) {
+    const name = { native: "window-close-during-leave-prompt", store: "window-teardown-during-leave-prompt", storeStay: "window-teardown-stay-during-leave-prompt" }[via];
     if (!wanted(name)) continue;
     await start({});
     await check(name, async (record) => {
@@ -662,6 +662,23 @@ try {
       record.peekAsked = await asked(1);
       await sleep(1200);
       await run(via === "native" ? `globalThis.expo.modules.ArdiaAppWindows.closeWindow("w1"); return 0;` : `st().closeWindow("w1"); return 0;`);
+      if (via === "storeStay") {
+        await sleep(1200);
+        record.stays = 0;
+        for (let i = 0; i < 3; i++) {
+          if (!(await asked(record.stays + 1, i ? 3000 : 200))) break;
+          await page.send("Page.handleJavaScriptDialog", { accept: false }).catch((e) => (record.stayError = String(e.message)));
+          record.stays++;
+        }
+        await sleep(3000);
+        record.afterStay = { target: !!(await app.pageTarget("page.html?n=wc")), socketClosed: page.closed };
+        record.draft = record.afterStay.target && !page.closed ? await page.eval(`document.querySelector("#f").value`).catch(() => null) : null;
+        page.close();
+        assert.ok(record.stays >= 1, "the prompt was answered Stay");
+        assert.equal(record.afterStay.target, true, "Stay keeps the page: a close deferred during the prompt never unloads it");
+        assert.equal(record.draft, "draft", "what was typed is still there after Stay");
+        return;
+      }
       record.timeline = [];
       for (const ms of [100, 300, 600, 500]) {
         await sleep(ms);

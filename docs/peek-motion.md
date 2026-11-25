@@ -78,7 +78,7 @@ out once at the tab's size as it starts.
   starting the close, #985): Stay leaves the card open at rest with what was typed, Leave closes it as before. A page
   without a handler closes at once. Open as Tab never asks, since the page stays. While the prompt is up, a tab close
   (`closeNow`, `close`, the delegate's `CloseContents`, which an extension's `tabs.remove` reaches) waits for the
-  answer, a window close waits and then asks for itself, quitting is refused, and discards are refused. Not covered: an
+  answer and closes only after Leave (Stay keeps the page and what was typed), a window close waits and then asks for itself, quitting is refused, and discards are refused. Not covered: an
   extension's `windows.remove` (`ACBrowserWindow::Close` runs Chrome's own unload scan) and profile deletion, which both
   need a background caller since the prompt is app-modal; a window close that waited on the prompt asks the page again
   after Leave; and a Peek whose site opens in WebKit closes without asking (the ask is Chromium's).
