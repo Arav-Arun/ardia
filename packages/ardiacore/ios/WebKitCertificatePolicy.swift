@@ -21,8 +21,14 @@ struct WebKitCertificatePolicy: Sendable {
   }
 
   struct Bypass: Equatable, Sendable {
-    var errors: Set<String>
-    var granted: Date
+    var admissions: [Date: Set<String>] = [:]
+
+    var errors: Set<String> { admissions.values.reduce(into: []) { $0.formUnion($1) } }
+
+    func granted(before since: Date) -> Bypass? {
+      let kept = admissions.filter { $0.key < since }
+      return kept.isEmpty ? nil : Bypass(admissions: kept)
+    }
   }
 
   static let exceptionLifetime: TimeInterval = 7 * 86_400
@@ -66,10 +72,7 @@ struct WebKitCertificatePolicy: Sendable {
       return false
     }
     guard Self.overridable(errors), Set(errors).isSubset(of: exception.errors) else { return false }
-    var bypass = bypassed[name]?[fingerprint] ?? Bypass(errors: [], granted: exception.granted)
-    bypass.errors.formUnion(errors)
-    bypass.granted = max(bypass.granted, exception.granted)
-    bypassed[name, default: [:]][fingerprint] = bypass
+    bypassed[name, default: [:]][fingerprint, default: Bypass()].admissions[exception.granted, default: []].formUnion(errors)
     return true
   }
 
@@ -109,13 +112,17 @@ struct WebKitCertificatePolicy: Sendable {
   mutating func forget(since: Date) {
     let cutoff = since.timeIntervalSince1970
     transportSecurity = transportSecurity.filter { ($0.value.observed ?? -.infinity) < cutoff }
-    exceptions = Self.keeping(exceptions) { $0.granted < since }
-    bypassed = Self.keeping(bypassed) { $0.granted < since }
+    exceptions = Self.keeping(exceptions) { $0.granted < since ? $0 : nil }
+    bypassed = Self.keeping(bypassed) { $0.granted(before: since) }
   }
 
-  private static func keeping<Value>(_ byHost: [String: [String: Value]], _ keep: (Value) -> Bool) -> [String: [String: Value]] {
+  mutating func adoptSaved(_ saved: [String: WebKitTransportSecurity]) {
+    transportSecurity = saved.merging(transportSecurity) { _, noted in noted }
+  }
+
+  private static func keeping<Value>(_ byHost: [String: [String: Value]], _ keep: (Value) -> Value?) -> [String: [String: Value]] {
     byHost.compactMapValues { byPrint in
-      let kept = byPrint.filter { keep($0.value) }
+      let kept = byPrint.compactMapValues(keep)
       return kept.isEmpty ? nil : kept
     }
   }
@@ -157,17 +164,26 @@ struct WebKitCertificatePolicy: Sendable {
 }
 
 enum WebKitTransportSecurityFile {
-  static func read(_ file: URL) -> [String: WebKitTransportSecurity] {
-    guard let data = try? Data(contentsOf: file),
-      let saved = try? JSONDecoder().decode([String: WebKitTransportSecurity].self, from: data)
-    else { return [:] }
-    return saved
+  struct Unreadable: Error {
+    let message: String
+  }
+
+  static func read(_ file: URL) throws -> [String: WebKitTransportSecurity] {
+    let data: Data
+    do {
+      data = try Data(contentsOf: file)
+    } catch where isMissing(error) {
+      return [:]
+    } catch {
+      throw Unreadable(message: "couldn't read the HSTS list: \(error.localizedDescription)")
+    }
+    return (try? JSONDecoder().decode([String: WebKitTransportSecurity].self, from: data)) ?? [:]
   }
 
   static func write(_ entries: [String: WebKitTransportSecurity]?, to file: URL) -> String? {
     do {
       guard let entries else {
-        if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+        do { try FileManager.default.removeItem(at: file) } catch where isMissing(error) {}
         return nil
       }
       let data = try JSONEncoder().encode(entries)
@@ -177,5 +193,11 @@ enum WebKitTransportSecurityFile {
     } catch {
       return "couldn't save the HSTS list: \(error.localizedDescription)"
     }
+  }
+
+  static func isMissing(_ error: Error) -> Bool {
+    let failure = error as NSError
+    if failure.domain == NSCocoaErrorDomain, [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(failure.code) { return true }
+    return failure.domain == NSPOSIXErrorDomain && failure.code == Int(ENOENT)
   }
 }

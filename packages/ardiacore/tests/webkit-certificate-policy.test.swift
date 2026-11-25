@@ -167,6 +167,23 @@ struct DynamicTransportSecurity {
     #expect(policy.hasException(host: "old.example", now: now))
   }
 
+  @Test func `clearing a recent grant keeps what an older grant for the same certificate let through`() {
+    var policy = WebKitCertificatePolicy()
+    let older = now.addingTimeInterval(-8 * 86_400)
+    policy.allow(host: "old.example", fingerprint: "AA", errors: ["authorityInvalid"], now: older)
+    _ = policy.admits(host: "old.example", fingerprint: "AA", errors: ["authorityInvalid"], now: older)
+    _ = policy.admits(host: "old.example", fingerprint: "AA", errors: ["authorityInvalid"], now: now)
+    policy.allow(host: "old.example", fingerprint: "AA", errors: ["authorityInvalid", "dateInvalid"], now: now)
+    let regranted = policy.admits(host: "old.example", fingerprint: "AA", errors: ["authorityInvalid", "dateInvalid"], now: now)
+    #expect(regranted)
+    #expect(policy.bypassedErrors(host: "old.example", fingerprint: "AA") == ["authorityInvalid", "dateInvalid"])
+    policy.forget(since: now.addingTimeInterval(-3_600))
+    #expect(policy.bypassedErrors(host: "old.example", fingerprint: "AA") == ["authorityInvalid"])
+    #expect(policy.hasException(host: "old.example", now: now))
+    let current = policy.admits(host: "old.example", fingerprint: "AA", errors: ["authorityInvalid"], now: now)
+    #expect(!current)
+  }
+
   @Test func `max-age 0 removes the host and entries expire`() {
     var policy = WebKitCertificatePolicy()
     _ = policy.noteHeader("max-age=600", host: "a.example", now: now)

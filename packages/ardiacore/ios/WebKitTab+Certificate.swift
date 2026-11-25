@@ -38,7 +38,8 @@ final class WebKitCertificates {
   private static let files = DispatchQueue(label: "ardia.webkit.transport-security", qos: .utility)
 
   private var policies: [StoreID: WebKitCertificatePolicy] = [:]
-  private var saveQueued = Set<StoreID>()
+  private var pendingSaves: [StoreID: DispatchWorkItem] = [:]
+  private var unreadable = Set<StoreID>()
 
   init() {
     WebKitPreloadedHSTS.warm()
@@ -101,11 +102,15 @@ final class WebKitCertificates {
 
   func forgetTransportSecurity(profile: String, since: Date? = nil, done: @escaping (String?) -> Void = { _ in }) {
     let store = WebKitHub.shared.stores.id(of: profile)
+    pendingSaves.removeValue(forKey: store)?.cancel()
     var kept: [String: WebKitTransportSecurity]?
     if let since {
+      let unread = readAgainIfUnreadable(store)
       change(store) { $0.forget(since: since) }
+      if let unread { return done(unread) }
       kept = policies[store]?.savedTransportSecurity(now: Date()) ?? [:]
     } else {
+      unreadable.remove(store)
       policies[store] = WebKitCertificatePolicy(transportSecurity: [:])
     }
     guard let file = Self.file(for: store) else { return done(nil) }
@@ -131,9 +136,26 @@ final class WebKitCertificates {
 
   private func policy(_ store: StoreID) -> WebKitCertificatePolicy {
     if let known = policies[store] { return known }
-    let loaded = WebKitCertificatePolicy(transportSecurity: Self.load(store))
+    var loaded = WebKitCertificatePolicy()
+    do {
+      loaded = WebKitCertificatePolicy(transportSecurity: try Self.load(store))
+    } catch {
+      unreadable.insert(store)
+    }
     policies[store] = loaded
     return loaded
+  }
+
+  private func readAgainIfUnreadable(_ store: StoreID) -> String? {
+    guard unreadable.contains(store) else { return nil }
+    do {
+      let saved = try Self.load(store)
+      unreadable.remove(store)
+      change(store) { $0.adoptSaved(saved) }
+      return nil
+    } catch {
+      return (error as? WebKitTransportSecurityFile.Unreadable)?.message ?? "couldn't read the HSTS list"
+    }
   }
 
   private func change<T>(_ store: StoreID, _ body: (inout WebKitCertificatePolicy) -> T) -> T {
@@ -149,18 +171,21 @@ final class WebKitCertificates {
     return URL(fileURLWithPath: ArdiaHost.dataDirectory).appendingPathComponent("WebKit Transport Security").appendingPathComponent("p\(hex).json")
   }
 
-  private static func load(_ store: StoreID) -> [String: WebKitTransportSecurity] {
-    file(for: store).map(WebKitTransportSecurityFile.read) ?? [:]
+  private static func load(_ store: StoreID) throws -> [String: WebKitTransportSecurity] {
+    guard let file = file(for: store) else { return [:] }
+    return try WebKitTransportSecurityFile.read(file)
   }
 
   private func scheduleSave(_ store: StoreID) {
-    guard let file = Self.file(for: store), saveQueued.insert(store).inserted else { return }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+    guard let file = Self.file(for: store), pendingSaves[store] == nil else { return }
+    let save = DispatchWorkItem { [weak self] in
       guard let self else { return }
-      self.saveQueued.remove(store)
-      guard let entries = self.policies[store]?.savedTransportSecurity(now: Date()) else { return }
+      self.pendingSaves.removeValue(forKey: store)
+      guard !self.unreadable.contains(store), let entries = self.policies[store]?.savedTransportSecurity(now: Date()) else { return }
       Self.files.async { _ = WebKitTransportSecurityFile.write(entries, to: file) }
     }
+    pendingSaves[store] = save
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: save)
   }
 }
 
