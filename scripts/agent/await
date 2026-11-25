@@ -34,6 +34,7 @@ done
 [[ $# -gt 0 ]] || { echo "usage: $0 [--timeout S] [--every S] [--pid PID]… [--quiet] -- <test command…> (--help for more)" >&2; exit 64; }
 
 start=$(date +%s)
+pid_alive() { local why; why=$(LC_ALL=C; kill -0 "$1" 2>&1) || [[ "$why" == *"Operation not permitted"* ]]; }
 probe() { timeout -k 2 "$((timeout - ($(date +%s) - start) > 0 ? timeout - ($(date +%s) - start) : 1))" "$@" >/dev/null 2>&1; }
 while true; do
   if probe "$@"; then
@@ -41,7 +42,7 @@ while true; do
     exit 0
   fi
   for pid in ${pids[@]+"${pids[@]}"}; do
-    if ! kill -0 "$pid" 2>/dev/null; then
+    if ! pid_alive "$pid"; then
       probe "$@" && exit 0
       echo "await: pid $pid exited after $(($(date +%s) - start))s before: $*" >&2
       exit 3

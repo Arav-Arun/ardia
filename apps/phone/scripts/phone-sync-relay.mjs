@@ -28,6 +28,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isAlive as alive } from "../../../scripts/lib/pid.mjs";
 
 const TEMP_SUFFIX = ".relay-part";
 const PARTS_FOLDER = ".ardia-relay-parts";
@@ -292,14 +293,6 @@ function options(argv) {
   return { ...merged, every: merged.every ?? 3, adb: merged.adb ?? "adb", phoneFolder: merged.phoneFolder ?? "/sdcard/Documents/Ardia Sync" };
 }
 
-const alive = (pid) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
 
 async function loop(opts) {
   for (;;) {

@@ -58,7 +58,7 @@ import { createServer } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { prepareApp } from "../../../../scripts/lib/app-copy.mjs";
-import { appEnv, binaryOf, sleep } from "../../../../scripts/lib/instance.mjs";
+import { appEnv, binaryOf, isAlive, sleep } from "../../../../scripts/lib/instance.mjs";
 import { writeSeed } from "./seed.mjs";
 import { medianOrNull as median } from "./median.mjs";
 
@@ -230,14 +230,6 @@ function pidsOf(binary) {
     .filter((m) => m && (m[2] === binary || m[2].startsWith(`${binary} `)))
     .map((m) => Number(m[1]));
 }
-const alive = (pid) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
 
 export function writeSwitches(dataDir, text) {
   if (!text) return;
@@ -285,10 +277,10 @@ function quitOnSignals(...closers) {
 
 export async function quit(pid) {
   launched.delete(pid);
-  if (!alive(pid)) return;
+  if (!isAlive(pid)) return;
   process.kill(pid, "SIGTERM");
-  for (let i = 0; i < 150 && alive(pid); i++) await sleep(100);
-  if (alive(pid)) process.kill(pid, "SIGKILL");
+  for (let i = 0; i < 150 && isAlive(pid); i++) await sleep(100);
+  if (isAlive(pid)) process.kill(pid, "SIGKILL");
 }
 
 let evalSeq = 0;
@@ -298,7 +290,7 @@ export async function evaluate(dataDir, pid, body, timeoutMs = 120_000) {
   const file = join(dataDir, "dev-eval-result.json");
   const end = Date.now() + timeoutMs;
   while (Date.now() < end) {
-    if (!alive(pid)) throw new Error("app exited");
+    if (!isAlive(pid)) throw new Error("app exited");
     if (existsSync(file)) {
       try {
         const out = JSON.parse(readFileSync(file, "utf8"));

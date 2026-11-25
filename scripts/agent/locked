@@ -109,6 +109,7 @@ kernel=$root/ac-$lock.lockf
 legacy=$root/ac-$lock.lock
 holder=$root/ac-$lock.holder
 now() { date +%s; }
+pid_alive() { local why; why=$(LC_ALL=C; kill -0 "$1" 2>&1) || [[ "$why" == *"Operation not permitted"* ]]; }
 
 field() { awk -v n="$1" '{print $n; exit}' "$holder" 2>/dev/null; }
 taken_by() { [[ "$(field 1)" == take && "$(field 3)" == "$1" ]]; }
@@ -127,7 +128,7 @@ describe() {
 held_by_caller() {
   local pid path want=${1:-$kernel}
   while read -r pid path; do
-    [[ -n "$pid" && "$path" == "$want" ]] && kill -0 "$pid" 2>/dev/null && { echo "$pid"; return 0; }
+    [[ -n "$pid" && "$path" == "$want" ]] && pid_alive "$pid" && { echo "$pid"; return 0; }
   done <<<"${AC_LOCKED_HELD:-}"
   return 1
 }
@@ -259,7 +260,7 @@ while ! mkdir "$legacy" 2>/dev/null; do
   case "$(field 1)" in
     pid)
       pid=$(field 2)
-      kill -0 "$pid" 2>/dev/null || stale="its holder (pid $pid) has exited"
+      pid_alive "$pid" || stale="its holder (pid $pid) has exited"
       ;;
     take)
       [[ $(now) -gt $(field 2) ]] && stale="$(field 3)'s take expired"

@@ -13,7 +13,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launch, sleep } from "../../../scripts/lib/instance.mjs";
+import { isAlive, launch, sleep } from "../../../scripts/lib/instance.mjs";
 import { COMMAND_QUERY, DEMO_WINDOW, fieldScript, HOVER_ROW, newTabScript, profileScript, realLayoutScript, resetScript, STATES, THEMES } from "./states.mjs";
 import { referenceSession } from "./seedSession.mjs";
 
@@ -38,9 +38,7 @@ const states = option("states", STATES.join(",")).split(",");
 
 function trainServes() {
   try {
-    const pid = Number(readFileSync("/tmp/ac-train/serve.pid", "utf8").trim());
-    process.kill(pid, 0);
-    return true;
+    return isAlive(Number(readFileSync("/tmp/ac-train/serve.pid", "utf8").trim()));
   } catch {
     return false;
   }

@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer as createHttpsServer } from "node:https";
 import { basename, join, resolve } from "node:path";
-import { freePort, launch as launchInstance, reporter, sleep } from "../../../scripts/lib/instance.mjs";
+import { freePort, isAlive, launch as launchInstance, reporter, sleep } from "../../../scripts/lib/instance.mjs";
 
 const [appArg, scratchArg, ...only] = process.argv.slice(2);
 if (!appArg || !scratchArg) {
@@ -82,14 +82,7 @@ async function launch(logName = "app.out.log") {
   writeFileSync(join(scratch, "app.pid"), String(pid));
 }
 await launch();
-const alive = () => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
+const alive = () => isAlive(pid);
 
 async function evalApp(body, timeoutMs = 20000) {
   try {
