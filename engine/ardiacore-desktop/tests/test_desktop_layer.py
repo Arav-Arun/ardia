@@ -166,6 +166,18 @@ class PathTextTests(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which(os.environ.get('CXX', 'c++')), 'no C++ compiler')
+class LayoutSyncTests(unittest.TestCase):
+    def test_the_layout_and_surface_sync_program_passes(self):
+        compiler = os.environ.get('CXX', 'c++')
+        with tempfile.TemporaryDirectory(prefix='ardia-desktop-layout-sync-') as scratch:
+            binary = pathlib.Path(scratch, 'layout_sync_test')
+            built = subprocess.run([compiler, '-std=c++20', '-Wall', '-Wextra', '-Werror', '-I', str(SOURCE),
+                                    str(DESKTOP / 'ac_desktop_layout_sync.cc'), str(ROOT / 'tests/layout_sync_test.cc'),
+                                    '-o', str(binary)], capture_output=True, text=True, timeout=180)
+            self.assertEqual(built.returncode, 0, built.stderr)
+            ran = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60)
+            self.assertEqual(ran.returncode, 0, ran.stderr)
+
 class PagerEngineTests(unittest.TestCase):
     def test_the_pager_spring_and_gesture_router_match_the_mac_pager(self):
         compiler = os.environ.get('CXX', 'c++')
@@ -192,6 +204,7 @@ class PagerEngineTests(unittest.TestCase):
                 self.assertEqual(mac_value, desktop_value)
         self.assertIn('private let omega = 2 * Double.pi / 0.25', swift)
         self.assertIn('inline constexpr double kOmega = 2 * std::numbers::pi / 0.25;', spring)
+
 
 
 def compiler_is_clang(compiler):
