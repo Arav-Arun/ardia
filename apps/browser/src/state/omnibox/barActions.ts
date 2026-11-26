@@ -5,6 +5,7 @@ import { hidesBookmarkCommand } from "../bookmarks/visibility";
 import { useBrowser, type BrowserState } from "../browser/store";
 import { activeTab, bookmarkProfileId, isPinnedRow, pinnedSectionTitle, tabLayoutOf } from "../browser/model";
 import { canTidy } from "../pins/tidy";
+import { hasDuplicateTabs } from "../pins/duplicateTabs";
 import { commandBarTitle, commandSymbol, LITTLE_ARDIA_DISABLED_COMMANDS, UNAVAILABLE_COMMANDS } from "../commands/commandCatalog";
 import { menuBarRevision, shortcutHint } from "../commands/commandShortcuts";
 import type { Tab } from "../browser/types";
@@ -24,7 +25,7 @@ type ActionDef = {
   title?: (c: Context) => string;
   icon?: string | ((c: Context) => string);
   keywords?: string[];
-  needs?: "page" | "webPage" | "tab" | "profiles" | "pins";
+  needs?: "page" | "webPage" | "tab" | "profiles" | "pins" | "duplicates";
 };
 
 const page = "page" as const;
@@ -37,6 +38,7 @@ const DEFS: ActionDef[] = [
   { command: "newIncognitoWindow", keywords: ["private window", "incognito"] },
   { command: "closeTab", needs: "tab" },
   { command: "closeAllTabs", keywords: ["clear unpinned tabs", "close unpinned tabs", "clear today"] },
+  { command: "closeDuplicateTabs", keywords: ["close duplicate tabs", "dedupe", "deduplicate tabs", "duplicates", "remove duplicate tabs"], needs: "duplicates" },
   { command: "reopenClosedTab", keywords: ["undo close", "restore tab"] },
   {
     command: "togglePin",
@@ -141,6 +143,7 @@ export function barActions(s: BrowserState, windowId: string): CommandAction[] {
     if (d.needs === "tab" && !tab) continue;
     if (d.needs === "profiles" && w?.kind === "private") continue;
     if (d.needs === "pins" && !canTidy(s, windowId)) continue;
+    if (d.needs === "duplicates" && !hasDuplicateTabs(s, windowId)) continue;
     if (hidesBookmarkCommand(s.settings, d.command) || UNAVAILABLE_COMMANDS.has(d.command)) continue;
     if (small && LITTLE_ARDIA_HIDDEN.has(d.command)) continue;
     const id = actionId(d);
