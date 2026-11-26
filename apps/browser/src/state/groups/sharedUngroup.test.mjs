@@ -297,10 +297,9 @@ test("across 200 generated layouts, ungrouping a shared folder never drops a tab
     assert.ok(!Object.values(S().groups).some((g) => g.pinned && pinKeyOf(g) === key), `${at}: no folder is left`);
     if (split) assert.ok(Object.values(S().splits).every((v) => v.windowId === from.windowId), `${at}: the split stays in one window`);
     for (const v of Object.values(S().splits)) S().separateSplit(v.id);
-    const open = new Set(Object.values(S().tabs).filter(owns).map((t) => t.url));
     const tokens = new Set(Object.values(S().tabs).flatMap((t) => [pendingRestore(t), adoptOf(t)?.replace(/^restore:/, "")]));
     const pagesOpen = new Set(Object.values(S().tabs).filter(owns).map((t) => `${familyOf[t.id]} ${t.url}`));
-    for (const o of owners) assert.ok((pendingRestore(o) && tokens.has(pendingRestore(o))) || open.has(o.url) || pagesOpen.has(`${familyKeyOf(o)} ${o.url}`), `${at}: ${o.url} is still open once the split is separated`);
+    for (const o of owners) assert.ok((pendingRestore(o) && tokens.has(pendingRestore(o))) || pagesOpen.has(`${familyKeyOf(o)} ${o.url}`), `${at}: ${o.url} is still open once the split is separated`);
   }
 });
 
