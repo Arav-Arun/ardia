@@ -3,6 +3,7 @@ import { Animated, Pressable, View, type LayoutChangeEvent } from "react-native"
 import { Button, ContextMenuArea, continuousCorners, drawnSymbol, HoverFill, perLook, radius, sidebarPoints, space, Text, useHover, withAlpha } from "../ui";
 import { hex, layout, useTheme } from "../ui/theme";
 import { HoverSlot } from "../ui/HoverSlot";
+import { useSettings } from "../../state/browser/hooks";
 import { newTab } from "../../state/tabs/actions";
 import { useCleanedCount } from "../../state/sidebar/hooks";
 import { openNewTabInSplit } from "../../state/splits/actions";
@@ -31,6 +32,7 @@ const MEASURE_OFFSCREEN = { position: "absolute", width: 1000, height: 0, overfl
 export const NewTabRow = memo(function NewTabRow({ windowId, shift = null, clip = null }: { windowId: string; shift?: Animated.Value | null; clip?: ClipSource | null }) {
   const theme = useTheme();
   const tokens = useSidebarTokens();
+  const showTabMenuButton = useSettings((s) => s.showTabMenuButton);
   const cleaned = useCleanedCount(windowId);
   const quiet = useQuietRows();
   const { hovered, hoverProps } = useHover();
@@ -48,7 +50,7 @@ export const NewTabRow = memo(function NewTabRow({ windowId, shift = null, clip 
   };
   const quietInk = hex(withAlpha(theme.textTab, hovered ? tokens.quietText : tokens.quietFaintText));
   const hint = `${cleaned} cleaned`;
-  const hintFits = widths.hint > 0 && NEW_TAB_LABEL_X + widths.label + CLEANED_HINT_GAP + widths.hint <= widths.row - CLEANED_HINT_RIGHT;
+  const hintFits = widths.hint > 0 && NEW_TAB_LABEL_X + widths.label + CLEANED_HINT_GAP + widths.hint <= widths.row - (showTabMenuButton ? CLEANED_HINT_RIGHT : CLEANED_HINT_RIGHT - TAB_ROW.closeSlot);
   return (
     <View {...hoverProps} onLayout={measure("row")} style={[{ flexDirection: "row", alignItems: "center" }, clipped ? clippedRow() : null]}>
       <View pointerEvents="none" style={MEASURE_OFFSCREEN}>
@@ -90,7 +92,7 @@ export const NewTabRow = memo(function NewTabRow({ windowId, shift = null, clip 
                   flexDirection: "row",
                   alignItems: "center",
                   paddingLeft: TAB_ROW.contentLeft,
-                  paddingRight: BUTTONS_ROOM,
+                  paddingRight: showTabMenuButton ? BUTTONS_ROOM : TAB_ROW.trailing * 2,
                 },
                 moved.style as object,
               ]}
@@ -112,7 +114,7 @@ export const NewTabRow = memo(function NewTabRow({ windowId, shift = null, clip 
             </Text>
           }
         />
-        {quiet && !hovered ? null : <Button variant="icon"
+        {!showTabMenuButton || (quiet && !hovered) ? null : <Button variant="icon"
           icon="chevron.down"
           size="s"
           weight="semibold"
