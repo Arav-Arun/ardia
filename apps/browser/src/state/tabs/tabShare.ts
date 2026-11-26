@@ -131,7 +131,7 @@ function conformList(input: BrowserState, windowId: string, profileId: string, s
   const reuse = (src: Tab): string => {
     const key = pinKeyOf(src);
     const same = (byKey.get(key) ?? []).filter((m) => !used.has(m.id));
-    const t = same.find(hasPage) ?? same[0];
+    const t = same.find(hasPage) ?? same.find((m) => m.url === src.url) ?? same[0];
     if (!t) {
       const copy = { ...copyOf(src, windowId, false), page: IDLE, lastActiveAt: src.lastActiveAt, ...(src.restoredAt ? { restoredAt: src.restoredAt } : {}) };
       tabs[copy.id] = copy;
