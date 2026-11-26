@@ -19,7 +19,7 @@ import { engineForUrl, tabEngine, typedNavigationEngine } from "../engines/engin
 import type { ClosedTab, Tab, TabLive } from "../browser/types";
 import { activated, apply, closingTabs, removeTabs, withNewTab, type CloseOptions, type NewTabOptions } from "./tabs";
 import { splitOf } from "../splits/splits";
-import { hasPage, loadedPage, navigationOf, renavigated, wakeOf, withWake } from "./pageSession";
+import { hasPage, holderOfPage, loadedPage, navigationOf, renavigated, wakeOf, withWake } from "./pageSession";
 import { cancelOpening, gateOpening, isGatedUrl, settleOpening } from "./openingGate";
 import { drainLive, setLive, stageLive } from "./tabLive";
 import { steppedTabId } from "./switchOrder";
@@ -233,7 +233,7 @@ export const createTabsSlice: StateCreator<BrowserState, [], [], TabsSlice> = (s
       profileId: source.profileId,
       snapshot: { ...snapshotTab(source), pin: null, lastActiveAt: undefined },
       index: w.tabIds.indexOf(id) + 1,
-      adoptId: source.url ? cloneId(id) : undefined,
+      adoptId: source.url ? cloneId(holderOfPage(source) ?? id) : undefined,
       background: o?.background,
     });
     set(next);

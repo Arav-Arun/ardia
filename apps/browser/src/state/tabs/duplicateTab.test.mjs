@@ -45,3 +45,15 @@ test("a duplicate opened in front becomes the shown tab", () => {
   const copy = S().duplicateTab(page);
   assert.equal(S().windows[w].activeTabIds.default, copy);
 });
+
+test("duplicating a copy that shows another tab's page clones the tab holding that page, so the history comes along", () => {
+  S().hydrate({});
+  S().createWindow({ url: "https://one.example/" });
+  const b = S().createWindow({ url: "https://two.example/" });
+  S().updateSettings({ shareTabsAcrossWindows: true });
+  const frozen = S().windows[b].tabIds.find((id) => S().tabs[id].page.kind === "frozen");
+  assert.ok(frozen, "sharing shows the other window's tab as a frozen copy");
+  const holder = S().tabs[frozen].page.holderId;
+  const copy = S().duplicateTab(frozen);
+  assert.equal(S().tabs[copy].page.adopt, `clone:${holder}`);
+});

@@ -153,6 +153,7 @@ export const ReloadButton = memo(function ReloadButton({
     void showReloadMenu(tab.id);
   });
   const onMiddleClick = useStableHandler((e: ClickModifiers) => {
+    onFocus();
     if (!tab.url) return;
     void duplicateTab(tab.id, { background: openModeFor({ ...e, middle: true }) === "background" });
   });
