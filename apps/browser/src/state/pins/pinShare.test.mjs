@@ -349,3 +349,19 @@ test("a tab taken out of a pinned folder and pinned again shares no key with the
   assert.ok(S().tabs[clicked.id]?.pin, "still pinned");
   assert.equal(pages("https://one.com").length, 1, "one live page for the pin");
 });
+
+test("regular tabs that share a key with a tab being pinned keep one key between them, apart from the pin's", () => {
+  reset();
+  const a = S().createWindow({ url: "https://one.com" });
+  const b = S().createWindow({ url: "https://one.com" });
+  const c = S().createWindow({ url: "https://one.com" });
+  const [first] = S().windows[a].tabIds;
+  const [second] = S().windows[b].tabIds;
+  const [third] = S().windows[c].tabIds;
+  useBrowser.setState((st) => ({ tabs: { ...st.tabs, [second]: { ...st.tabs[second], pinKey: first }, [third]: { ...st.tabs[third], pinKey: first } } }));
+  S().pinTabs([second], true);
+  const pinKey = model.pinKeyOf(S().tabs[second]);
+  const keys = new Set([first, third].map((id) => model.pinKeyOf(S().tabs[id])));
+  assert.equal(keys.size, 1, "the two regular tabs still share one key");
+  assert.notEqual([...keys][0], pinKey, "and it isn't the pin's");
+});
