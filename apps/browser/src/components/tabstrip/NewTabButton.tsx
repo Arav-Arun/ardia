@@ -12,7 +12,7 @@ import { consentToken } from "../../state/telemetry/client";
 import { useShortcutHint, withShortcut } from "../../state/commands/commandShortcuts";
 import { Button, useHover, type IconPalette } from "../ui";
 import { useTheme } from "../ui/theme";
-import { perLook, radius } from "../ui/tokens";
+import { concentric, perLook } from "../ui/tokens";
 import type { DragGeometry } from "./stripGroups";
 import { registerSlot } from "./stripReorder";
 import { NEW_TAB_SLOT, useStripSlide } from "./stripMotion";
@@ -22,7 +22,10 @@ import { GAP, ITEM_HEIGHT, ITEM_TOP, NEW_TAB_ICON, OVERFLOW_BUTTON, tabRadius } 
 import { keyText } from "../../state/commands/keyText";
 
 const NEW_TAB_HIT = perLook(() => ({ width: ITEM_HEIGHT, height: ITEM_HEIGHT, plateX: 0, plateY: 0, box: ITEM_HEIGHT, radius: tabRadius() }));
-const OVERFLOW_HIT = perLook(() => ({ width: OVERFLOW_BUTTON.box, height: ITEM_HEIGHT, plateX: 0, plateY: (ITEM_HEIGHT - OVERFLOW_BUTTON.box) / 2, box: OVERFLOW_BUTTON.box, radius: radius.control }));
+const OVERFLOW_HIT = perLook(() => {
+  const inset = (ITEM_HEIGHT - OVERFLOW_BUTTON.box) / 2;
+  return { width: OVERFLOW_BUTTON.box, height: ITEM_HEIGHT, plateX: 0, plateY: inset, box: OVERFLOW_BUTTON.box, radius: concentric(tabRadius(), inset) };
+});
 const OVERFLOW_STYLE = { marginLeft: GAP };
 
 export function openTabStripMenu(windowId: string) {
