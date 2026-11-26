@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import { Animated, Pressable, View, type LayoutChangeEvent } from "react-native";
-import { Button, ContextMenuArea, continuousCorners, drawnSymbol, HoverFill, perLook, radius, sidebarPoints, space, Text, useHover, withAlpha } from "../ui";
+import { Button, concentric, ContextMenuArea, continuousCorners, drawnSymbol, HoverFill, iconButton, perLook, radius, sidebarPoints, space, Text, useHover, withAlpha } from "../ui";
 import { hex, layout, useTheme } from "../ui/theme";
 import { HoverSlot } from "../ui/HoverSlot";
 import { newTab } from "../../state/tabs/actions";
@@ -115,6 +115,7 @@ export const NewTabRow = memo(function NewTabRow({ windowId, shift = null, clip 
         {quiet && !hovered ? null : <Button variant="icon"
           icon="chevron.down"
           size="s"
+          radius={concentric(radius.chrome, (layout.rowHeight - iconButton.s.box) / 2)}
           weight="semibold"
           color={hovered ? theme.textSecondary : theme.textTertiary}
           tooltip="Open and recently closed tabs"
