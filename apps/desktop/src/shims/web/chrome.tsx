@@ -143,8 +143,9 @@ export function VisualEffect({ material = "popover", cornerRadius, style, ...pro
   useVisualEffectMark(mark);
   const dark = useSurfaceDark();
   const fill = materialFill(material, dark);
-  const opaque = shellOverPages();
-  useGlassLook(mark, { material: nativeMaterial(material), appearance: dark ? "dark" : "light" }, nativeGlassFor(opaque));
+  const native = nativeGlassBehindWindow();
+  const opaque = shellOverPages() || native;
+  useGlassLook(mark, { material: nativeMaterial(material), appearance: dark ? "dark" : "light" }, native);
   const glass: Style = {
     backgroundColor: opaque ? opaqueColor(fill) : fill,
     backdropFilter: opaque ? undefined : "blur(24px) saturate(180%)",
@@ -297,7 +298,7 @@ export function GlassEffect({ cornerRadius = 0, tint, glassStyle = "regular", da
   }, []);
   const tahoe = nativeLiquidGlass(ardiaHost);
   const backdropKey = backdropKeyOf(useScopedTheme()?.backdrop, theme === "dark");
-  useGlassLook(frame, { material: clear ? "clear" : "regular", tint: glassTint(tint), group: group ?? undefined, appearance: theme }, tahoe && !scrolled && nativeGlassFor(shellOverPages()));
+  useGlassLook(frame, { material: clear ? "clear" : "regular", tint: glassTint(tint), group: group ?? undefined, appearance: theme }, tahoe && nativeGlassBehindWindow());
   const { outer, glassLayer } = glassFrameStyles(style, cornerRadius);
   if (scrolled) {
     const radiusStyle: React.CSSProperties = { borderRadius: fallbackRadius(cornerRadius) };
