@@ -806,8 +806,18 @@ Access handles that sites stored in IndexedDB before 158. What changed in Helium
   360 applied patches, 3 hits).
 - **Pins.** `upstream-pins.mjs --check` now lets `prebuilt.json`'s `chromium` lag the pins (never lead them): the
   published Windows engine is still 158.0.8127.36 until one is built from these pins.
-- **Not built yet.** No engine, series base or prebuilt has been built from these pins: the series bases in
-  `scripts/engine/series-bases.tsv` need `series-base-pack.py` on a builder, then the Mac, Linux and Windows engines.
+- **Patches.** `chromium-helium-branding-mac.patch` is remade for `add-cache-encryption-flag`, which adds a switch to
+  `helium_flag_choices.h` and an entry to `helium_flag_entries.h`; the new entry's text says Ardia flag. The rest of the
+  series applies to a .88 tree unchanged.
+- **Mac build** (2026-11-26, `mbp2`, a second tree in `~/chromium-build-158-88` beside the live 158.0.8127.36 one):
+  step 1 6 min (deps cloned fresh), step 3 2 min 49 s, then 1 h 54 min to the `drag-to-pin` compile error. Step 3 ran
+  again on the reset tree with `out/` kept, and the rebuild took 1 h 11 min (17,000 steps; the reset gave the files
+  Helium changes and our series reverts new mtimes, so protoc and everything generated from protos rebuilt).
+  `helium-check-build.py` passes. Published: Mac engine `engine-659b17962c65` and the mac/arm64 series base; the app
+  built on it shows 158.0.8127.88 in chrome://version and loads pages.
+- **`series.py apply` can skip a patch that isn't applied.** Its "already applied" test falls back to `patch -R` with
+  patch's default fuzz, and a patch that only deletes lines (`chromium-helium-behavior-switches-off`) passes it on a
+  tree without it. `series.py check` catches the difference; on this tree the patch went in with `git apply`.
 
 ### 0.21.1 → 0.21.2 (Chromium 157.0.8103.50, 2026-11-12)
 
