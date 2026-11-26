@@ -1,4 +1,4 @@
-import { diagnosticsSample, hardwareInfo, onAppEvent, type HardwareInfo } from "../../platform/app";
+import { diagnosticsSample, hardwareInfo, type HardwareInfo } from "../../platform/app";
 import { onHoverLost, onWindowUnpainted, systemState, type HoverLostEpisode, type WindowUnpaintedRecord } from "../../platform/performance";
 import { controlStatus } from "../../platform/control";
 import { call } from "../../platform/engine";
@@ -9,7 +9,7 @@ import { useBrowser } from "../browser/store";
 import { capture, consentNow, consentToken, counted, isSharing, saveContext, stillValid, onConsentPeriodChange, type ConsentToken } from "./client";
 import { nativeConsent } from "./nativeConsent";
 import { hoverLostProperties, oneOf } from "./hoverLost";
-import { dropHeldQuitEpisode, dropQuitEpisodes, holdQuitEpisode, retireHeldQuitEpisode, sendCommittedQuitEpisode } from "./hoverLostAtQuit";
+import { dropQuitEpisodes, holdQuitEpisode, retireHeldQuitEpisode, sendCommittedQuitEpisode } from "./hoverLostAtQuit";
 import { formatRecentPages, readRecentPages, type RecentPage, type SavedContext } from "./savedContext";
 import { noteDragsEnded } from "./stuckDrags";
 import { noteEngineCliTotals } from "./cliCounts";
@@ -352,9 +352,6 @@ export function trackWindowUnpainted(r: WindowUnpaintedRecord) {
 export function watchEngineReports() {
   void sendCommittedQuitEpisode();
   onHoverLost(trackHoverLost);
-  onAppEvent((e) => {
-    if (e.type === "quitCancelled") dropHeldQuitEpisode();
-  });
   onConsentPeriodChange(dropQuitEpisodes);
   onWindowUnpainted(trackWindowUnpainted);
 }
