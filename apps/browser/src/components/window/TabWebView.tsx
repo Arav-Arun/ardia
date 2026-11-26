@@ -16,7 +16,7 @@ import { opaqueCard } from "../ui/opaqueCard";
 import { handOff, takeHandOff, wantsPage } from "../../state/tabs/tabPages";
 import { noteDiscarded, noteGone, noteReady } from "../../state/tabs/tabLifecycle";
 import { noteTabHidden, presentTab, trackPageArrival } from "../../state/tabs/busyTabWatch";
-import { notePageCommit, noteWebKitPage, persistEngine, refusedVideoSiteOf } from "../../state/engines/actions";
+import { forgetCommittedDocumentIfGone, notePageCommit, noteWebKitPage, persistEngine, refusedVideoSiteOf } from "../../state/engines/actions";
 import { offerWebKit } from "../../state/engines/siteMoves";
 import { heldBySwap, watchFirstPaint } from "../../state/engines/engineSwap";
 import { useRetiringEngine } from "../../state/engines/hooks";
@@ -147,6 +147,7 @@ function EngineWebView({ tabId, visible, selected = true, warm, peekOf, engine, 
     persistEngine(tabId, engine);
     return () => {
       forgetPageDocument(tabId, documentReporter);
+      forgetCommittedDocumentIfGone(tabId);
       if (wentRetired.current) return;
       if (handedToTab()) return forgetPeekHandover(tabId);
       noteGone(tabId);

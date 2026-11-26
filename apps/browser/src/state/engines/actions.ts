@@ -53,17 +53,20 @@ let nextDocument = 0;
 const hostLabel = (site: string) => new URL(site).hostname.replace(/^www\./, "");
 
 export function notePageCommit(tabId: string, committedAt: number | undefined) {
-  if (typeof committedAt !== "number" || !(committedAt > 0)) return;
-  watchClosedTabs();
+  if (typeof committedAt !== "number" || !(committedAt > 0) || !store().tabs[tabId]) return;
   const last = committedDocuments.get(tabId);
   if (last && committedAt === last.at) return;
   committedDocuments.set(tabId, { id: ++nextDocument, at: committedAt });
 }
 
 export function notePageEnded(tabId: string) {
-  watchClosedTabs();
+  if (!store().tabs[tabId]) return void committedDocuments.delete(tabId);
   const last = committedDocuments.get(tabId);
   committedDocuments.set(tabId, { id: ++nextDocument, at: last?.at ?? 0 });
+}
+
+export function forgetCommittedDocumentIfGone(tabId: string) {
+  if (!store().tabs[tabId]) committedDocuments.delete(tabId);
 }
 
 export const pageDocumentOf = (tabId: string) => committedDocuments.get(tabId)?.id ?? 0;
@@ -358,7 +361,6 @@ function watchClosedTabs() {
       visits.close(id);
     }
     for (const id of webKitSites.keys()) if (!s.tabs[id] || tabEngine(s, id) !== "webkit") webKitSites.delete(id);
-    for (const id of committedDocuments.keys()) if (!s.tabs[id]) committedDocuments.delete(id);
   });
 }
 

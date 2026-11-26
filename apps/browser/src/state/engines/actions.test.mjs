@@ -1070,6 +1070,26 @@ test("S11: TabWebView reports every live document commit to notePageCommit", asy
   assert.match(handler, /if \(!retired\) notePageCommit\(tabId, committedAt\);/);
 });
 
+test("S11: a closed tab's committed document is forgotten when its page view goes, and a gone tab records none", async () => {
+  const { forgetCommittedDocumentIfGone, pageDocumentOf } = await import("./actions.ts");
+  const w = S().createWindow({ url: "https://news.example/a" });
+  const tabId = S().newTab(w, { url: "https://news.example/b" });
+  notePageCommit(tabId, 1000);
+  const document = pageDocumentOf(tabId);
+  assert.ok(document > 0);
+  forgetCommittedDocumentIfGone(tabId);
+  assert.equal(pageDocumentOf(tabId), document, "an open tab keeps its document");
+  S().closeTab(tabId);
+  forgetCommittedDocumentIfGone(tabId);
+  assert.equal(pageDocumentOf(tabId), 0);
+  notePageCommit(tabId, 2000);
+  notePageEnded(tabId);
+  assert.equal(pageDocumentOf(tabId), 0);
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("../../components/window/TabWebView.tsx", import.meta.url), "utf8");
+  assert.match(source, /forgetPageDocument\(tabId, documentReporter\);\s*forgetCommittedDocumentIfGone\(tabId\);/);
+});
+
 test("S12: text typed during the 10 s cooldown triggers the unsaved-work prompt instead of switching unconditionally", async (t) => {
   const { tabId, flush } = await queuedDisneyFromHulu(t, 5_000_000);
   webviews.set(tabId, { evaluate: unsavedWork(true), pageCookies: () => Promise.resolve([]) });
