@@ -263,6 +263,8 @@ enum MainMenu {
       hidden(.moveTabDown),
       hidden(.moveTabUp),
       cmd(.searchTabs),
+      hidden(.sortTabs, arg: "site"),
+      hidden(.sortTabs, arg: "title"),
       hidden(.tabSwitcher, arg: "forward"),
       hidden(.tabSwitcher, arg: "backward"),
       hidden(.returnToPinnedUrl),
