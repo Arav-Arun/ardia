@@ -4,6 +4,8 @@ import { useBrowser } from "../../../../../apps/browser/src/state/browser/store"
 import { useScopedTheme } from "../../../../../apps/browser/src/components/ui/theme";
 import { materialFill } from "./materials";
 import type { MiddleClickEvent } from "./MouseArea";
+import { LiquidGlassLayer } from "./liquidGlass";
+import { backdropKeyOf } from "./liquidGlassOptics";
 import { edgeGain, fallbackRadius, highlightMask, maskStyle, peakGain, shapeMask, type RimCurve, type RimProfile, type ShadeProfile } from "./glassRim";
 
 type Style = ViewStyle & Record<string, unknown>;
@@ -224,8 +226,9 @@ export function GlassEffect({ cornerRadius = 0, tint, glassStyle = "regular", da
   const g = GLASS[theme];
   const clear = glassStyle === "clear";
   const filter = clear ? glassFilter(1, (1 + g.slope) / 2, g.offset / 2) : glassFilter(g.saturate, g.slope, g.offset);
+  const backdropKey = backdropKeyOf(useScopedTheme()?.backdrop, theme === "dark");
   const host = useRef<HTMLDivElement | null>(null);
-  const [scrolled, setScrolled] = useState(false);
+  const [scrolled, setScrolled] = useState<boolean | null>(null);
   useLayoutEffect(() => setScrolled(inScrollView(host.current)), []);
   const { opacity, ...rest } = StyleSheet.flatten(style) ?? {};
   const fade: React.CSSProperties = opacity === undefined ? {} : { opacity: Number(opacity) };
@@ -244,13 +247,27 @@ export function GlassEffect({ cornerRadius = 0, tint, glassStyle = "regular", da
   const shape = shapeMask(cornerRadius);
   const clip: React.CSSProperties = shape ? {} : { borderRadius: fallbackRadius(cornerRadius), overflow: "hidden" };
   const shaped = shape ? maskStyle(shape) : {};
+  const fallback = (
+    <div style={{ ...layer, ...clip }}>
+      <div style={backdrop(filter, shaped)} />
+      {tint ? <div style={{ ...layer, ...shaped, background: tint }} /> : null}
+      <div style={backdrop(`brightness(${1 + peakGain(g.rim)})`, highlight ? maskStyle(highlight) : { mask: fallbackBands(g.rim), WebkitMask: fallbackBands(g.rim) })} />
+    </div>
+  );
   return (
     <View pointerEvents="none" {...props} style={rest}>
-      <div ref={host} style={{ ...layer, ...clip }}>
-        <div style={{ ...backdrop(filter, shaped), ...fade }} />
-        {tint ? <div style={{ ...layer, ...shaped, background: tint, ...fade }} /> : null}
-        <div style={{ ...backdrop(`brightness(${1 + peakGain(g.rim)})`, highlight ? maskStyle(highlight) : { mask: fallbackBands(g.rim), WebkitMask: fallbackBands(g.rim) }), ...fade }} />
-      </div>
+      <LiquidGlassLayer
+        hostRef={(node) => void (host.current = node)}
+        theme={theme}
+        glassStyle={glassStyle}
+        cornerRadius={cornerRadius}
+        radius={fallbackRadius(cornerRadius)}
+        tint={tint}
+        opacity={opacity === undefined ? undefined : Number(opacity)}
+        enabled={scrolled === false}
+        backdropKey={backdropKey}
+        fallback={fallback}
+      />
       {children}
     </View>
   );

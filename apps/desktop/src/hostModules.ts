@@ -12,6 +12,7 @@ import { appModuleFallback } from "./appModuleFallbacks.ts";
 import { shareModuleMethod } from "./hostShare.ts";
 import { cliModuleMethod } from "./hostCli.ts";
 import { configModuleMethod } from "./hostConfig.ts";
+import { glassAppearanceSupported } from "./liquidGlassSupport.ts";
 import { BOOKMARKS_EXPORT_CALL, bookmarksExportCall } from "./hostBookmarksExport.ts";
 
 const synchronousDefaults: Record<string, Record<string, unknown>> = {
@@ -21,7 +22,6 @@ const synchronousDefaults: Record<string, Record<string, unknown>> = {
 };
 
 const synchronousMethods: Record<string, Record<string, unknown>> = {
-  ArdiaGlassEffect: { isLiquidGlass: false },
   ArdiaCli: { installedVersion: null },
   ArdiaConfig: { readFile: { status: "missing" } },
   ArdiaAutomation: { reply: undefined, broadcast: undefined },
@@ -98,6 +98,7 @@ export function resolveHostModule(host: ArdiaHost, name: string, method: string)
       return callHost(call, profile, args, host);
     };
   }
+  if (name === "ArdiaGlassEffect" && method === "isLiquidGlass") return () => glassAppearanceSupported(host);
   const constants = host.bootstrap.nativeModules?.[name];
   const sync = synchronousMethods[name];
   if (sync && method in sync) return () => constants?.[method] ?? sync[method];

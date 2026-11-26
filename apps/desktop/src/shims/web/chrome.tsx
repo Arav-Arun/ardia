@@ -13,6 +13,9 @@ import { watchOutsidePresses } from "../../outsidePress";
 import { OutsidePressIgnoreContext } from "../../outsidePressScope";
 import { markWindowDrag, WINDOW_DRAG_ROUTES, watchWindowDrag, type WindowDragHost } from "../../windowDrag";
 import type { MiddleClickEvent } from "./MouseArea";
+import { LiquidGlassLayer } from "./liquidGlass";
+import { backdropKeyOf } from "./liquidGlassOptics";
+import { nativeLiquidGlass, webLiquidGlassAllowed } from "../../liquidGlassSupport";
 import { edgeGain, fallbackRadius, highlightMask, maskStyle, peakGain, shapeMask, type RimCurve, type RimProfile, type ShadeProfile } from "./glassRim";
 
 type Style = ViewStyle & Record<string, unknown>;
@@ -229,6 +232,7 @@ function fallbackBands(rim: RimProfile) {
 }
 
 const layer: React.CSSProperties = { position: "absolute", inset: 0, pointerEvents: "none" };
+const GLASS_LAYERS = { "data-ardia-glass-layers": "" };
 
 function backdrop(filter: string, extra?: Record<string, string>): React.CSSProperties {
   return { ...layer, backdropFilter: filter, WebkitBackdropFilter: filter, ...extra };
@@ -286,12 +290,14 @@ export function GlassEffect({ cornerRadius = 0, tint, glassStyle = "regular", da
   const host = useRef<HTMLDivElement | null>(null);
   const frame = useRef<View & Element>(null);
   const group = useContext(GlassGroupContext);
-  const [scrolled, setScrolled] = useState(false);
+  const [scrolled, setScrolled] = useState<boolean | null>(null);
   useLayoutEffect(() => {
     setScrolled(inScrollView(host.current));
     frame.current?.setAttribute("data-ardia-glass-effect", "");
   }, []);
-  useGlassLook(frame, { material: clear ? "clear" : "regular", tint: glassTint(tint), group: group ?? undefined, appearance: theme }, !scrolled && nativeGlassFor(shellOverPages()));
+  const tahoe = nativeLiquidGlass(ardiaHost);
+  const backdropKey = backdropKeyOf(useScopedTheme()?.backdrop, theme === "dark");
+  useGlassLook(frame, { material: clear ? "clear" : "regular", tint: glassTint(tint), group: group ?? undefined, appearance: theme }, tahoe && !scrolled && nativeGlassFor(shellOverPages()));
   const { outer, glassLayer } = glassFrameStyles(style, cornerRadius);
   if (scrolled) {
     const radiusStyle: React.CSSProperties = { borderRadius: fallbackRadius(cornerRadius) };
@@ -310,14 +316,28 @@ export function GlassEffect({ cornerRadius = 0, tint, glassStyle = "regular", da
   const shape = shapeMask(cornerRadius);
   const clip: React.CSSProperties = shape ? {} : { borderRadius: fallbackRadius(cornerRadius), overflow: "hidden" };
   const shaped = shape ? maskStyle(shape) : {};
+  const fallback = (
+    <div style={{ ...layer, ...clip }}>
+      <div style={backdrop(filter, shaped)} />
+      {tint ? <div style={{ ...layer, ...shaped, background: tint }} /> : null}
+      <div style={backdrop(`brightness(${1 + peakGain(g.rim)})`, highlight ? maskStyle(highlight) : { mask: fallbackBands(g.rim), WebkitMask: fallbackBands(g.rim) })} />
+    </div>
+  );
   return (
     <View pointerEvents="none" {...props} style={outer}>
       <View ref={frame} pointerEvents="none" style={glassLayer}>
-        <div ref={host} data-ardia-glass-layers="" style={{ ...layer, ...clip }}>
-          <div style={backdrop(filter, shaped)} />
-          {tint ? <div style={{ ...layer, ...shaped, background: tint }} /> : null}
-          <div style={backdrop(`brightness(${1 + peakGain(g.rim)})`, highlight ? maskStyle(highlight) : { mask: fallbackBands(g.rim), WebkitMask: fallbackBands(g.rim) })} />
-        </div>
+        <LiquidGlassLayer
+          hostRef={(node) => void (host.current = node)}
+          hostProps={GLASS_LAYERS}
+          theme={theme}
+          glassStyle={glassStyle}
+          cornerRadius={cornerRadius}
+          radius={fallbackRadius(cornerRadius)}
+          tint={tint}
+          enabled={scrolled === false && webLiquidGlassAllowed(ardiaHost)}
+          backdropKey={backdropKey}
+          fallback={fallback}
+        />
       </View>
       {children}
     </View>
