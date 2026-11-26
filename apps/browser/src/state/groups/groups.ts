@@ -233,6 +233,7 @@ export const createGroupsSlice: StateCreator<BrowserState, [], [], GroupsSlice> 
   },
 
   ungroup(groupId) {
+    let mirrored = false;
     set((s) => {
       const group = s.groups[groupId];
       if (!group) return {};
@@ -248,9 +249,10 @@ export const createGroupsSlice: StateCreator<BrowserState, [], [], GroupsSlice> 
         if (s.windows[windowId]) next = withGroupsPlaced(next, windowId, next.groups);
       }
       if (!shared) return { groups: next.groups, windows: next.windows };
-      noteSharedGroupUngroup();
+      mirrored = new Set(removing.map((g) => g.windowId)).size > 1;
       return keepUngroupedSplitsHome({ ...s, groups: next.groups, windows: next.windows }, group.windowId, new Set(removing.flatMap((g) => g.tabIds)));
     });
+    if (mirrored) noteSharedGroupUngroup();
   },
 
   newNestedGroup(parentId) {

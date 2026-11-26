@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 const { useBrowser } = await import("../browser/store.ts");
 const { inPinnedContainer, pinKeyOf, viewTabIds } = await import("../browser/model.ts");
-const { hasPage } = await import("../tabs/pageSession.ts");
+const { ASLEEP, adoptOf, adoptedPage, hasPage, loadedPage, wakeOf, withWake } = await import("../tabs/pageSession.ts");
+const { pendingRestore } = await import("../tabs/adoptIds.ts");
+const { familyKeyOf, navigationTo } = await import("../browser/model.ts");
 const { splitTabIds } = await import("../splits/splits.ts");
 const { createGroupsSlice } = await import("./groups.ts");
 
@@ -130,84 +132,20 @@ for (const home of ["original window", "mirror window"]) {
     assert.equal(kept[0].orientation, split.orientation);
     assert.deepEqual(splitTabIds(kept[0]).map((id) => pinKeyOf(S().tabs[id])), [one, two]);
     for (const w of all) {
-      for (const id of [one, two]) assert.equal(rows(w).filter((t) => pinKeyOf(t) === id).length, w === to ? 1 : 0, "listed once, only beside its split");
+      if (w === to) continue;
+      for (const id of [one, two]) assert.equal(rows(w).filter((t) => pinKeyOf(t) === id).length, 1, "the other windows list each tab once, as a regular tab");
     }
-    oneCopyInSplitWindows(all);
-    keptPages([one, two], before);
-    for (const id of [one, two]) assert.equal(S().tabs[id].windowId, to, "the live pages moved into the split");
+    for (const id of [one, two]) {
+      assert.ok(S().tabs[id], "the tab survives");
+      assert.deepEqual(S().tabs[id].page.nav, before[id], "with its page, without a reload");
+    }
+    assert.equal(Object.values(S().groups).filter((g) => g.pinned).length, 0, "no folder is left in any window");
   });
 }
 
-test("grouping an ungrouped split again leaves no regular copy beside a pane in any window", () => {
-  const { all, one, two, to } = splitFolder("mirror window");
-  S().groupTabs(splitTabIds(splitsIn(to)[0]), { pinned: true, name: "Again" });
-  oneCopyInSplitWindows(all);
-  for (const w of all) {
-    assert.equal(splitsIn(w).length, 1, "the pinned split is mirrored once per window");
-    for (const id of [one, two]) assert.equal(rows(w).filter((t) => pinKeyOf(t) === id).length, 1);
-  }
-});
-
-test("creating a split after a shared ungroup doesn't recreate a pane as a regular tab", () => {
-  const { a, all, one, two, to } = splitFolder("original window");
-  S().setFocusedWindow(a);
-  const x = S().newTab(a, { url: "https://x.example/", background: true });
-  const y = S().newTab(a, { url: "https://y.example/", background: true });
-  assert.ok(S().createSplit([x, y]));
-  oneCopyInSplitWindows(all);
-  for (const w of all) {
-    for (const id of [one, two]) assert.equal(rows(w).filter((t) => pinKeyOf(t) === id).length, w === to ? 1 : 0);
-  }
-  S().setFocusedWindow(to);
-  const pane = splitTabIds(splitsIn(to)[0])[0];
-  const z = S().newTab(to, { url: "https://z.example/", background: true });
-  S().openSplitPane(to, { anchorTabId: pane, tabId: z });
-  oneCopyInSplitWindows(all);
-});
-
 const site = (name) => `https://${name}.example/`;
 const listed = (w, name) => S().windows[w].tabIds.filter((id) => S().tabs[id].url === site(name) && S().tabs[id].profileId === "default");
-const tabIn = (w, name) => listed(w, name)[0];
 const folderOf = (w, group) => Object.values(S().groups).find((g) => g.windowId === w && g.pinned && pinKeyOf(g) === pinKeyOf(S().groups[group]));
-
-test("ungrouping a folder's mirror while another window is focused leaves one copy beside a split already open", () => {
-  S().hydrate({});
-  const a = S().createWindow({ url: site("x") });
-  S().updateSettings({ shareTabsAcrossWindows: true });
-  const b = S().createWindow({ url: site("y") });
-  S().newTab(b, { url: site("z") });
-  S().setFocusedWindow(b);
-  S().createSplit([tabIn(a, "y"), tabIn(a, "x")]);
-  assert.equal(listed(a, "x").length, 1, "the split pane is A's only X");
-  assert.equal(listed(b, "x").length, 0, "a regular split stays in its window");
-  const group = S().groupTabs([tabIn(b, "x"), tabIn(b, "z")].filter(Boolean), { pinned: true });
-  S().ungroup(folderOf(a, group).id);
-  assert.equal(listed(a, "x").length, 1, "one X in A, the split pane");
-  assert.ok(splitsIn(a).some((v) => splitTabIds(v).includes(tabIn(a, "x"))));
-  oneCopyInSplitWindows([a, b]);
-});
-
-test("a split made after ungrouping, while another window is focused, doesn't recreate a pane as a regular tab", () => {
-  S().hydrate({});
-  const a = S().createWindow({ url: site("t1") });
-  S().updateSettings({ shareTabsAcrossWindows: true });
-  const b = S().createWindow({ url: site("t2") });
-  const c = S().createWindow({ url: site("t3") });
-  for (const n of [4, 5, 6, 7]) S().newTab(a, { url: site(`t${n}`), background: true });
-  const d = S().createWindow({ url: site("t8") });
-  S().setFocusedWindow(c);
-  const group = S().groupTabs([tabIn(b, "t1"), tabIn(b, "t3")], { pinned: true });
-  S().activate(tabIn(d, "t3"));
-  S().activate(tabIn(d, "t1"));
-  S().groupTabs([tabIn(a, "t1"), tabIn(a, "t8")]);
-  S().ungroup(folderOf(a, group).id);
-  S().setFocusedWindow(a);
-  S().setFocusedWindow(d);
-  assert.ok(S().createSplit([tabIn(a, "t7"), tabIn(a, "t3")]));
-  assert.equal(listed(a, "t7").length, 1, "one t7 in A, the split pane");
-  assert.equal(listed(a, "t3").length, 1);
-  oneCopyInSplitWindows([a, b, c, d]);
-});
 
 function splitOnlyFolder(extra) {
   S().hydrate({});
@@ -215,7 +153,7 @@ function splitOnlyFolder(extra) {
   S().updateSettings({ shareTabsAcrossWindows: true });
   const b = S().createWindow({ url: site("two") });
   if (extra) S().newTab(b, { url: site(extra), background: true });
-  const group = S().groupTabs([tabIn(b, "one"), tabIn(b, "two")], { pinned: true });
+  const group = S().groupTabs([listed(b, "one")[0], listed(b, "two")[0]], { pinned: true });
   S().setFocusedWindow(b);
   S().createSplit(S().groups[group].tabIds);
   assert.equal(splitsIn(a).length, 1, "the pinned split is mirrored");
@@ -227,12 +165,12 @@ test("ungrouping a split folder keeps open a window that held only its mirrored 
   S().ungroup(folderOf(b, group).id);
   assert.ok(S().windows[a], "the other window stays open");
   assert.ok(S().windowOrder.includes(a));
-  assert.equal(S().windows[a].tabIds.filter((id) => S().tabs[id].profileId === "default").length, 1, "with a new tab in place of the panes");
+  assert.deepEqual(rows(a).map((t) => t.url).sort(), [site("one"), site("two")], "keeping the folder's tabs as regular tabs");
+  assert.equal(splitsIn(a).length, 0, "without a second split");
   assert.equal(splitsIn(b).length, 1, "the split stays where it was ungrouped");
-  oneCopyInSplitWindows([a, b]);
 });
 
-test("ungrouping a split folder keeps a page loaded in both windows' panes recoverable", () => {
+test("ungrouping a split folder keeps another page that a pane in the other window has open", () => {
   const { a, b, group } = splitOnlyFolder("keep");
   const away = S().tabs[splitTabIds(splitsIn(a)[0]).find((id) => S().tabs[id].url === site("one"))];
   const home = S().tabs[splitTabIds(splitsIn(b)[0]).find((id) => S().tabs[id].url === site("one"))];
@@ -246,13 +184,124 @@ test("ungrouping a split folder keeps a page loaded in both windows' panes recov
   }));
   const closed = S().closedTabs.length;
   S().ungroup(folderOf(b, group).id);
-  assert.equal(S().tabs[away.id], undefined, "the other window's pane leaves with the split");
-  assert.ok(hasPage(S().tabs[home.id]), "the home pane keeps its page");
-  assert.deepEqual(S().closedTabs.slice(closed).map((t) => t.tab.url), [later], "the other page can be reopened from Recently Closed");
-  assert.ok(S().windows[a]);
-  oneCopyInSplitWindows([a, b]);
-  S().reopenClosed(a);
-  assert.equal(Object.values(S().tabs).filter((t) => t.url === later && hasPage(t)).length, 1, "and reopening it brings the page back, live once");
+  assert.ok(hasPage(S().tabs[home.id]), "the pane in the split keeps its page");
+  assert.ok(S().tabs[away.id] && hasPage(S().tabs[away.id]), "the other window's page stays open");
+  assert.equal(S().tabs[away.id].url, later, "at its own address");
+  assert.notEqual(pinKeyOf(S().tabs[away.id]), pinKeyOf(S().tabs[home.id]), "as a tab of its own");
+  assert.equal(S().closedTabs.length, closed, "nothing goes to Recently Closed");
+  assert.equal(splitsIn(a).length, 0);
+  assert.equal(splitsIn(b).length, 1);
+});
+const pageAs = (id, page) => useBrowser.setState((st) => ({ tabs: { ...st.tabs, [id]: { ...st.tabs[id], page } } }));
+const owns = (t) => hasPage(t) || !!wakeOf(t);
+
+test("after a restart, ungrouping keeps a pane in another window that moved to another page, with its restore", () => {
+  const { a, b, group } = splitOnlyFolder();
+  const away = splitTabIds(splitsIn(a)[0]).find((id) => S().tabs[id].url === site("one"));
+  const moved = `${site("one")}moved`;
+  S().updateTab(away, { url: moved });
+  pageAs(away, withWake(ASLEEP, "restore:old-a"));
+  S().ungroup(folderOf(b, group).id);
+  assert.ok(S().tabs[away], "the pane survives");
+  assert.equal(S().tabs[away].url, moved, "at the page it moved to");
+  assert.equal(pendingRestore(S().tabs[away]), "old-a", "still able to restore its page");
+});
+
+test("ungrouping keeps a regular tab that shares a folder tab's family and waits on a restore", () => {
+  S().hydrate({});
+  const a = S().createWindow({ url: site("one") });
+  const two = S().newTab(a, { url: site("two"), background: true });
+  S().updateSettings({ shareTabsAcrossWindows: true });
+  const b = S().createWindow({ url: site("b") });
+  const group = S().groupTabs([S().windows[a].tabIds[0], two], { pinned: true });
+  const member = S().groups[group].tabIds[0];
+  const extra = S().newTab(b, { url: site("one"), background: true });
+  useBrowser.setState((st) => ({ tabs: { ...st.tabs, [extra]: { ...st.tabs[extra], pinKey: pinKeyOf(st.tabs[member]), page: withWake(ASLEEP, "restore:old-b") } } }));
+  S().ungroup(folderOf(b, group).id);
+  const kept = Object.values(S().tabs).some((t) => pendingRestore(t) === "old-b" || adoptOf(t) === "restore:old-b");
+  assert.ok(kept, "the tab waiting on restore:old-b is still there");
+  assert.equal(Object.values(S().groups).filter((g) => g.pinned).length, 0);
+});
+
+function seeded(seed) {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function generatedLayout(seed) {
+  const r = seeded(seed);
+  const pick = (list) => list[Math.floor(r() * list.length)];
+  S().hydrate({});
+  const all = [];
+  for (let i = 0, n = 2 + Math.floor(r() * 2); i < n; i++) all.push(S().createWindow({ url: site(`w${i}`) }));
+  for (let i = 0; i < 3; i++) S().newTab(all[0], { url: site(`t${i}`), background: true });
+  if (r() < 0.3) {
+    const other = S().createProfile({ name: "Work" });
+    const w = S().createWindow({ url: site("p0"), profileId: other });
+    S().newTab(w, { url: site("p1"), background: true });
+    if (r() < 0.5) S().switchProfile(pick(all), other);
+  }
+  S().updateSettings({ shareTabsAcrossWindows: true });
+  const where = pick(all);
+  const members = viewTabIds(S(), where).filter((id) => !inPinnedContainer(S(), id)).slice(0, 2 + Math.floor(r() * 2));
+  S().setFocusedWindow(where);
+  const group = S().groupTabs(members, { pinned: true });
+  const split = r() < 0.6;
+  if (split) {
+    S().setFocusedWindow(pick(all));
+    S().createSplit(S().groups[group].tabIds.slice(0, 2));
+  }
+  const key = pinKeyOf(S().groups[group]);
+  const copies = () => Object.values(S().groups).filter((g) => g.pinned && pinKeyOf(g) === key);
+  for (const g of copies()) {
+    for (const id of g.tabIds) {
+      const roll = r();
+      if (roll < 0.25) pageAs(id, loadedPage(navigationTo(S().tabs[id].url)));
+      else if (roll < 0.4) pageAs(id, withWake(ASLEEP, `restore:old-${id}`));
+      else if (roll < 0.5) pageAs(id, adoptedPage(`restore:old-${id}`, navigationTo(S().tabs[id].url)));
+      if (r() < 0.15 && S().tabs[id]) S().updateTab(id, { url: site(`moved${Math.floor(r() * 9)}`) });
+    }
+  }
+  if (r() < 0.35) {
+    const member = S().tabs[pick(pick(copies()).tabIds)];
+    const extra = S().newTab(pick(all), { url: member.url, background: true });
+    useBrowser.setState((st) => ({ tabs: { ...st.tabs, [extra]: { ...st.tabs[extra], pinKey: pinKeyOf(member) } } }));
+    if (r() < 0.5) pageAs(extra, withWake(ASLEEP, `restore:old-${extra}`));
+  }
+  if (r() < 0.5) S().setFocusedWindow(pick(all));
+  return { from: pick(copies()), key, split };
+}
+
+test("across 200 generated layouts, ungrouping a shared folder never drops a tab that owns a page or takes another tab's address", () => {
+  for (let seed = 1; seed <= 200; seed++) {
+    const { from, key, split } = generatedLayout(seed);
+    const before = S();
+    const owners = Object.values(before.tabs).filter(owns);
+    const families = new Map();
+    for (const t of Object.values(before.tabs)) families.set(familyKeyOf(t), new Set([...(families.get(familyKeyOf(t)) ?? []), t.url]));
+    const familyOf = Object.fromEntries(Object.values(before.tabs).map((t) => [t.id, familyKeyOf(t)]));
+    const closed = before.closedTabs.length;
+    S().ungroup(from.id);
+    const at = `seed ${seed}`;
+    assert.equal(S().closedTabs.length, closed, `${at}: nothing goes to Recently Closed`);
+    for (const o of owners) {
+      const t = S().tabs[o.id];
+      const sameOpen = Object.values(S().tabs).some((x) => x.id !== o.id && owns(x) && familyOf[x.id] === familyKeyOf(o) && x.url === o.url);
+      assert.ok((t && owns(t)) || sameOpen, `${at}: ${o.url} stays open`);
+    }
+    for (const t of Object.values(S().tabs)) if (familyOf[t.id]) assert.ok(families.get(familyOf[t.id]).has(t.url), `${at}: ${t.id} keeps an address of its own tab`);
+    assert.ok(!Object.values(S().groups).some((g) => g.pinned && pinKeyOf(g) === key), `${at}: no folder is left`);
+    if (split) assert.ok(Object.values(S().splits).every((v) => v.windowId === from.windowId), `${at}: the split stays in one window`);
+    for (const v of Object.values(S().splits)) S().separateSplit(v.id);
+    const open = new Set(Object.values(S().tabs).filter(owns).map((t) => t.url));
+    const tokens = new Set(Object.values(S().tabs).flatMap((t) => [pendingRestore(t), adoptOf(t)?.replace(/^restore:/, "")]));
+    const pagesOpen = new Set(Object.values(S().tabs).filter(owns).map((t) => `${familyOf[t.id]} ${t.url}`));
+    for (const o of owners) assert.ok((pendingRestore(o) && tokens.has(pendingRestore(o))) || open.has(o.url) || pagesOpen.has(`${familyKeyOf(o)} ${o.url}`), `${at}: ${o.url} is still open once the split is separated`);
+  }
 });
 
 test("without shared tabs, ungrouping a pinned folder keeps its tabs in the invoking window", () => {

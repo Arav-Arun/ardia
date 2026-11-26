@@ -1,66 +1,31 @@
 import type { BrowserState } from "../browser/store";
-import type { BrowserWindow, Tab } from "../browser/types";
-import { inPinnedContainer, pinKeyOf } from "../browser/model";
-import { frozenOn, hasPage, withNavigationAt } from "../tabs/pageSession";
-import { splitTabIds, withPaneIds } from "../splits/splits";
-import { removeTabs } from "../tabs/tabs";
-import { keepShownProfile } from "../tabs/tabShare";
-
-const swapIn = (ids: string[], a: string, b: string) => (ids.includes(a) || ids.includes(b) ? ids.map((x) => (x === a ? b : x === b ? a : x)) : ids);
-
-function swapWindow(w: BrowserWindow, a: string, b: string): BrowserWindow {
-  const active = Object.entries(w.activeTabIds);
-  const touched = active.some(([, id]) => id === a || id === b);
-  return { ...w, tabIds: swapIn(w.tabIds, a, b), ...(touched ? { activeTabIds: Object.fromEntries(active.map(([p, id]) => [p, id === a ? b : id === b ? a : id])) } : {}) };
-}
-
-function handPageOver(s: BrowserState, holder: Tab, copy: Tab): BrowserState {
-  const windows = { ...s.windows, [holder.windowId]: swapWindow(s.windows[holder.windowId]!, holder.id, copy.id), [copy.windowId]: swapWindow(s.windows[copy.windowId]!, holder.id, copy.id) };
-  const tabs = {
-    ...s.tabs,
-    [holder.id]: { ...holder, windowId: copy.windowId, page: withNavigationAt(holder) },
-    [copy.id]: { ...copy, windowId: holder.windowId, page: frozenOn(copy, holder.id) },
-  };
-  let splits = s.splits;
-  for (const [id, v] of Object.entries(s.splits)) {
-    const ids = swapIn(splitTabIds(v), holder.id, copy.id);
-    if (ids !== splitTabIds(v)) (splits === s.splits ? (splits = { ...s.splits }) : splits)[id] = withPaneIds(v, ids);
-  }
-  let groups = s.groups;
-  for (const g of Object.values(s.groups)) {
-    const ids = swapIn(g.tabIds, holder.id, copy.id);
-    if (ids !== g.tabIds) (groups === s.groups ? (groups = { ...s.groups }) : groups)[g.id] = { ...g, tabIds: ids };
-  }
-  let selection = s.selection;
-  for (const [w, ids] of Object.entries(s.selection)) {
-    const next = swapIn(ids, holder.id, copy.id);
-    if (next !== ids) selection = { ...selection, [w]: next };
-  }
-  return { ...s, tabs, windows, splits, groups, selection };
-}
+import type { Tab } from "../browser/types";
+import { inPinnedContainer, newId, pinKeyOf } from "../browser/model";
+import { hasPage } from "../tabs/pageSession";
+import { splitTabIds } from "../splits/splits";
 
 export function keepUngroupedSplitsHome(s: BrowserState, homeId: string, members: Set<string>): BrowserState {
   if (!Object.keys(s.splits ?? {}).length) return s;
   const leaving = (v: BrowserState["splits"][string]) => splitTabIds(v).every((id) => members.has(id) && s.tabs[id] && !inPinnedContainer(s, id));
-  const home = new Map<string, string>();
-  for (const v of Object.values(s.splits)) if (v.windowId === homeId && leaving(v)) for (const id of splitTabIds(v)) home.set(pinKeyOf(s.tabs[id]!), id);
+  const homeSplits = Object.values(s.splits).filter((v) => v.windowId === homeId && leaving(v));
+  const home = new Set(homeSplits.flatMap((v) => splitTabIds(v)).map((id) => pinKeyOf(s.tabs[id]!)));
   const away = Object.values(s.splits).filter((v) => v.windowId !== homeId && leaving(v) && splitTabIds(v).every((id) => home.has(pinKeyOf(s.tabs[id]!))));
-  if (!away.length) return s;
-  let next = s;
-  const gone: string[] = [];
-  const closing: string[] = [];
-  for (const v of away) {
-    for (const id of splitTabIds(v)) {
-      const pane = next.tabs[id]!;
-      const mine = next.tabs[home.get(pinKeyOf(pane))!]!;
-      if (hasPage(pane) && !hasPage(mine)) {
-        next = handPageOver(next, pane, mine);
-        home.set(pinKeyOf(pane), pane.id);
-        gone.push(mine.id);
-      } else (hasPage(pane) ? closing : gone).push(pane.id);
-    }
+  const panes = new Set([...homeSplits, ...away].flatMap((v) => splitTabIds(v)));
+  const shown = new Map<string, string>();
+  for (const t of Object.values(s.tabs)) {
+    if (panes.has(t.id) || !hasPage(t) || !home.has(pinKeyOf(t)) || inPinnedContainer(s, t.id)) continue;
+    shown.set(pinKeyOf(t), t.url);
   }
-  const leavingIds = [...gone, ...closing];
-  for (const w of new Set(leavingIds.map((x) => next.tabs[x]!.windowId))) next = keepShownProfile(next, w, leavingIds);
-  return removeTabs(removeTabs(next, closing, true), gone, false);
+  const live = [...panes].map((id) => s.tabs[id]!).filter(hasPage);
+  live.sort((a, b) => Number(b.windowId === homeId) - Number(a.windowId === homeId) || b.lastActiveAt - a.lastActiveAt);
+  let tabs: Record<string, Tab> | null = null;
+  for (const t of live) {
+    const url = shown.get(pinKeyOf(t));
+    if (url === undefined) shown.set(pinKeyOf(t), t.url);
+    else if (url !== t.url) (tabs ??= { ...s.tabs })[t.id] = { ...t, pinKey: newId("tab") };
+  }
+  if (!away.length && !tabs) return s;
+  const splits = { ...s.splits };
+  for (const v of away) delete splits[v.id];
+  return { ...s, splits, ...(tabs ? { tabs } : {}) };
 }

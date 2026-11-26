@@ -42,6 +42,11 @@ test("shared-folder ungroup counts one action across its mirrors and respects co
   s().ungroup(mirror.id);
   assert.equal(work.takeWorkCounts().shared_groups_ungrouped, 1);
   assert.equal(work.takeWorkCounts().shared_groups_ungrouped, 0);
+  s().hydrate({});
+  const only = s().createWindow({ url: "https://solo.example/" });
+  s().updateSettings({ shareTabsAcrossWindows: true });
+  s().ungroup(s().groupTabs([s().windows[only].tabIds[0]], { pinned: true }));
+  assert.equal(work.takeWorkCounts().shared_groups_ungrouped, 0, "a folder in one window is not counted");
   noteSharedGroupUngroup();
   client.setSharing(false, "settings");
   assert.equal(work.takeWorkCounts().shared_groups_ungrouped, 0, "stopping sharing drops pending counts");
