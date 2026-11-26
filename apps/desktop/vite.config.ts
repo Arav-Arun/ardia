@@ -15,6 +15,7 @@ const replacements = new Map([
   [here("../browser/src/platform/livePersistence.ts"), here("./src/livePersistence.ts")],
   [here("../browser/src/platform/fieldTiming.ts"), here("./src/fieldTiming.ts")],
   [here("../browser/src/platform/pickConfirmation.ts"), here("./src/pickConfirmation.ts")],
+  [here("../browser/src/platform/sharedFolders.ts"), here("./src/hostSharedFolders.ts")],
   [here("../../packages/core/src/suggestFetcher.ts"), here("./src/suggestFetcher.ts")],
   [here("../browser/src/components/settings/settingsIndex.ts"), here("./src/settingsIndex.ts")],
   [here("../browser/src/components/settings/Form.tsx"), here("./src/settingsForm.tsx")],
@@ -64,12 +65,16 @@ const importerReplacements = new Map([
   [`${here("../browser/src/state/report/actions.ts")}\0${here("../browser/src/state/commands/appCommands.ts")}`, here("./src/reportProblem.ts")],
   [`${here("../browser/src/components/ui/Panel.tsx")}\0${here("../browser/src/components/ui/Popover.tsx")}`, here("./src/GlassPanel.tsx")],
   [`${here("../browser/src/components/ui/index.ts")}\0${here("../browser/src/components/window/SidebarDock.tsx")}`, here("./src/glassUi.tsx")],
+  [`${here("../browser/src/components/ui/index.ts")}\0${here("../browser/src/App.tsx")}`, here("./src/rootBackdropUi.tsx")],
   [`${here("../browser/src/components/ui/index.ts")}\0${here("../browser/src/components/omnibox/PanelBox.tsx")}`, here("./src/glassUi.tsx")],
   [`${here("../browser/src/state/windows/controls.ts")}\0${here("../browser/src/components/window/WindowControls.tsx")}`, here("./src/captionControls.ts")],
   [`${here("../browser/src/state/app/appMenu.ts")}\0${here("../browser/src/components/window/BrowserWindowControls.tsx")}`, here("./src/clusterAppMenu.ts")],
   [`${here("../browser/src/state/windows/layout.ts")}\0${here("../browser/src/components/sidebar/Sidebar.tsx")}`, here("./src/sidebarHeaderLayout.ts")],
   [`${here("../browser/src/state/windows/layout.ts")}\0${here("../browser/src/components/downloads/Downloads.tsx")}`, here("./src/sidebarHeaderLayout.ts")],
   [`${here("../browser/src/state/windows/layout.ts")}\0${here("../browser/src/components/sidebar/AddressBar.tsx")}`, here("./src/sidebarHeaderLayout.ts")],
+  [`${here("../browser/src/components/sidebar/SidebarPages.tsx")}\0${here("../browser/src/components/sidebar/Sidebar.tsx")}`, here("./src/SidebarPagerTrack.tsx")],
+  [`${here("../browser/src/state/windows/profilePager.ts")}\0${here("../browser/src/components/sidebar/SidebarPage.tsx")}`, here("./src/sidebarPageStyle.ts")],
+  [`${here("../browser/src/components/window/ProfileSwipe.tsx")}\0${here("../browser/src/App.tsx")}`, here("./src/ProfileTintTimeline.tsx")],
 ]);
 const siteMeadow = here("../site/src/scripts/meadow/");
 const siteMeadowKey = pathKey(siteMeadow);
