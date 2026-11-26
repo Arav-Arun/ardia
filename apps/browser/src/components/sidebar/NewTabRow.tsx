@@ -2,6 +2,7 @@ import { memo } from "react";
 import { Animated, Pressable, View } from "react-native";
 import { Button, concentric, ContextMenuArea, continuousCorners, drawnSymbol, HoverFill, iconButton, perLook, radius, sidebarPoints, useHover, withAlpha } from "../ui";
 import { hex, layout, useTheme } from "../ui/theme";
+import { useSettings } from "../../state/browser/hooks";
 import { newTab } from "../../state/tabs/actions";
 import { openNewTabInSplit } from "../../state/splits/actions";
 import { splitViewAvailable } from "../../state/splits/splits";
@@ -23,6 +24,7 @@ const BUTTONS_ROOM = TAB_ROW.trailing + TAB_ROW.closeSlot + TAB_ROW.trailing;
 export const NewTabRow = memo(function NewTabRow({ windowId, shift = null, clip = null }: { windowId: string; shift?: Animated.Value | null; clip?: ClipSource | null }) {
   const theme = useTheme();
   const tokens = useSidebarTokens();
+  const showTabMenuButton = useSettings((s) => s.showTabMenuButton);
   const quiet = useQuietRows();
   const { hovered, hoverProps } = useHover();
   const newTabHint = useShortcutHint("newTab");
@@ -64,7 +66,7 @@ export const NewTabRow = memo(function NewTabRow({ windowId, shift = null, clip 
                   flexDirection: "row",
                   alignItems: "center",
                   paddingLeft: TAB_ROW.contentLeft,
-                  paddingRight: BUTTONS_ROOM,
+                  paddingRight: showTabMenuButton ? BUTTONS_ROOM : TAB_ROW.trailing * 2,
                 },
                 moved.style as object,
               ]}
@@ -80,7 +82,7 @@ export const NewTabRow = memo(function NewTabRow({ windowId, shift = null, clip 
         </Pressable>
       </ContextMenuArea>
       <View {...movedButtons} ref={movedButtonsRef} style={[{ position: "absolute", right: TAB_ROW.trailing, flexDirection: "row", alignItems: "center" }, movedButtons.style as object]}>
-        {quiet && !hovered ? null : <Button variant="icon"
+        {!showTabMenuButton || (quiet && !hovered) ? null : <Button variant="icon"
           icon="chevron.down"
           size="s"
           radius={concentric(radius.chrome, (layout.rowHeight - iconButton.s.box) / 2)}
