@@ -762,8 +762,11 @@ The pins live in four files that have to agree: `env.sh` (`CHROMIUM_VERSION`, `H
 `scripts/windows/engine/prebuilt.json` (its `chromium`, and its `source`, a full commit). `scripts/engine/upstream-pins.mjs --check`
 fails, offline, when one is missing or malformed (versions and tags are dotted numbers, commits full hashes) or when
 they disagree on the Chromium version, the helium-chromium tag or commit, or a platform tag that isn't a release of the
-pinned helium-chromium; its test runs it in every pull request (Checks, "repository, vouch and stale tests"). Bump
-them in one pull request.
+pinned helium-chromium; its test runs it in every pull request (Checks, "repository, vouch and stale tests"). The
+first three move together in one pull request. `prebuilt.json` records the Windows engine that is actually published,
+so its `chromium` may lag the others until a Windows engine is built from the new pins (never lead them), and it has
+to match the `[chromium] version` in `scripts/windows/engine/helium-pins.ini` at its own `source` commit; `--check`
+reads that commit with `git show` and only warns when the clone doesn't have it.
 
 The Upstream pins workflow (`.github/workflows/upstream.yml`) runs every Monday and compares the pins with the latest
 published releases of helium-chromium, helium-macos, helium-linux and helium-windows and with `chromium_version.txt` at
@@ -792,8 +795,9 @@ Access handles that sites stored in IndexedDB before 158. What changed in Helium
 - **Series.** helium-chromium added `helium/core/add-cache-encryption-flag` (an `enable-cache-encryption` switch and
   chrome://flags entry, off by default), `helium/core/pins/persistent-pins-pref` and `helium/ui/drag-to-pin` (pin and
   unpin by dragging in Chrome's own tab strip), and removed `helium/core/sync/provider/repository` (its sync moved to
-  prefs). helium-macos folded `rebel/macos/sparkle-integration`, `helium/macos/updater/fixup-sparkle-glue` and
-  `helium/macos/updater/disable-default-updater` into one `helium/macos/updater/sparkle-glue`. helium-linux's and
+  prefs). helium-macos folded `rebel/macos/sparkle-integration` and `helium/macos/updater/fixup-sparkle-glue` into one
+  `helium/macos/updater/sparkle-glue`, and moved `helium/macos/updater/disable-default-updater`'s change (the help page's
+  updater falls back to `version_updater_basic.cc`) into `sparkle2-integration`; both stay skipped. helium-linux's and
   helium-windows' series are unchanged. `deps.ini` moves uBlock Origin to 1.77.0, which we omit; `flags.gn` is unchanged.
 - **Skips.** `SKIP` swaps the three old Sparkle patches for `sparkle-glue` (its only shared file with an applied patch,
   `chrome_command_ids.h`, is a separate hunk of `native-translation-context-option`) and adds `persistent-pins-pref`: it

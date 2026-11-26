@@ -122,6 +122,16 @@ test("a published Windows engine on an older Chromium than the pins is not a dis
   assert.equal(partOf(compare(older, CURRENT), "windows", "chromium").state, "current");
 });
 
+test("a Windows engine whose chromium differs from the pins at its source commit is a disagreement", () => {
+  const stale = pins((f) => ({ ...f, windowsPrebuilt: JSON.stringify({ chromium: "157.0.1.2", source: SOURCE }) }));
+  const atSource = windowsIni("0.22.2", "0.22.2.1");
+  const problems = checkPinConsistency(stale, { windowsIniAtSource: atSource });
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /prebuilt\.json chromium 157\.0\.1\.2 doesn't match scripts\/windows\/engine\/helium-pins\.ini \[chromium\] version 158\.0\.8127\.36 at its source/);
+  const matching = pins((f) => ({ ...f, windowsPrebuilt: JSON.stringify({ chromium: "158.0.8127.36", source: SOURCE }) }));
+  assert.deepEqual(checkPinConsistency(matching, { windowsIniAtSource: atSource }), []);
+});
+
 test("the repository's pin files agree with each other", () => {
   assert.deepEqual(checkPinConsistency(readPins()), []);
 });

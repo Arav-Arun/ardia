@@ -122,7 +122,7 @@ export function readPins(root = REPO_ROOT) {
   return pinsFromFiles(files);
 }
 
-export function checkPinConsistency(pins) {
+export function checkPinConsistency(pins, { windowsIniAtSource = null } = {}) {
   const problems = [];
   const versions = [
     [`${PIN_FILES.env} CHROMIUM_VERSION`, pins.env.chromium],
@@ -170,6 +170,12 @@ export function checkPinConsistency(pins) {
   ]);
   if (compareVersions(pins.windowsPrebuilt.chromium, pins.env.chromium) > 0) {
     problems.push(`Chromium version: ${PIN_FILES.windowsPrebuilt} chromium ${pins.windowsPrebuilt.chromium} is newer than ${PIN_FILES.env} CHROMIUM_VERSION ${pins.env.chromium}`);
+  }
+  if (windowsIniAtSource !== null) {
+    const builtFrom = windowsIniPins(windowsIniAtSource).chromium;
+    if (builtFrom !== pins.windowsPrebuilt.chromium) {
+      problems.push(`Chromium version: ${PIN_FILES.windowsPrebuilt} chromium ${pins.windowsPrebuilt.chromium} doesn't match ${PIN_FILES.windowsIni} [chromium] version ${builtFrom} at its source ${pins.windowsPrebuilt.source.slice(0, 12)}`);
+    }
   }
   agree("helium-chromium tag", [
     [`${PIN_FILES.env} HELIUM_TAG`, pins.env.heliumChromium],
@@ -440,6 +446,16 @@ function gitShowReader(root = REPO_ROOT) {
     execFileSync("git", ["-C", root, "show", `${commit}:${path}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
 }
 
+function windowsIniAt(source) {
+  if (typeof source !== "string" || !COMMIT.test(source)) return null;
+  try {
+    return gitShowReader()(source, PIN_FILES.windowsIni);
+  } catch {
+    console.error(`upstream-pins: ${PIN_FILES.windowsPrebuilt} source ${source.slice(0, 12)} isn't in this clone, so its chromium wasn't checked against the pins it was built from`);
+    return null;
+  }
+}
+
 async function fetchPrebuiltPins({ source, client, repo, readAtCommit }) {
   let text = null;
   if (readAtCommit) {
@@ -570,7 +586,7 @@ async function main(argv) {
     return 0;
   }
   const pins = readPins();
-  const problems = checkPinConsistency(pins);
+  const problems = checkPinConsistency(pins, { windowsIniAtSource: windowsIniAt(pins.windowsPrebuilt.source) });
   if (problems.length) {
     for (const problem of problems) console.error(`upstream-pins: ${problem}`);
     console.error("upstream-pins: the pin files disagree; fix them first (docs/engine-build.md, “Tracking upstream”)");
