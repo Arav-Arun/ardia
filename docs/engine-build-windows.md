@@ -375,10 +375,9 @@ a Windows build needs.
 | `chromium-enterprise-context-info.patch` | applies | OS-neutral | Shared; `getContextInfo` answers with the device's context in a build without cloud content analysis, which Windows is too (`enterprise_cloud_content_analysis` defaults to false in its tree), so Endpoint Verification gets an answer there as well. Applies strictly to the Windows tree's copy of the file (checked 2026-11-16) |
 | `chromium-ardia-layer.patch` | applies | OS-neutral | It links `chrome/browser/ardia` into the Mac framework only; Windows needs the same link once the `ac_*` layer builds there |
 
-The current plan (`series_win.py`) selects the 90 shared lines a Windows tree takes (untagged and `mac`), skips 4 of
-them, takes 24 `linux` lines and adds 23 Windows patches: 133 in all. On the Windows tree (2026-11-24) 132 apply
-strictly; `chromium-safe-storage-one-key-for-every-data-dir.patch`, a `mac` line, needs fuzz 1 for helium-windows'
-context and can't change without moving the Mac key. The Windows-only patches follow them (`series-win`, [below](#windows-only-patches)). The file classes above come from paths, so a
+The current plan (`series_win.py`) selects the 93 shared lines a Windows tree takes (untagged and `mac`), skips 7 of
+them, takes 24 `linux` lines and adds 24 Windows patches: 134 in all, each applying strictly on the Windows tree at
+158.0.8127.88 (2026-11-26). The Windows-only patches follow them (`series-win`, [below](#windows-only-patches)). The file classes above come from paths, so a
 shared file can still call into Mac-only code: two did (`chrome.dll` failed to link without the guard patch).
 
 ### Windows-only patches
@@ -394,6 +393,7 @@ fails when a line has no row here, a row's Line doesn't match it, a Removable wh
 |---|---|---|---|
 | `chromium-mac-secure-input-window-focus.patch` | skip | Its files are `render_widget_host_view_mac.mm` and its unit test `render_widget_host_view_mac_unittest.mm`, neither of which Windows builds | With the Mac patch, once the Chromium we build has its upstream fix |
 | `chromium-safe-storage-no-silent-reset.patch` | skip | Its context is helium-macos' `prevent-reset-on-keychain-unavailability`, which a Windows tree doesn't have. Windows still needs a counterpart: a DPAPI decrypt failure must not silently replace the key (`dpapi_key_provider.cc`, `os_crypt_win.cc`) | With the Mac patch; a Windows counterpart would be its own `series-win` line |
+| `chromium-safe-storage-one-key-for-every-data-dir.patch` | skip | Its only change is the `KeychainKeyProvider` condition inside `#if BUILDFLAG(IS_MAC)` in `BrowserProcessImpl::PreMainMessageLoopRun`, and its trailing context comes from the Mac-only startup-error callback, so on Windows it went in only with fuzz and changed nothing that compiles | With the Mac patch |
 | `chromium-extension-state-mirror-hooks.patch` | skip | Its hooks feed the WebKit replica of each extension, which is Mac only; BUILD.gn's `if (!is_win)` list keeps the replica's engine calls out of the Windows engine | With the Mac patch |
 | `chromium-embedder-discard-veto.patch` | skip | Its callback seam in `DiscardEligibilityPolicy` is registered only by the Mac layer (`ac_discard_veto.mm`), so on Windows it would do nothing but move the engine key; Windows keeps pages through `chromium-win-discard-asks-the-host.patch` (`g_ardia_keeps_page`) | When Windows takes the Mac's discard veto in place of its own hook (#3860) |
 | `chromium-mac-async-root-frame-sink-teardown.patch` | skip | Its only change, the root frame sink's `maybe_wait_on_destruction` (#3688), is compiled for macOS alone, so taking it would move the Windows engine key and change nothing | With the Mac patch |
