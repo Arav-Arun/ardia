@@ -70,6 +70,8 @@ SKIP = {
     'helium/core/pins/migrate-legacy-pins.patch': 'Helium\'s shared pinned tabs: per-window pins merged into one set',
     'helium/core/pins/persistent-pins-pref.patch': 'Helium\'s shared pinned tabs: a pref and Settings toggle for them',
     'helium/ui/pins-ui.patch': 'Helium\'s tab strip UI for its shared pins; Ardia draws its own sidebar',
+    'helium/ui/drag-to-pin.patch':
+        'pins by dragging in Chrome\'s own tab strip, which ArdiaCore never shows; needs sync-splits\' public SetTabsPinned',
 }
 
 LINUX_SKIP = {

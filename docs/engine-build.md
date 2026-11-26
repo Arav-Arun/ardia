@@ -674,7 +674,7 @@ fetched, and the hunks of its patches that edit them are left out.
 | `helium/ui/crash-dialog` | a startup infobar asking to upload crashes to `crash.helium.computer` |
 | `helium/core/use-system-python3`, `helium/core/rbe-nativelink-config`, `helium/macos/rbe-linux-clang-wrapper` | Helium's build setup (`.gn`'s `script_executable` would rerun every action; its remote build) |
 | `helium/macos/chromium-signing` | Helium's signing flow; `scripts/release.sh` signs Ardia |
-| `helium/core/pins/{pin-state,pin-sync,sync-splits,sync-drags,hibernate-on-close,pinned-url,open-links-outside,migrate-legacy-pins,persistent-pins-pref}`, `helium/ui/pins-ui` | Helium 0.22.2's shared pinned tabs (and 0.22.4's pref that turns them off) and their tab-strip UI; Ardia keeps its own pins in the sidebar |
+| `helium/core/pins/{pin-state,pin-sync,sync-splits,sync-drags,hibernate-on-close,pinned-url,open-links-outside,migrate-legacy-pins,persistent-pins-pref}`, `helium/ui/{pins-ui,drag-to-pin}` | Helium 0.22.2's shared pinned tabs (and 0.22.4's pref that turns them off), their tab-strip UI and 0.22.4's pinning by drag in that tab strip; Ardia keeps its own pins in the sidebar |
 
 The `guard` stage checks, before anything is applied, that every skipped patch is still in Helium's series and that no
 applied patch's added lines touch what a skip protects, beyond the reviewed hits in `GUARD_ALLOWED`. Some patches
@@ -798,9 +798,12 @@ Access handles that sites stored in IndexedDB before 158. What changed in Helium
 - **Skips.** `SKIP` swaps the three old Sparkle patches for `sparkle-glue` (its only shared file with an applied patch,
   `chrome_command_ids.h`, is a separate hunk of `native-translation-context-option`) and adds `persistent-pins-pref`: it
   edits `helium_pins_service.cc` and the other files only the skipped pins patches create, and nothing later in the
-  series refers to its pref. `drag-to-pin` stays applied: it edits only Chromium's own tab-strip files and needs none of
-  the skipped pins patches. The `guard` stage passes on both platforms with the same reviewed hits (mac: 22 skips, 372
-  applied patches, 4 hits; linux: 18 skips, 361 applied patches, 3 hits).
+  series refers to its pref. `drag-to-pin` is skipped too: its `helium_pins_drag_util.cc` calls
+  `TabStripModel::SetTabsPinned`, which only the skipped `sync-splits` makes public, so the engine didn't compile with
+  it (the first Mac build stopped there). It is a leaf: no later patch of helium-chromium, helium-macos or helium-linux
+  touches its nine files, and it changes only Chrome's own tab strip, which ArdiaCore never shows. The `guard` stage
+  passes on both platforms with the same reviewed hits (mac: 23 skips, 371 applied patches, 4 hits; linux: 19 skips,
+  360 applied patches, 3 hits).
 - **Pins.** `upstream-pins.mjs --check` now lets `prebuilt.json`'s `chromium` lag the pins (never lead them): the
   published Windows engine is still 158.0.8127.36 until one is built from these pins.
 - **Not built yet.** No engine, series base or prebuilt has been built from these pins: the series bases in
