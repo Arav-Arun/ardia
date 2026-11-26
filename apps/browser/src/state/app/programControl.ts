@@ -82,7 +82,7 @@ useControlServer.subscribe(updateIndicator);
 let lastCliControl = programControlOn(useBrowser.getState());
 let lastShowCliPill = showControlPill(useBrowser.getState());
 
-useBrowser.subscribe((state) => {
+useBrowser.subscribeTo(["settings"], (state) => {
   const cliOn = programControlOn(state);
   const showPill = showControlPill(state);
   if (!cliOn && lastCliControl) indicatorDismissed = false;
