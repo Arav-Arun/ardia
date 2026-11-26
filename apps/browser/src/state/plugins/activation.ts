@@ -5,10 +5,10 @@ import { useBrowser } from "../browser/store";
 import { isEligibleTab } from "../automation/automationWindows";
 import { notePlugin } from "../telemetry/pluginCounts";
 import { consentToken, type ConsentToken } from "../telemetry/choice";
-import { activeManifest, currentPlugins, usePlugins } from "./store";
+import { activeManifest, currentPlugins, usePlugins, type PluginsStore } from "./store";
 import { onProcessStopped, restartProcess, superviseProcess } from "./process";
 
-export const ACTIVATION_TIMEOUT_MS = 10_000;
+const ACTIVATION_TIMEOUT_MS = 10_000;
 
 export class PluginActivationError extends Error {
   readonly plugin: string;
@@ -26,10 +26,9 @@ const readyRuns = new Map<string, number>();
 const waiters = new Map<string, Set<Waiter>>();
 const readyListeners = new Set<(name: string, run: number) => void>();
 
-export const needsHost = (m: PluginManifest) => m.main !== null || m.sidecar !== null;
-export const runsEagerly = (m: PluginManifest) => needsHost(m) && (m.main === null || startsEagerly(m.activationEvents));
+const needsHost = (m: PluginManifest) => m.main !== null || m.sidecar !== null;
+const runsEagerly = (m: PluginManifest) => needsHost(m) && (m.main === null || startsEagerly(m.activationEvents));
 export const shouldRun = (name: string, hash: string, m: PluginManifest) => runsEagerly(m) || activated.get(name) === hash;
-export const isActivated = (name: string) => activated.has(name);
 
 export function onPluginReady(listener: (name: string, run: number) => void): () => void {
   readyListeners.add(listener);
@@ -153,12 +152,32 @@ function urlTriggers(tabs: ReturnType<typeof useBrowser.getState>["tabs"], befor
   }
 }
 
+const hasUrlActivation = (s: Pick<PluginsStore, "listings" | "records" | "order">) =>
+  s.order.some((name) => {
+    const m = activeManifest(s, name);
+    return !!m?.main && urlActivationHosts(m.activationEvents).length > 0;
+  });
+
+let stopUrlWatch: (() => void) | null = null;
+
+function syncUrlWatch(s: Pick<PluginsStore, "listings" | "records" | "order">) {
+  const wanted = hasUrlActivation(s);
+  if (wanted && !stopUrlWatch) stopUrlWatch = useBrowser.subscribeTo(["tabs"], (now, prev) => urlTriggers(now.tabs, prev.tabs));
+  else if (!wanted && stopUrlWatch) {
+    stopUrlWatch();
+    stopUrlWatch = null;
+  }
+}
+
+export const watchingUrlActivation = () => stopUrlWatch !== null;
+
 export function watchActivation() {
   if (watching) return;
   watching = true;
   usePlugins.subscribe((s, prev) => {
     if (s.processes !== prev.processes || s.listings !== prev.listings || s.records !== prev.records) checkActivations();
+    if (s.listings !== prev.listings || s.records !== prev.records || s.order !== prev.order) syncUrlWatch(s);
   });
   onProcessStopped((name) => void readyRuns.delete(name));
-  useBrowser.subscribeTo(["tabs"], (s, prev) => urlTriggers(s.tabs, prev.tabs));
+  syncUrlWatch(currentPlugins());
 }

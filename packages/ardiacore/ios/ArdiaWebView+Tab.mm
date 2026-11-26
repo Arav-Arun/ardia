@@ -29,10 +29,6 @@ const CFTimeInterval kHiddenNewTabLinkSeconds = 1;
 
 @implementation ArdiaWebView (Tab)
 
-+ (NSString *)appTabIdContainingView:(NSView *)view {
-  return ardia_host::AppTabIdContaining(view);
-}
-
 - (ArdiaCoreAdoption)windowTakes:(ArdiaCoreTab *)tab {
   ArdiaCoreWindow *coreWindow = _standalone ? nil : self.controller.coreWindow;
   return coreWindow ? [coreWindow canAdoptTab:tab] : ArdiaCoreAdoptionAdopted;
@@ -97,6 +93,7 @@ const CFTimeInterval kHiddenNewTabLinkSeconds = 1;
   [self markTemporary];
   [self pushPeekModifier];
   [self pushSelectionPopover];
+  [self pushFieldProvider];
   [self bindRestoreKey];
   [self takePageReports];
   [tab deliverHeldPageMessages];
@@ -198,6 +195,10 @@ const CFTimeInterval kHiddenNewTabLinkSeconds = 1;
 
 + (void)setLittleArdiaOpensNewTabLinks:(BOOL)enabled {
   gLittleArdiaOpensNewTabLinks = enabled;
+}
+
++ (BOOL)littleArdiaOpensNewTabLinksInPlace {
+  return gLittleArdiaOpensNewTabLinks;
 }
 
 + (void)setPopupsOpenAsTabs:(BOOL)enabled {

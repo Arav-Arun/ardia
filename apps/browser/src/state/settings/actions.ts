@@ -4,6 +4,8 @@ import { tabLayoutOf } from "../browser/model";
 import { steppedInterfaceScale } from "../../lib/interfaceScale";
 import { noteTabLayoutSwitch } from "../telemetry/tabLayoutCounts";
 import type { ConsentToken } from "../telemetry/choice";
+import { noteSettingsPick } from "../telemetry/settingsPickerCounts";
+import type { Settings } from "./settings";
 
 export const updateSettings = storeAction("updateSettings");
 export const setSearchEngine = storeAction("setSearchEngine");
@@ -17,6 +19,36 @@ export function setShortcutOverride(id: string, combo: Shortcut | null) {
   if (combo) next[id] = [combo.key, ...combo.modifiers];
   else delete next[id];
   useBrowser.getState().updateSettings({ shortcuts: next });
+}
+
+export function chooseAddressBar(addressBar: Settings["addressBar"]) {
+  useBrowser.getState().updateSettings({ addressBar });
+  noteSettingsPick("addressBar", addressBar);
+}
+
+export function chooseScrollToolbar(hideToolbarWhileScrolling: boolean) {
+  useBrowser.getState().updateSettings({ hideToolbarWhileScrolling });
+  noteSettingsPick("scrollToolbar", hideToolbarWhileScrolling ? "hide" : "keep");
+}
+
+export function chooseCommandBarPlacement(commandBarPlacement: Settings["commandBarPlacement"]) {
+  useBrowser.getState().updateSettings({ commandBarPlacement });
+  noteSettingsPick("commandBar", commandBarPlacement === "field" ? "field" : "centred");
+}
+
+export function chooseAfterClosingTab(afterClosingTab: Settings["afterClosingTab"]) {
+  useBrowser.getState().updateSettings({ afterClosingTab });
+  noteSettingsPick("afterClosingTab", ({ tabAbove: "above", tabBelow: "below", previouslyActive: "recent" } as const)[afterClosingTab]);
+}
+
+export function chooseTabSwitcherOrder(tabSwitcherOrder: Settings["tabSwitcherOrder"]) {
+  useBrowser.getState().updateSettings({ tabSwitcherOrder });
+  noteSettingsPick("tabSwitcherOrder", tabSwitcherOrder === "recent" ? "recent" : "in_order");
+}
+
+export function chooseTabSwitcherView(tabSwitcherView: Settings["tabSwitcherView"]) {
+  useBrowser.getState().updateSettings({ tabSwitcherView });
+  noteSettingsPick("tabSwitcherView", ({ thumbnails: "thumbnails", compactList: "compact_list", none: "none" } as const)[tabSwitcherView]);
 }
 
 export function setMouseShortcut(id: string, button: Shortcut | null) {

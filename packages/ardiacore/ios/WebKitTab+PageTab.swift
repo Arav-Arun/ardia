@@ -10,10 +10,29 @@ extension WebKitTab: PageTab {
   var extensionHost: String? { get { nil } set {} }
   var warm: Bool { get { false } set {} }
   var neighbour: Bool { get { false } set {} }
-  var pageColor: String? { get { nil } set {} }
-  var contentsBackgroundColor: NSColor? { get { nil } set {} }
+  var pageColor: String? {
+    get { life.pageColor }
+    set {
+      life.pageColor = newValue
+      applyPageColor(newValue)
+    }
+  }
+
+  var contentsBackgroundColor: NSColor? {
+    get { life.contentsBackgroundColor }
+    set {
+      life.contentsBackgroundColor = newValue
+      if pageBackgroundColor == nil, let color = newValue { webView?.underPageBackgroundColor = color }
+      applyBackdrop(newValue)
+    }
+  }
+
   var shownURL: String? { get { nil } set {} }
-  var frozen: Bool { get { false } set {} }
+  var frozen: Bool {
+    get { pageFrozen }
+    set { pageFrozen = newValue }
+  }
+
   var mediaCaptureSourceId: String? { nil }
 
   func startPage() { start() }
@@ -24,8 +43,19 @@ extension WebKitTab: PageTab {
   }
 
   func fillWithPage() {
-    guard let webView, webView.frame != bounds else { return }
-    webView.frame = bounds
+    guard let webView else { return }
+    guard webView.superview !== self else {
+      if webView.frame != bounds { webView.frame = bounds }
+      return
+    }
+    for view in subviews where !(view is WKWebView) && view.frame != bounds { view.frame = bounds }
+    noteFullScreenFrameKept()
+  }
+
+  private func noteFullScreenFrameKept() {
+    guard pageMedia.fullscreen, !pageMedia.fullscreenFrameKept else { return }
+    pageMedia.fullscreenFrameKept = true
+    ArdiaEvents.emit("webKit.counted", data: ArdiaConsentStamp.begin().onto(["name": "fullscreenFrameKept"]))
   }
 
   func followInterfaceScale() {
@@ -45,7 +75,8 @@ extension WebKitTab: PageTab {
   }
 
   func runPageCommand(_ name: String) {
-    if name == "systemPrint" { print() }
+    if name == "systemPrint" { return print() }
+    runPageFileCommand(name)
   }
 
   func capturePicture(_ scale: Double, completion: @escaping ([String: Any]?) -> Void) {
@@ -71,7 +102,7 @@ extension WebKitTab: PageTab {
 
   func securityInfo(_ completion: @escaping ([String: Any]) -> Void) { completion(securityInfo()) }
 
-  func showDevTools(panel: String?) {}
+  func showDevTools(panel: String?) { showWebKitDevTools(panel: panel) }
 
   func downloadImage(_ url: String, maxPixels: Int, completion: @escaping ([String: Any]?) -> Void) {
     downloadFavicon(url, completion: completion)
@@ -85,25 +116,35 @@ extension WebKitTab: PageTab {
 
   func exitPictureInPicture() { setPictureInPicture(false) { _ in } }
 
-  func pageCookies(_ urls: [String], completion: @escaping ([[String: Any]]?) -> Void) { completion([]) }
+  func armElementPick() -> Double { 0 }
 
-  func openBlockedPopup(_ popupId: String, always: Bool) {}
+  func takeElementPick(_ armed: Double) -> Bool { false }
 
-  func resolvePasswordPrompt(_ action: String, username: String?, password: String?) {}
+  func pageCookies(_ urls: [String], completion: @escaping ([[String: Any]]?) -> Void) {
+    WebKitHub.shared.engineCookies(profile: profile, urls: urls.compactMap(URL.init(string:)), completion: completion)
+  }
 
-  func resolveAutofillPrompt(_ promptId: Int, action: String) {}
+  func siteData(_ request: [String: Any], completion: @escaping ([String: Any]?) -> Void) { completion(nil) }
+
+  func openBlockedPopup(_ popupId: String, always: Bool) { openBlocked(popupId, always: always) }
+
+  func resolvePasswordPrompt(_ action: String, username: String?, password: String?) {
+    WebKitHub.shared.logins.resolveSave(self, action: action, username: username, password: password)
+  }
+
+  func resolveAutofillPrompt(_ promptId: Int, action: String) { WebKitAutofill.shared.resolve(self, promptId: promptId, action: action) }
 
   func answerAutofillPrompt(_ promptId: Int, action: String) -> Bool { false }
 
   func executeExtensionAction(_ extensionId: String) -> String? { nil }
 
-  func resolveDisplayMedia(_ requestId: String, sourceId: String?, audio: Bool) {}
+  func resolveDisplayMedia(_ requestId: String, sourceId: String?, audio: Bool) { answerDisplayCapture(requestId, sourceId: sourceId) }
 
-  func notificationAction(_ notificationId: String, action: String) {}
+  func notificationAction(_ notificationId: String, action: String) { WebKitHub.shared.notifications.act(notificationId, action: action, in: self) }
 
-  func resolveUnresponsive(terminate: Bool) {}
+  func resolveUnresponsive(terminate: Bool) { resolveHang(terminate: terminate) }
 
-  func discard(unload: Bool) -> String { Self.unsupported }
+  func discard(unload: Bool) -> String { discardPage(unload: unload) }
 
   func sleepIfHidden(for seconds: Double) -> [NSNumber] { [-1] }
 }

@@ -1,6 +1,8 @@
 import type { Fields } from "./decode";
 import { at, flag, KEY, KEY_RULE, KEYWORD, LIMITS, list, matching, NAME, object, only, pluginFile, symbolOf, text, unique, type Check } from "./pluginChecks";
 import { command, SPLIT_SIDES, tool, whenOf, type CommandSpec, type PageSide, type ToolSpec } from "./pluginCommands";
+import { passwordManagerOf, type PasswordManagerSpec } from "./pluginPasswordManager";
+import { pageBarOf, siteSwitchesOf, type PageBarSpec, type SiteSwitchSpec } from "./pluginPageBar";
 import { settingsOf, type SettingsSpec } from "./pluginRows";
 import { program, type ProgramSpec } from "./pluginRuntime";
 
@@ -23,19 +25,21 @@ export type PluginContributions = {
   hooks: string[];
   settings: SettingsSpec;
   programs: ProgramSpec[];
+  passwordManager: PasswordManagerSpec | null;
   menus: MenuContributions;
   toolbar: ToolbarItem[];
   sidebarViews: SidebarView[];
   panels: PanelSpec[];
   omnibox: OmniboxSpec[];
   themes: ThemeSpec[];
+  siteSwitches: SiteSwitchSpec[];
+  pageBar: PageBarSpec | null;
 };
 
-export const RETIRED_CONTRIBUTES_KEYS = ["passwordManager"] as const;
-export const CONTRIBUTES_KEYS = ["commands", "tools", "hooks", "settings", "programs", "menus", "toolbar", "sidebarViews", "panels", "omnibox", "themes"] as const;
+export const CONTRIBUTES_KEYS = ["commands", "tools", "hooks", "settings", "programs", "passwordManager", "menus", "toolbar", "sidebarViews", "panels", "omnibox", "themes", "siteSwitches", "pageBar"] as const;
 export const PAGE_PANEL_ID = "default";
 
-export const emptyMenus = (): MenuContributions => ({ tab: [], group: [] });
+const emptyMenus = (): MenuContributions => ({ tab: [], group: [] });
 
 const P = "contributes";
 
@@ -146,19 +150,27 @@ function parsed<T>(c: Check, key: string, value: unknown, max: number, read: (c:
 
 export function contributesOf(c: Check, value: unknown, hasMain: boolean): PluginContributions {
   const doc = value === undefined ? {} : (object(c, P, value) ?? {});
-  only(c, P, doc, [...CONTRIBUTES_KEYS, ...RETIRED_CONTRIBUTES_KEYS]);
+  only(c, P, doc, CONTRIBUTES_KEYS);
+  const pm: string[] = [];
+  const passwordManager = passwordManagerOf(pm, doc.passwordManager);
+  c.problems.push(...pm.map((p) => `${P}.${p}`));
+  const settings = settingsOf(c, `${P}.settings`, doc.settings);
+  const siteSwitches = siteSwitchesOf(c, doc.siteSwitches);
   return {
     commands: parsed(c, "commands", doc.commands, LIMITS.commands, (cc, p, v) => command(cc, p, v, hasMain), (x) => x.name, "commands"),
     tools: parsed(c, "tools", doc.tools, LIMITS.tools, tool, (t) => t.name, "tools"),
     hooks: list(c, `${P}.hooks`, doc.hooks, LIMITS.hooks).flatMap((h, i) => (typeof h === "string" && h ? [h] : (c.problems.push(`${at(`${P}.hooks`, i)} must be an event name`), []))),
-    settings: settingsOf(c, `${P}.settings`, doc.settings),
+    settings,
     programs: parsed(c, "programs", doc.programs, LIMITS.programs, program, (p) => p.name, "programs"),
+    passwordManager,
     menus: menusOf(c, doc.menus),
     toolbar: parsed(c, "toolbar", doc.toolbar, LIMITS.toolbar, toolbarItem, (t) => t.id, "toolbar items"),
     sidebarViews: parsed(c, "sidebarViews", doc.sidebarViews, LIMITS.sidebarViews, sidebarView, (v) => v.id, "sidebar views"),
     panels: parsed(c, "panels", doc.panels, LIMITS.panels, panel, (p) => p.id, "panels"),
     omnibox: parsed(c, "omnibox", doc.omnibox, LIMITS.omnibox, omnibox, (o) => o.id, "omnibox providers"),
     themes: parsed(c, "themes", doc.themes, LIMITS.themes, theme, (t) => t.id, "themes"),
+    siteSwitches,
+    pageBar: pageBarOf(c, doc.pageBar, siteSwitches, settings.rows),
   };
 }
 

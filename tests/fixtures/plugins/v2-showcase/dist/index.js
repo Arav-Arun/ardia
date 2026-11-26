@@ -31,6 +31,10 @@
     pageOpen: "page.open",
     pagePost: "page.post",
     fetch: "net.fetch",
+    programsStatus: "programs.status",
+    programsRelink: "programs.relink",
+    stateSubscribe: "state.subscribe",
+    stateIntent: "state.intent",
     surfaceRender: "surface.render",
     surfaceClose: "surface.close"
   };
@@ -38,6 +42,83 @@
     if (typeof value !== "object" || value === null) return false;
     const surface = value.surface;
     return (surface === "mount" || surface === "unmount" || surface === "event") && typeof value.surfaceId === "string";
+  }
+
+  var PluginError = class extends Error {
+    code;
+    constructor(code, message) {
+      super(message);
+      this.name = "PluginError";
+      this.code = code;
+    }
+  };
+  function errorMessage(error) {
+    if (error instanceof Error) return error.message;
+    if (typeof error === "string") return error;
+    try {
+      return JSON.stringify(error) ?? String(error);
+    } catch {
+      return String(error);
+    }
+  }
+  var LocalEncodingError = class extends PluginError {
+  };
+  function isUnencodable(error) {
+    return error instanceof LocalEncodingError;
+  }
+  function replyError(error) {
+    if (typeof error === "string") return new PluginError("failed", error);
+    const code = typeof error?.code === "string" ? error.code : "failed";
+    const message = typeof error?.message === "string" ? error.message : "The host refused the request.";
+    return new PluginError(code, message);
+  }
+  function createRpc(transport) {
+    const waiting = new Map();
+    let next = 0;
+    let closedBy = null;
+    const send = (message) => transport.send(JSON.stringify(message));
+    return {
+      send,
+      request(method, params = {}) {
+        if (closedBy) return Promise.reject(closedBy);
+        const id = ++next;
+        let line;
+        try {
+          line = JSON.stringify({ id, method, params });
+        } catch (error) {
+          return Promise.reject(new LocalEncodingError("unencodable", `The ${method} request couldn't be encoded: ${errorMessage(error)}`));
+        }
+        return new Promise((resolve, reject) => {
+          waiting.set(id, { resolve, reject });
+          try {
+            transport.send(line);
+          } catch (error) {
+            waiting.delete(id);
+            reject(error);
+          }
+        });
+      },
+      takeReply(message) {
+        if (typeof message.method === "string" || !("id" in message)) return false;
+        if (!("result" in message) && !("error" in message)) return false;
+        const id = message.id;
+        const waiter = typeof id === "number" ? waiting.get(id) : void 0;
+        if (!waiter) return true;
+        waiting.delete(id);
+        const reply = message;
+        if (reply.error !== void 0 && reply.error !== null) waiter.reject(replyError(reply.error));
+        else waiter.resolve(reply.result);
+        return true;
+      },
+      pendingCount: () => waiting.size,
+      close(reason) {
+        if (closedBy) return;
+        closedBy = reason;
+        const waiters = [...waiting.values()];
+        waiting.clear();
+        for (const waiter of waiters) waiter.reject(reason);
+      }
+    };
   }
 
   function createRegistry() {
@@ -48,6 +129,7 @@
       omnibox: new Set(),
       decide: new Map(),
       events: new Map(),
+      state: new Map(),
       pages: new Set(),
       settings: new Set()
     };
@@ -84,20 +166,28 @@
     if (Array.isArray(picked)) return picked.filter((id) => typeof id === "string");
     return [];
   }
-  function response(data) {
+  function response(reply) {
+    if (typeof reply.status !== "number") {
+      const reason = reply.reason;
+      throw new PluginError("failed", typeof reason === "string" && reason ? reason : "The fetch failed.");
+    }
+    const data = reply;
     return {
       ...data,
+      ok: data.status >= 200 && data.status < 300,
       text: () => data.body,
       json: () => JSON.parse(data.body)
     };
   }
   function quickPick(rpc) {
     async function pick(items, options = {}) {
-      const result = await rpc.request(HOST_METHODS.quickPick, { items, options });
+      const sent = { ...options };
+      const sentItems = items.map((item) => ({ ...item }));
+      const result = await rpc.request(HOST_METHODS.quickPick, { items: sentItems, options: sent });
       if (result === null || result === void 0) return void 0;
       const ids = pickedIds(result);
-      const chosen = items.filter((item) => ids.includes(item.id));
-      return options.canPickMany ? chosen : chosen[0];
+      const chosen = sentItems.filter((item) => ids.includes(item.id));
+      return sent.canPickMany ? chosen : chosen[0];
     }
     return pick;
   }
@@ -130,6 +220,24 @@
         };
       }
     };
+    const stateApi = {
+      subscribe(topic, listener) {
+        let listeners = registry.state.get(topic);
+        if (!listeners) registry.state.set(topic, listeners = new Set());
+        const added = addTo(listeners, listener);
+        state.subscriptionsChanged();
+        state.listenerAdded(topic);
+        return {
+          dispose() {
+            added.dispose();
+            if (listeners.size === 0 && registry.state.get(topic) === listeners) registry.state.delete(topic);
+            state.subscriptionsChanged();
+          }
+        };
+      },
+      intent: (intent2, args) => rpc.request(HOST_METHODS.stateIntent, { intent: intent2, args })
+    };
+    const intent = stateApi.intent;
     const apply = (ops) => rpc.request(HOST_METHODS.workspaceApply, { ops });
     const windows = async () => {
       const listed = await rpc.request(HOST_METHODS.windows);
@@ -170,12 +278,37 @@
         activePage: async () => await rpc.request(HOST_METHODS.activePage) ?? null,
         open: (urls, options = {}) => rpc.request(HOST_METHODS.open, { urls: typeof urls === "string" ? [urls] : urls, ...options }),
         close: (tabId) => apply([{ op: "tab.close", tabs: [tabId] }]),
-        activate: (tabId) => apply([{ op: "tab.activate", tab: tabId }])
+        activate: (tabId) => apply([{ op: "tab.activate", tab: tabId }]),
+        onChange: (listener) => stateApi.subscribe("tabs", listener),
+        group: (tabIds, look = {}) => intent("tabs.group", { ...look, tabs: [...tabIds] }),
+        ungroup: (groupId) => intent("tabs.ungroup", { group: groupId }),
+        move: (tabIds, to) => intent("tabs.move", { ...to, tabs: [...tabIds] }),
+        pin: (tabIds, options = {}) => intent("tabs.pin", { ...options, tabs: [...tabIds] }),
+        unpin: (tabIds) => intent("tabs.unpin", { tabs: [...tabIds] }),
+        mute: (tabIds) => intent("tabs.mute", { tabs: [...tabIds] }),
+        unmute: (tabIds) => intent("tabs.unmute", { tabs: [...tabIds] })
       },
       workspace: {
         snapshot: (options = {}) => rpc.request(HOST_METHODS.workspace, { ...options }),
-        apply
+        apply,
+        onChange: (listener) => stateApi.subscribe("workspace", listener),
+        updateGroup: (groupId, look) => intent("groups.update", { ...look, group: groupId })
       },
+      navigation: {
+        onCommit: (listener) => stateApi.subscribe("navigation", (change, event) => {
+          for (const commit of change.commits ?? []) {
+            try {
+              listener(commit, event);
+            } catch (error) {
+              state.report(error);
+            }
+          }
+        })
+      },
+      downloads: {
+        onChange: (listener) => stateApi.subscribe("downloads", listener)
+      },
+      state: stateApi,
       ui: {
         quickPick: quickPick(rpc),
         async inputBox(options) {
@@ -219,6 +352,10 @@
         open: (options = {}) => rpc.request(HOST_METHODS.pageOpen, options),
         post: (view, message) => rpc.request(HOST_METHODS.pagePost, { view, message }).then(() => void 0),
         onMessage: (listener) => addTo(registry.pages, listener)
+      },
+      programs: {
+        status: () => rpc.request(HOST_METHODS.programsStatus),
+        relink: () => rpc.request(HOST_METHODS.programsRelink)
       },
       net: {
         async fetch(input, init = {}) {
@@ -367,11 +504,21 @@
   var nativeMicrotask = globalThis.queueMicrotask;
   var enqueueMicrotask = typeof nativeMicrotask === "function" ? (task) => nativeMicrotask(task) : (task) => void Promise.resolve().then(task);
   var EMPTY_CONTEXT = new Map();
+  var fiberKeys = new WeakMap();
+  var fiberSerials = new WeakMap();
+  var lastFiberSerial = 0;
+  var lastSurfaceSerial = 0;
+  function serialOf(fiber) {
+    let serial = fiberSerials.get(fiber);
+    if (serial === void 0) fiberSerials.set(fiber, serial = ++lastFiberSerial);
+    return serial;
+  }
   function isPlainObject(value) {
     if (typeof value !== "object" || value === null) return false;
     const proto = Object.getPrototypeOf(value);
     return proto === Object.prototype || proto === null;
   }
+  var isThenable = (value) => typeof value === "object" && value !== null && typeof value.then === "function";
   function describe(value) {
     if (typeof value === "function") return `a function (${value.name || "anonymous"})`;
     if (typeof value === "symbol") return "a symbol";
@@ -398,12 +545,17 @@
     passHandlers = new Map();
     passPaths = new Set();
     nextHandler = 0;
+    handlerPrefix = `h${++lastSurfaceSerial}.`;
     effects = [];
+    passCreated = [];
+    passRemoved = [];
+    passRendered = [];
     scheduled = false;
     rendering = false;
     dead = false;
     chained = 0;
     cycling = false;
+    exhausted = false;
     element;
     props;
     onCommit;
@@ -416,7 +568,7 @@
       this.root = newFiber("root", "", this);
     }
     schedule() {
-      if (this.dead) return;
+      if (this.dead || this.exhausted) return;
       if (!this.cycling) this.chained = 0;
       if (this.scheduled) return;
       this.scheduled = true;
@@ -438,7 +590,7 @@
       this.schedule();
     }
     flush() {
-      if (!this.scheduled) return;
+      if (!this.scheduled || this.rendering) return;
       this.scheduled = false;
       this.render();
     }
@@ -467,35 +619,72 @@
       this.rendering = true;
       this.cycling = true;
       this.chained++;
+      this.exhausted = this.chained > limit;
+      try {
+        const tree = this.renderPass(limit);
+        if (this.dead) return;
+        this.tree = tree;
+        try {
+          this.onCommit(tree, this.handlers);
+        } catch (error) {
+          this.report(error);
+        }
+        this.runEffects();
+      } finally {
+        this.exhausted = false;
+        this.rendering = false;
+        this.cycling = false;
+      }
+    }
+    renderPass(limit) {
       this.passHandlers = new Map();
       this.passPaths = new Set();
-      let tree;
+      this.passCreated = [];
+      this.passRemoved = [];
+      this.passRendered = [];
       try {
-        if (this.chained > limit) throw new Error(`The view re-rendered ${limit} times in a row; a state update is looping.`);
+        if (this.exhausted) throw new Error(`The view re-rendered ${limit} times in a row; a state update is looping.`);
         const top = typeof this.element === "function" ? jsx(this.element, this.props) : this.element;
         this.root.seen.clear();
         const nodes = this.renderValue(this.root, "r", top, EMPTY_CONTEXT, null);
         this.sweep(this.root);
-        tree = asTree(nodes);
+        const removed = this.passRemoved;
+        this.passRemoved = [];
+        for (const { fiber } of removed) unmountFiber(fiber);
+        if (this.dead) return errorNode(new Error("This view is closed."));
         this.handlers = this.passHandlers;
         for (const path of [...this.handlerIds.keys()]) if (!this.passPaths.has(path)) this.handlerIds.delete(path);
+        return asTree(nodes);
       } catch (error) {
         endHooks();
-        this.effects = [];
+        this.abandonPass();
         this.handlers = new Map();
         this.report(error);
-        tree = errorNode(error);
+        return errorNode(error);
       } finally {
-        this.rendering = false;
+        this.passCreated = [];
+        this.passRemoved = [];
+        this.passRendered = [];
       }
-      this.tree = tree;
-      try {
-        this.onCommit(tree);
-      } catch (error) {
-        this.report(error);
+    }
+    abandonPass() {
+      for (const { hook } of this.effects) hook.next = void 0;
+      this.effects = [];
+      for (const { fiber, hookCount, effectDeps } of this.passRendered) {
+        fiber.hooks.length = Math.min(fiber.hooks.length, hookCount);
+        for (const [hook, deps] of effectDeps) {
+          hook.deps = deps;
+          hook.next = void 0;
+        }
       }
-      this.runEffects();
-      this.cycling = false;
+      for (const { parent, slot, fiber } of this.passCreated.reverse()) {
+        if (parent.children.get(slot) === fiber) parent.children.delete(slot);
+        unmountFiber(fiber);
+      }
+      for (const { parent, slot, fiber } of this.passRemoved.reverse()) {
+        if (this.dead) unmountFiber(fiber);
+        else parent.children.set(slot, fiber);
+      }
     }
     runEffects() {
       const queued = this.effects;
@@ -516,21 +705,26 @@
         if (!fiber.alive || !effect) continue;
         try {
           const result = effect();
-          hook.cleanup = typeof result === "function" ? result : void 0;
+          if (isThenable(result)) result.then(void 0, (error) => this.report(error));
+          const cleanup = typeof result === "function" ? result : void 0;
+          if (fiber.alive) hook.cleanup = cleanup;
+          else cleanup?.();
         } catch (error) {
           this.report(error);
         }
       }
     }
-    claim(parent, slot, type) {
+    claim(parent, slot, type, key) {
       let fiber = parent.children.get(slot);
-      if (fiber && fiber.type !== type) {
-        unmountFiber(fiber);
+      if (fiber && (fiber.type !== type || (fiberKeys.get(fiber) ?? null) !== key)) {
+        this.passRemoved.push({ parent, slot, fiber });
         fiber = void 0;
       }
       if (!fiber) {
         fiber = newFiber(type, `${parent.path}/${slot}`, this);
+        if (key !== null) fiberKeys.set(fiber, key);
         parent.children.set(slot, fiber);
+        this.passCreated.push({ parent, slot, fiber });
       }
       parent.seen.add(slot);
       return fiber;
@@ -538,7 +732,7 @@
     sweep(fiber) {
       for (const [slot, child] of fiber.children) {
         if (fiber.seen.has(slot)) continue;
-        unmountFiber(child);
+        this.passRemoved.push({ parent: fiber, slot, fiber: child });
         fiber.children.delete(slot);
       }
     }
@@ -548,7 +742,7 @@
       if (typeof value === "number" || typeof value === "bigint") return [String(value)];
       if (Array.isArray(value)) return this.renderList(parent, slot, value, context);
       if (!isVNode(value)) throw new TypeError(`A component returned ${describe(value)}; return an element, text, a list or null.`);
-      const fiber = this.claim(parent, slot, value.type);
+      const fiber = this.claim(parent, slot, value.type, value.key ?? null);
       const key = value.key ?? inheritedKey;
       const hostType = hostTypeOf(value.type);
       fiber.seen.clear();
@@ -559,7 +753,7 @@
     renderList(parent, slot, items, context) {
       const out = [];
       items.forEach((item, index) => {
-        let itemSlot = isVNode(item) && item.key !== null ? `${slot}:k=${String(item.key)}` : `${slot}:i=${index}`;
+        let itemSlot = isVNode(item) && item.key !== null ? `${slot}:k${typeof item.key === "number" ? "n" : "s"}=${String(item.key)}` : `${slot}:i=${index}`;
         if (parent.seen.has(itemSlot)) itemSlot = `${itemSlot}~${index}`;
         for (const node of this.renderValue(parent, itemSlot, item, context, null)) out.push(node);
       });
@@ -578,6 +772,11 @@
         return this.renderValue(fiber, "c", read(context.get(consumed)), context, key);
       }
       fiber.context = context;
+      if (fiber.hooks.length > 0) {
+        const effectDeps = [];
+        for (const hook of fiber.hooks) if (hook.kind === "effect") effectDeps.push([hook, hook.deps]);
+        this.passRendered.push({ fiber, hookCount: fiber.hooks.length, effectDeps });
+      }
       beginHooks(fiber);
       let result;
       try {
@@ -601,7 +800,7 @@
     handlerRef(path, handler) {
       let id = this.handlerIds.get(path);
       if (!id) {
-        id = `h${++this.nextHandler}`;
+        id = `${this.handlerPrefix}${++this.nextHandler}`;
         this.handlerIds.set(path, id);
       }
       this.passHandlers.set(id, handler);
@@ -610,7 +809,7 @@
     }
     serialize(fiber, path, value, context) {
       if (value === void 0 || typeof value === "symbol") return void 0;
-      if (typeof value === "function") return this.handlerRef(`${fiber.path}|${path}`, value);
+      if (typeof value === "function") return this.handlerRef(`${serialOf(fiber)}|${path}`, value);
       if (isVNode(value)) {
         const nodes = this.renderValue(fiber, path, value, context, null);
         if (nodes.length === 0) return null;
@@ -636,61 +835,6 @@
     return surface;
   }
 
-  var PluginError = class extends Error {
-    code;
-    constructor(code, message) {
-      super(message);
-      this.name = "PluginError";
-      this.code = code;
-    }
-  };
-  function errorMessage(error) {
-    if (error instanceof Error) return error.message;
-    if (typeof error === "string") return error;
-    try {
-      return JSON.stringify(error) ?? String(error);
-    } catch {
-      return String(error);
-    }
-  }
-  function replyError(error) {
-    if (typeof error === "string") return new PluginError("failed", error);
-    return new PluginError(error?.code ?? "failed", error?.message ?? "The host refused the request.");
-  }
-  function createRpc(transport) {
-    const waiting = new Map();
-    let next = 0;
-    const send = (message) => transport.send(JSON.stringify(message));
-    return {
-      send,
-      request(method, params = {}) {
-        const id = ++next;
-        return new Promise((resolve, reject) => {
-          waiting.set(id, { resolve, reject });
-          try {
-            send({ id, method, params });
-          } catch (error) {
-            waiting.delete(id);
-            reject(error);
-          }
-        });
-      },
-      takeReply(message) {
-        if (typeof message.method === "string" || !("id" in message)) return false;
-        if (!("result" in message) && !("error" in message)) return false;
-        const id = message.id;
-        const waiter = typeof id === "number" ? waiting.get(id) : void 0;
-        if (!waiter) return true;
-        waiting.delete(id);
-        const reply = message;
-        if (reply.error !== void 0 && reply.error !== null) waiter.reject(replyError(reply.error));
-        else waiter.resolve(reply.result);
-        return true;
-      },
-      pendingCount: () => waiting.size
-    };
-  }
-
   var SurfaceContext = createContext(null);
   function useSurface() {
     const surface = useContext(SurfaceContext);
@@ -709,16 +853,17 @@
     const props = { surfaceId: surface.surfaceId, viewId: surface.viewId, kind: surface.kind, context: surface.context };
     return jsx(SurfaceContext.Provider, { value: surface, children: jsx(view, props) });
   }
-  function isThenable(value) {
+  function isThenable2(value) {
     return typeof value === "object" && value !== null && typeof value.then === "function";
   }
+  var NO_HANDLERS = new Map();
   function createSurfaceHost(rpc, registry, report) {
     const mounted = new Map();
     function unmount(surfaceId) {
-      const handle = mounted.get(surfaceId);
-      if (!handle) return;
+      const entry = mounted.get(surfaceId);
+      if (!entry) return;
       mounted.delete(surfaceId);
-      handle.unmount();
+      entry.handle.unmount();
     }
     function mount(message) {
       unmount(message.surfaceId);
@@ -730,20 +875,37 @@
         close: () => rpc.request(HOST_METHODS.surfaceClose, { surfaceId: message.surfaceId }).then(() => void 0)
       };
       const view = registry.views.get(message.viewId) ?? MissingView;
-      const handle = mountSurface(
-        SurfaceRoot,
-        { view, surface },
-        (tree) => void rpc.request(HOST_METHODS.surfaceRender, { surfaceId: message.surfaceId, tree }).catch(report),
-        { onError: report }
-      );
-      mounted.set(message.surfaceId, handle);
+      let generation = 0;
+      let acceptedGeneration = 0;
+      let latest = NO_HANDLERS;
+      let shown = NO_HANDLERS;
+      const isCurrent = () => mounted.get(message.surfaceId)?.handle === handle;
+      const sendTree = (tree, sent, handlers) => rpc.request(HOST_METHODS.surfaceRender, { surfaceId: message.surfaceId, tree }).then(() => {
+        if (sent < acceptedGeneration) return;
+        acceptedGeneration = sent;
+        shown = handlers;
+      });
+      const commit = (tree, handlers) => {
+        const sent = ++generation;
+        latest = handlers;
+        sendTree(tree, sent, handlers).catch((error) => {
+          report(error);
+          if (sent !== generation || !isCurrent()) return;
+          latest = NO_HANDLERS;
+          sendTree(errorNode(error), sent, NO_HANDLERS).catch(report);
+        });
+      };
+      const handle = mountSurface(SurfaceRoot, { view, surface }, commit, { onError: report });
+      mounted.set(message.surfaceId, { handle, handler: (handlerId) => shown.get(handlerId) ?? latest.get(handlerId) });
     }
     function dispatch(surfaceId, handlerId, args) {
-      const handle = mounted.get(surfaceId);
-      if (!handle) return report(new Error(`An event arrived for ${surfaceId}, which isn't mounted.`));
+      const entry = mounted.get(surfaceId);
+      if (!entry) return report(new Error(`An event arrived for ${surfaceId}, which isn't mounted.`));
       try {
-        const result = handle.dispatch(handlerId, Array.isArray(args) ? args : []);
-        if (isThenable(result)) result.then(void 0, report);
+        const handler = entry.handler(handlerId);
+        if (!handler) throw new Error(`There's no handler ${handlerId}; the view re-rendered without it.`);
+        const result = handler(...Array.isArray(args) ? args : []);
+        if (isThenable2(result)) result.then(void 0, report);
       } catch (error) {
         report(error);
       }
@@ -755,14 +917,150 @@
         else dispatch(message.surfaceId, message.handlerId, message.args);
       },
       count: () => mounted.size,
-      tree: (surfaceId) => mounted.get(surfaceId)?.tree ?? null,
+      tree: (surfaceId) => mounted.get(surfaceId)?.handle.tree ?? null,
       closeAll() {
         for (const id of [...mounted.keys()]) unmount(id);
       }
     };
   }
 
+  var STATE_PREFIX = "state.";
+  var RESYNC_WINDOW_MS = 3e4;
+  var MAX_RESYNC_STREAK = 5;
+  var MAX_RESYNC_DELAY_MS = 6e4;
+  function createSubscriptionSync(rpc, registry, report, live, options = {}) {
+    let acknowledgedEvents = "";
+    let acknowledgedTopics = "";
+    let queued = false;
+    let inFlight = false;
+    let resyncing = false;
+    let joined = new Set();
+    let waiting = false;
+    let streak = 0;
+    let lastResyncAt = Number.NEGATIVE_INFINITY;
+    let gaveUp = false;
+    const now = options.now ?? (() => Date.now());
+    const backoff = options.resyncBackoffMs ?? 1e3;
+    const wantedEvents = () => [...registry.events.keys()].filter((name) => name !== "plugin.values").sort();
+    const wantedTopics = () => [...registry.state.keys()].sort();
+    const sync = () => {
+      if (!live() || queued || inFlight) return;
+      queued = true;
+      enqueueMicrotask(() => {
+        queued = false;
+        void send();
+      });
+    };
+    async function send() {
+      if (!live() || inFlight) return;
+      const events = wantedEvents();
+      const signature = events.join(",");
+      const topics = wantedTopics();
+      const topicSignature = topics.join(",");
+      if (signature === acknowledgedEvents && topicSignature === acknowledgedTopics) return;
+      inFlight = true;
+      let failedEvents = false;
+      let failedTopics = false;
+      try {
+        if (signature !== acknowledgedEvents) {
+          try {
+            await rpc.request(HOST_METHODS.subscribe, { events });
+            acknowledgedEvents = signature;
+          } catch (error) {
+            failedEvents = true;
+            report(error);
+          }
+        }
+        if (topicSignature !== acknowledgedTopics) {
+          try {
+            await rpc.request(HOST_METHODS.stateSubscribe, { topics });
+            acknowledgedTopics = topicSignature;
+            gaveUp = false;
+            streak = 0;
+          } catch (error) {
+            failedTopics = true;
+            report(error);
+          }
+        }
+      } finally {
+        inFlight = false;
+      }
+      const eventsMoved = wantedEvents().join(",") !== signature;
+      const topicsMoved = wantedTopics().join(",") !== topicSignature;
+      if (!failedEvents && !failedTopics || eventsMoved || topicsMoved) sync();
+    }
+    function deliverState(name, data, time) {
+      for (const listener of [...registry.state.get(name.slice(STATE_PREFIX.length)) ?? []]) {
+        try {
+          listener(data, { name, time });
+        } catch (error) {
+          report(error);
+        }
+      }
+    }
+    async function resync() {
+      waiting = false;
+      if (!live() || resyncing || !registry.state.size) return;
+      resyncing = true;
+      lastResyncAt = now();
+      try {
+        const topics = wantedTopics();
+        await rpc.request(HOST_METHODS.stateSubscribe, { topics, resync: true });
+        acknowledgedTopics = topics.join(",");
+      } catch (error) {
+        report(error);
+      } finally {
+        resyncing = false;
+      }
+    }
+    const later = (ms, task) => {
+      const start = globalThis.setTimeout;
+      if (ms <= 0 || !start) return void enqueueMicrotask(task);
+      start(task, ms);
+    };
+    const noteDropped = (dropped) => {
+      if (typeof dropped !== "number" || !(dropped > 0) || !registry.state.size || gaveUp || waiting || resyncing) return;
+      streak = now() - lastResyncAt < RESYNC_WINDOW_MS ? streak + 1 : 0;
+      if (streak >= MAX_RESYNC_STREAK) {
+        gaveUp = true;
+        report(new PluginError("state_desync", `Ardia's channel dropped state events ${MAX_RESYNC_STREAK} times in a row right after a resync, so state events stopped resyncing. Subscribe again to start over.`));
+        return;
+      }
+      waiting = true;
+      later(streak === 0 ? 0 : Math.min(backoff * 2 ** (streak - 1), MAX_RESYNC_DELAY_MS), () => void resync());
+    };
+    const SNAPSHOT_TOPICS = new Set(["tabs", "workspace", "downloads"]);
+    async function sendJoined() {
+      const topics = [...joined].filter((t) => registry.state.has(t) && acknowledgedTopics.split(",").includes(t));
+      joined = new Set();
+      if (!live() || !topics.length) return;
+      try {
+        await rpc.request(HOST_METHODS.stateSubscribe, { topics: wantedTopics(), resync: topics });
+      } catch (error) {
+        report(error);
+      }
+    }
+    const topicJoined = (topic) => {
+      if (!SNAPSHOT_TOPICS.has(topic)) return;
+      if (!joined.size) enqueueMicrotask(() => void sendJoined());
+      joined.add(topic);
+    };
+    const listenerAdded = (topic) => {
+      if (gaveUp) {
+        gaveUp = false;
+        streak = 0;
+        lastResyncAt = Number.NEGATIVE_INFINITY;
+        waiting = true;
+        enqueueMicrotask(() => void resync());
+        return;
+      }
+      topicJoined(topic);
+    };
+    return { sync, deliverState, noteDropped, listenerAdded };
+  }
+
   var SDK_VERSION = "2.0.0";
+  var DEFAULT_STOP_GRACE_MS = 5e3;
   function createSignal() {
     const listeners = new Set();
     let cancelled = false;
@@ -819,31 +1117,53 @@
     };
     let activation = Promise.resolve();
     let activated = false;
-    let subscribed = "";
-    let subscribeQueued = false;
+    let stopped = false;
+    let stopping = null;
     let work = Promise.resolve();
-    let stop = async () => surfaces.closeAll();
-    const syncSubscriptions = () => {
-      if (!activated || subscribeQueued) return;
-      subscribeQueued = true;
-      enqueueMicrotask(() => {
-        subscribeQueued = false;
-        const events = [...registry.events.keys()].filter((name) => name !== "*" && name !== "plugin.values").sort();
-        const signature = events.join(",");
-        if (signature === subscribed) return;
-        subscribed = signature;
-        rpc.request(HOST_METHODS.subscribe, { events }).catch(report);
-      });
+    let cleanup = async () => surfaces.closeAll();
+    const stop = () => {
+      if (stopping) return stopping;
+      stopped = true;
+      let begin;
+      stopping = new Promise((resolve) => begin = resolve).then(() => cleanup());
+      const running = [...calls.values()];
+      calls.clear();
+      for (const signal of running) {
+        try {
+          signal.cancel();
+        } catch (error) {
+          report(error);
+        }
+      }
+      begin();
+      return stopping;
     };
+    const stopWithinGrace = async () => {
+      const { setTimeout: startTimer, clearTimeout: cancelTimer } = globalThis;
+      if (!startTimer || !cancelTimer) return stop();
+      let timer;
+      const graceOver = new Promise((resolve) => timer = startTimer(resolve, options.stopGraceMs ?? DEFAULT_STOP_GRACE_MS));
+      try {
+        await Promise.race([stop(), graceOver]);
+      } finally {
+        cancelTimer(timer);
+      }
+    };
+    const subscriptions = createSubscriptionSync(rpc, registry, report, () => activated && !stopped, options);
     const state = {
       values: {},
       info: { name: "", app: "", version: "", protocol: 0 },
-      subscriptionsChanged: syncSubscriptions
+      subscriptionsChanged: () => subscriptions.sync(),
+      listenerAdded: (topic) => subscriptions.listenerAdded(topic),
+      report
     };
     const ardia2 = createArdia(rpc, registry, state);
     const surfaces = createSurfaceHost(rpc, registry, report);
-    const whenActive = (task) => {
-      work = work.then(() => activation.catch(() => void 0)).then(task).then(
+    const whenActive = (task, refuse) => {
+      work = work.then(() => activation).then(
+        () => stopped ? void 0 : task(),
+        (activationError) => stopped ? void 0 : refuse?.(activationError)
+      ).then(
         () => void 0,
         (error) => report(error)
       );
@@ -868,11 +1188,13 @@
       const lists = await Promise.all([...registry.omnibox].map(async (provider) => await provider(query, call) ?? []));
       return lists.flat().map(cleanSuggestion).filter((s) => s !== null);
     }
-    async function answer(message) {
+    const forgetCall = (callId, signal) => {
+      if (calls.get(callId) === signal) calls.delete(callId);
+    };
+    async function answer(message, signal) {
+      if (signal.cancelled) return forgetCall(message.call, signal);
       const kind = message.kind && CALL_KINDS.includes(message.kind) ? message.kind : "tool";
       const name = message.name ?? message.tool ?? message.command ?? message.event ?? message.provider ?? "";
-      const signal = createSignal();
-      calls.set(message.call, signal);
       const call = {
         callId: message.call,
         kind,
@@ -889,12 +1211,26 @@
       } catch (error) {
         body = { call: message.call, error: errorMessage(error) };
       } finally {
-        calls.delete(message.call);
+        forgetCall(message.call, signal);
       }
       if (signal.cancelled) return;
-      await rpc.request(HOST_METHODS.result, body).catch(report);
+      await sendResult(body);
+    }
+    async function sendResult(body) {
+      try {
+        await rpc.request(HOST_METHODS.result, body);
+      } catch (error) {
+        if (!isUnencodable(error)) return report(error);
+        await rpc.request(HOST_METHODS.result, { call: body.call, error: `The plugin's result couldn't be sent: ${errorMessage(error)}` }).catch(report);
+      }
+    }
+    async function refuseCall(message, signal, activationError) {
+      forgetCall(message.call, signal);
+      if (signal.cancelled) return;
+      await sendResult({ call: message.call, error: `The plugin didn't activate: ${errorMessage(activationError)}` });
     }
     function deliverEvent(name, data, time) {
+      if (name.startsWith(STATE_PREFIX)) return subscriptions.deliverState(name, data, time);
       if (name === "plugin.values") {
         const values = data.values ?? data;
         state.values = { ...state.values, ...values };
@@ -918,11 +1254,16 @@
       }
       if (typeof message !== "object" || message === null || Array.isArray(message)) return;
       const record = message;
-      if (rpc.takeReply(record)) return;
+      if (rpc.takeReply(record) || stopped) return;
       if (isSurfaceMessage(record)) return whenActive(() => surfaces.handle(record));
       if (typeof record.call === "string") {
         if (record.cancel === true) return calls.get(record.call)?.cancel();
-        return whenActive(() => void answer(record));
+        const signal = createSignal();
+        calls.set(record.call, signal);
+        return whenActive(
+          () => void answer(record, signal),
+          (activationError) => void refuseCall(record, signal, activationError)
+        );
       }
       if ("pageMessage" in record) {
         const view = typeof record.view === "string" ? record.view : "";
@@ -931,6 +1272,7 @@
         });
       }
       if (typeof record.event === "string") {
+        subscriptions.noteDropped(record.dropped);
         const data = typeof record.data === "object" && record.data !== null ? record.data : {};
         const time = typeof record.time === "number" ? record.time : void 0;
         if (record.event === "plugin.values") return deliverEvent(record.event, data, time);
@@ -967,9 +1309,15 @@
     });
     function definePlugin2(definition) {
       const held = register(definition);
-      stop = async () => {
+      cleanup = async () => {
         surfaces.closeAll();
-        for (const item of held.splice(0).reverse()) item.dispose();
+        for (const item of held.splice(0).reverse()) {
+          try {
+            item.dispose();
+          } catch (error) {
+            report(error);
+          }
+        }
         if (definition.deactivate) await definition.deactivate();
       };
       activation = (async () => {
@@ -977,14 +1325,19 @@
           report(error);
           return null;
         }) ?? { app: "", version: "", protocol: 0, plugin: "" };
+        if (stopped) return;
         state.info = { name: hello.plugin, app: hello.app, version: hello.version, protocol: hello.protocol };
         state.values = { ...hello.values ?? {}, ...state.values };
         const returned = definition.activate ? await definition.activate(ardia2) : void 0;
-        if (returned && typeof returned.dispose === "function") held.push(returned);
+        if (returned && typeof returned.dispose === "function") {
+          if (stopped) returned.dispose();
+          else held.push(returned);
+        }
+        if (stopped) return;
         activated = true;
-        syncSubscriptions();
+        subscriptions.sync();
       })();
-      const ready = activation.then(() => rpc.request(HOST_METHODS.ready, readyParams())).then(() => void 0);
+      const ready = activation.then(() => stopped ? void 0 : rpc.request(HOST_METHODS.ready, readyParams())).then(() => void 0);
       ready.catch(report);
       return ready;
     }
@@ -994,6 +1347,7 @@
       definePlugin: definePlugin2,
       request: (method, params) => rpc.request(method, params),
       surfaceCount: () => surfaces.count(),
+      callCount: () => calls.size,
       surfaceTree: (surfaceId) => surfaces.tree(surfaceId),
       whenIdle: async () => {
         for (let i = 0; i < 20; i++) {
@@ -1003,12 +1357,19 @@
           if (pending === work) return;
         }
       },
-      dispose: () => stop()
+      dispose: async () => {
+        try {
+          await stopWithinGrace();
+        } finally {
+          rpc.close(new PluginError("stopped", "The plugin stopped."));
+        }
+      }
     };
   }
 
   var Box = hostComponent("Box");
   var Text = hostComponent("Text");
+  var Markdown = hostComponent("Markdown");
   var Badge = hostComponent("Badge");
   var Button = hostComponent("Button");
   var Divider = hostComponent("Divider");

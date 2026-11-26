@@ -6,9 +6,11 @@ import type {
   CallName,
   CallResult,
   ChromeWindowState,
+  CliConsoleDelta,
   CliControlStatus,
   CliTabTarget,
   EngineBookmark,
+  EngineComponent,
   EngineEvents,
   EngineTask,
   EventData,
@@ -42,9 +44,16 @@ const testGlobals = globalThis as {
   acTestCliControl?: (on: boolean | null) => Promise<CliControlStatus> | undefined;
   acTestCliActive?: (tabId: string | null) => Promise<CliControlStatus> | undefined;
   acTestCliTargets?: (tabId: string) => CliTabTarget | undefined;
+  acTestCliHeld?: (tabs: { tabId: string; until: number; live?: boolean }[]) => { kept: number; marked?: string[] } | Promise<{ kept: number; marked?: string[] }> | undefined;
   acTestCliOwns?: (tabId: string) => { owned: boolean; shown: boolean };
+  acTestTabDiagnostics?: (args: { tabId: string; since?: number; clearBefore?: number }) => CallResult<"tabs.diagnostics">;
+  acTestTabInput?: (args: CallArgs<"tabs.input">) => CallResult<"tabs.input">;
   acTestCliMoveOffscreen?: (tabId: string) => { ok: boolean; reason?: string };
+  acTestCliCloseOffscreen?: () => void;
+  acTestCliConsole?: (args: { tabId: string; after?: number; generation?: number; limit?: number }) => CliConsoleDelta;
+  acTestCliEngine?: (call: string, args: any) => any;
   acTestTasks?: () => EngineTask[];
+  acTestComponents?: () => EngineComponent[];
   acTestEngineInfo?: () => CallResult<"engine.info">;
   acTestUserScripts?: { engine: ExtensionEngine };
   acTestSuggest?: (args: { url: string; id: number; profile: string }) => CallResult<"search.suggest"> | undefined;
@@ -62,13 +71,27 @@ const eventsOf = (domain: string) => {
   if (!domainEvents.has(domain)) domainEvents.set(domain, nativeEvents());
   return domainEvents.get(domain)!;
 };
+export const webKitAddressWrites = { written: [] as { request: number; url: string }[], answer: (request: number, url: string) => (webKitAddressWrites.written.push({ request, url }), true) };
+
 export const emitEvent = <E extends EventName>(name: E, data: EventData<E>) => {
   const domain = name.slice(0, name.indexOf("."));
   eventsOf(domain).emit(domain, { name, data });
 };
 
 export const chromeWindowList: ChromeWindowState[] = [];
+export const pagerSnapshots = new Map<string, { sequence: number; selectionSequence: number; position: number; selected: number; phase: string; velocity: number; count: number; profileId?: string | null }>();
 export const engineCalls: { domain: string; verb: string; profile: string }[] = [];
+const SUFFIXES_FOR_TESTS = ["com", "net", "org", "io", "example", "uk", "co.uk", "github.io", "s3.amazonaws.com"];
+
+function registrableForTests(host: string): string {
+  if (!host.includes(".") || /\.\d+$/.test(host)) return host;
+  const suffix = SUFFIXES_FOR_TESTS.filter((s) => host.endsWith(`.${s}`)).sort((a, b) => b.length - a.length)[0] ?? host.split(".").pop()!;
+  return `${host.slice(0, -suffix.length - 1).split(".").pop()}.${suffix}`;
+}
+
+export const contentBlockerSites = { enabled: true, allowed: new Set<string>(), written: [] as string[], removed: [] as string[], unsupported: false, unready: false, followerFails: false };
+export const commitReports: boolean[] = [];
+export const commitReportFailures = { next: 0 };
 export const loadedEngineProfiles = new Set<string>([""]);
 export const idleProfileUnloads = new Map<string, CallResult<"profiles.unloadIdle"> & { closing?: () => void }>();
 export const profilesLoadedCall = { known: true };
@@ -95,6 +118,56 @@ const laterEvent = <E extends EventName>(name: E, data: EventData<E>) => queueMi
 export const emitDownload = (download: EngineEvents["downloads.changed"]) => emitEvent("downloads.changed", download);
 export const emitPermission = (request: EngineEvents["permissions.requested"]) => emitEvent("permissions.requested", request);
 
+export const passwordProviders = {
+  calls: [] as unknown[][],
+  generation: 0,
+  profiles: [] as { profile: string; fields: string[]; codeSetup: boolean }[],
+  panel: { shown: true } as CallResult<"passwords.showSystemPanel">,
+  handlerApp: "Passwords" as string | null,
+  lastPanelGeneration: undefined as number | undefined,
+  opened: [] as { tab: string; token: string; generation?: number }[],
+  openResult: true,
+  hold: null as Promise<void> | null,
+  holdNext: null as Promise<void> | null,
+  notAppliedNext: 0,
+  bareReplyNext: 0,
+  sessions: [] as unknown[],
+  rejectNext: 0,
+  handlerGate: null as Promise<void> | null,
+  hints: [] as { tab: string; label: string; side: string }[],
+  hintShown: true,
+};
+const providerFakes = {
+  setFieldProviders: async (args: { generation: number; session: string; profiles: { profile: string; fields: string[]; codeSetup: boolean }[] }) => {
+    const { generation, profiles } = args;
+    passwordProviders.calls.push(["setFieldProviders", generation, profiles.map((p) => p.profile)]);
+    passwordProviders.sessions.push(args.session);
+    if (passwordProviders.rejectNext > 0) {
+      passwordProviders.rejectNext -= 1;
+      throw new Error("native refused the provider set");
+    }
+    const once = passwordProviders.holdNext;
+    passwordProviders.holdNext = null;
+    await once;
+    await passwordProviders.hold;
+    if (passwordProviders.bareReplyNext > 0) {
+      passwordProviders.bareReplyNext -= 1;
+      return {} as { applied: boolean };
+    }
+    if (passwordProviders.notAppliedNext > 0) {
+      passwordProviders.notAppliedNext -= 1;
+      return { applied: false };
+    }
+    passwordProviders.generation = generation;
+    passwordProviders.profiles = profiles.map((p) => ({ ...p, fields: [...p.fields] }));
+    return { applied: true };
+  },
+  showSystemPanel: ({ tab, generation }: { tab: string; generation?: number }) => (passwordProviders.calls.push(["showSystemPanel", tab]), (passwordProviders.lastPanelGeneration = generation), { ...passwordProviders.panel }),
+  showPanelHint: ({ tab, label, side }: { tab: string; label: string; side: string }) => (passwordProviders.hints.push({ tab, label, side }), { shown: passwordProviders.hintShown }),
+  systemPanelAvailable: () => ({ chromium: true, webkit: true }),
+  otpauthHandler: async () => (passwordProviders.calls.push(["otpauthHandler"]), await passwordProviders.handlerGate, { app: passwordProviders.handlerApp }),
+  setUpVerificationCode: ({ tab, token, generation }: { tab: string; token: string; generation?: number }) => (passwordProviders.opened.push({ tab, token, generation }), { opened: passwordProviders.openResult }),
+};
 export const current = { device: null as string | null };
 
 export const siteSettingsDb = new Map<string, Record<string, string>>();
@@ -186,6 +259,7 @@ function importHistoryRows(profile: string, { rows }: { rows: { u: string; t: st
   return heldHistoryImports.reply ? heldHistoryImports.reply.then(() => ({})) : {};
 }
 
+export const bookmarkModel = { loading: new Set<string>(), treeFails: false, treeHangs: false, applyHeld: null as Promise<void> | null };
 export const historyDeletes = { failNext: false };
 
 function deleteHistoryUrls(profile: string, { urls }: { urls: string[] }) {
@@ -310,8 +384,8 @@ const cliControl = (on: boolean | null) => testGlobals.acTestCliControl?.(on) ??
 
 export const cancelledDownloads: string[] = [];
 export const downloadSettingsWrites: { profile: string; folder?: string; askWhereToSave?: boolean }[] = [];
-export const clearedSiteData: { profile: string; origin: string }[] = [];
-export const endedWebKitSessions: string[] = [];
+export const clearedSiteData: { profile: string; origin: string; engine?: string }[] = [];
+const endedWebKitSessions: string[] = [];
 export const removedStagings: string[] = [];
 export const stagingRemovals = { ok: true };
 export const deletedProfileData: string[] = [];
@@ -323,7 +397,7 @@ export const discardedOffers: string[] = [];
 export const installedCrx: { path: string; profile: string }[] = [];
 export const chosenExtensionFolder: { next: string | null } = { next: null };
 export const crxInstallFailure: { next: string | null } = { next: null };
-export const linkRoute: { next: LinkRoute } = { next: {} };
+const linkRoute: { next: LinkRoute } = { next: {} };
 export const resolvedPermissions: { id: string; result: string; remember: boolean }[] = [];
 
 export const extensionAnswers = {
@@ -371,7 +445,7 @@ const fakeModules = {
   ArdiaEngine: domain(
     "engine",
     {
-      components: () => [],
+      components: () => testGlobals.acTestComponents?.() ?? [],
       tasks: () => testGlobals.acTestTasks?.() ?? [],
       info: () => {
         const info = testGlobals.acTestEngineInfo?.();
@@ -390,7 +464,33 @@ const fakeModules = {
       setCliActiveTab: ({ tabId }) => testGlobals.acTestCliActive?.(tabId) ?? cliStatus(null),
       cliOwnsTab: ({ tabId }) => testGlobals.acTestCliOwns?.(tabId) ?? { owned: false, shown: false },
       cliMoveOffscreen: ({ tabId }) => testGlobals.acTestCliMoveOffscreen?.(tabId) ?? { ok: false },
-      cliCloseOffscreenTabs: () => null,
+      cliCloseOffscreenTabs: () => (testGlobals.acTestCliCloseOffscreen?.(), null),
+      cliConsoleDelta: (args) => testGlobals.acTestCliConsole?.(args) ?? { entries: [], generation: 1, reset: false, next: args.after ?? 0, last: 0, dropped: 0, withheld: 0, errors: 0, more: false },
+      setCliHeldTabs: async ({ tabs }) => {
+        const answer = (await testGlobals.acTestCliHeld?.(tabs)) ?? { kept: 0 };
+        return { kept: answer.kept, marked: answer.marked ?? tabs.filter((t) => t.until > Date.now()).map((t) => t.tabId) };
+      },
+      cliDevToolsOpen: (args) => testGlobals.acTestCliEngine?.("cliDevToolsOpen", args) ?? { session: 1, targetId: "T", scope: args.scope },
+      cliDevToolsSend: (args) => testGlobals.acTestCliEngine?.("cliDevToolsSend", args) ?? { result: {} },
+      cliDevToolsClose: (args) => testGlobals.acTestCliEngine?.("cliDevToolsClose", args) ?? { closed: true },
+      cliCancel: (args) => testGlobals.acTestCliEngine?.("cliCancel", args) ?? { cancelled: 0 },
+      cliSnapshot: (args) =>
+        testGlobals.acTestCliEngine?.("cliSnapshot", args) ?? { generation: 1, viewport: [800, 600], scope: "page", refs: [], truncated: false, counts: { nodes: 1, frames: 1, interactive: 0, occluded: 0, framesTruncated: false } },
+      cliWaitSettled: (args) =>
+        testGlobals.acTestCliEngine?.("cliWaitSettled", args) ?? {
+          settled: true,
+          waitedMs: 0,
+          navigations: { pending: 0, seen: 0 },
+          network: { inflight: 0, longLived: 0, seen: 0, tracked: true },
+          idle: "idle",
+          frame: "committed",
+          loops: 0,
+          idleMs: 0,
+          frameMs: 0,
+        },
+      cliHitTest: (args) => testGlobals.acTestCliEngine?.("cliHitTest", args) ?? { point: [0, 0], verified: false, blocked: false },
+      cliClick: (args) => testGlobals.acTestCliEngine?.("cliClick", args) ?? { point: [0, 0], verified: false, blocked: false, clicked: true },
+      cliScreenshot: (args) => testGlobals.acTestCliEngine?.("cliScreenshot", args) ?? { data: "", format: "jpeg", width: 1, height: 1, hidden: true, freshFrame: true },
       cliTabTargets: ({ tabIds }) => Object.fromEntries(tabIds.map((id) => [id, testGlobals.acTestCliTargets?.(id) ?? { targetId: null, pageGeneration: 0 }])),
     },
     { inputIdleSeconds: () => 3600 },
@@ -402,6 +502,22 @@ const fakeModules = {
       stripCommand: async ({ id, command }) => (await tabStripHost().command(command, id), null),
       strips: () => tabStripHost().snapshot(),
       lastTabPolicy: () => ({ closesWindow: true }),
+      diagnostics: (args) => {
+        if (!testGlobals.acTestTabDiagnostics) throw Object.assign(new Error("tabs.diagnostics has no test fake yet"), { code: "ERR_UNKNOWN_CALL" });
+        return testGlobals.acTestTabDiagnostics(args);
+      },
+      input: (args) => {
+        if (!testGlobals.acTestTabInput) throw Object.assign(new Error("tabs.input has no test fake yet"), { code: "ERR_UNKNOWN_CALL" });
+        return testGlobals.acTestTabInput(args);
+      },
+      reportCommits: ({ on }) => {
+        commitReports.push(on);
+        if (commitReportFailures.next > 0) {
+          commitReportFailures.next -= 1;
+          throw new Error("reportCommits refused");
+        }
+        return null;
+      },
     },
     {
       prepareTransfer: () => {},
@@ -452,11 +568,15 @@ const fakeModules = {
     setSetting: ({ profile, origin, type, value }) => (siteSettingsDb.set(`${profile}\n${origin}`, { ...(siteSettingsDb.get(`${profile}\n${origin}`) ?? {}), [type]: value }), null),
     origins: ({ profile }) => [...siteSettingsDb.keys()].filter((k) => k.startsWith(`${profile}\n`)).map((k) => k.slice(profile.length + 1)),
     reset: ({ profile, origin }) => (siteSettingsDb.delete(`${profile}\n${origin}`), null),
-    clearData: ({ profile, origin }) => (clearedSiteData.push({ profile, origin }), { cookies: 0, storage: true }),
+    clearData: ({ profile, origin, engine }) => (clearedSiteData.push({ profile, origin, engine }), { cookies: 0, storage: true }),
     zoomLevels: ({ profile }) => Object.fromEntries([...siteZoomDb].filter(([k]) => k.startsWith(`${profile}\n`)).map(([k, v]) => [k.slice(profile.length + 1), v])),
     setZoom: ({ profile, host, zoom }) => (siteZoomDb.set(`${profile}\n${host}`, zoom), null),
     preloadPages: () => false,
     setPreloadPages: () => null,
+    registrableDomains: ({ hosts }) => {
+      if (contentBlockerSites.unsupported) throw Object.assign(new Error("Unknown call"), { code: "ERR_UNKNOWN_CALL" });
+      return { domains: hosts.map(registrableForTests) };
+    },
   }),
   ArdiaPasswords: domain(
     "passwords",
@@ -473,8 +593,10 @@ const fakeModules = {
       autofillEnabled: ({ profile }) => profileToggle(profile, "passwords"),
       setAutofillEnabled: ({ profile, enabled }) => {
         setProfileToggle(profile, "passwords", enabled);
+        passwordProviders.calls.push(["offerToSave", profile, enabled]);
         return null;
       },
+      ...providerFakes,
     },
     {
       save: async (_profile: string, origin: string, username: string, password: string) => {
@@ -568,8 +690,21 @@ const fakeModules = {
     setListEnabled: () => null,
     addList: ({ url }) => ({ id: url, custom: true, existed: false, filters: 1, failed: false }),
     removeList: () => null,
-    isAllowed: () => false,
-    setAllowed: () => null,
+    isAllowed: ({ host }) => contentBlockerSites.allowed.has(host),
+    setAllowed: ({ host, allowed }) => {
+      contentBlockerSites.written.push(host);
+      if (allowed) contentBlockerSites.allowed.add(host);
+      else contentBlockerSites.allowed.delete(host);
+      return null;
+    },
+    removeAllowed: ({ host }) => {
+      if (contentBlockerSites.unsupported) throw Object.assign(new Error("Unknown call"), { code: "ERR_UNKNOWN_CALL" });
+      contentBlockerSites.removed.push(host);
+      const removed = contentBlockerSites.allowed.delete(host);
+      if (contentBlockerSites.followerFails) throw Object.assign(new Error("a profile didn't follow"), { code: "ERR_PARTIAL" });
+      return { removed };
+    },
+    state: () => ({ enabled: contentBlockerSites.enabled, version: "test", lists: [], allowedHosts: [...contentBlockerSites.allowed], stats: { enabled: contentBlockerSites.enabled, ready: !contentBlockerSites.unready, parseMs: 0, lookups: 0, averageLookupMicros: 0, maxLookupMicros: 0 } }),
   }),
   ArdiaHistory: domain("history", {
     query: ({ profile, ...args }) => {
@@ -582,8 +717,17 @@ const fakeModules = {
     watch: ({ profile }) => (historyWatches.push(profile), null),
   }),
   ArdiaBookmarks: domain("bookmarks", {
-    tree: ({ profile }) => ({ bar: treeOf(chromeBookmarks(profile), "bar"), other: treeOf(chromeBookmarks(profile), "other") }),
-    apply: ({ profile, ...args }) => applyBookmarkOps(profile, args),
+    tree: ({ profile }) => {
+      if (bookmarkModel.treeFails) throw new Error("no bookmarks");
+      if (bookmarkModel.treeHangs) return new Promise(() => {});
+      bookmarkModel.loading.delete(profile);
+      return { bar: treeOf(chromeBookmarks(profile), "bar"), other: treeOf(chromeBookmarks(profile), "other") };
+    },
+    apply: ({ profile, ...args }) => {
+      if (bookmarkModel.loading.has(profile)) throw new Error("bookmarks.apply ran inside Chrome's bookmark model load");
+      if (bookmarkModel.applyHeld) return bookmarkModel.applyHeld.then(() => applyBookmarkOps(profile, args));
+      return applyBookmarkOps(profile, args);
+    },
     watch: () => null,
   }),
   ArdiaFavicons: domain("favicons", {
@@ -606,6 +750,7 @@ const fakeModules = {
     setVideoUpscalingTestConditions: () => null,
     videoUpscalingState: () => null,
     takeContentDrift: () => ({ layouts: 0, fits: 0, maxPoints: 0 }),
+    takePageMetrics: () => ({}),
     takeFirstPaintHolds: () => ({ held: 0, painted: 0, loaded: 0, pressed: 0, timedOut: 0, heldMs: 0 }),
   }),
   ArdiaWebKit: domain("webKit", {
@@ -613,15 +758,21 @@ const fakeModules = {
     removeDownloadStaging: ({ path }) => (removedStagings.push(path), stagingRemovals.ok),
     cookieStoreKey: ({ profile }) => profile,
     importCookies: ({ cookies }) => cookies.length,
+    watchSiteData: () => null,
+    siteDataReady: () => null,
+    readSiteData: () => ({ cookies: [], storage: {} }),
+    writeSiteData: ({ set, remove }) => ({ cookies: set.length, removed: remove.length, storage: 0 }),
     passkeyAccess: () => ({ entitled: false, status: "entitlementRequired" }),
     requestPasskeyAccess: () => ({ entitled: false, status: "entitlementRequired" }),
+    setFraudWarnings: () => null,
+    writeCopiedAddress: ({ request, url }) => webKitAddressWrites.answer(request, url),
   }),
   ArdiaSwipe: {
     haptic: () => {},
     switchPager: () => Promise.resolve(false),
     stepPager: () => Promise.resolve(false),
     selectPager: () => Promise.resolve(false),
-    pagerState: () => null,
+    pagerState: (key: string) => pagerSnapshots.get(key) ?? null,
     devPagerState: () => Promise.resolve(null),
     devSimulate: () => unfaked("ArdiaSwipe", "devSimulate"),
   },

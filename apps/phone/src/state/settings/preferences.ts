@@ -1,10 +1,12 @@
+import { sanitizeTheme, type ProfileTheme } from "@ardia/core/src/theme.ts";
 import type { InterfaceStyleChoice, SchemeChoice } from "../../lib/appearance.ts";
 import { isAutoArchiveInterval, STANDARD_AUTO_ARCHIVE, type AutoArchiveInterval } from "../tabs/tabModels.ts";
 
 export type NightShadeMode = "disabled" | "automatic" | "always";
 export type SwipeNavigationMode = "anywhere" | "screenEdges" | "disabled";
 export type AppLinkPreference = "ardia" | "app";
-export type ColorChoice = "plum" | "blue" | "purple" | "pink" | "red" | "orange" | "yellow" | "green" | "neutral";
+export type PresetColor = "plum" | "blue" | "purple" | "pink" | "red" | "orange" | "yellow" | "green" | "neutral";
+export type ColorChoice = PresetColor | "custom";
 
 export type Preferences = {
   autoArchiveInterval: AutoArchiveInterval;
@@ -17,12 +19,15 @@ export type Preferences = {
   autoOpensKeyboard: boolean;
   hasFinishedOnboarding: boolean;
   archiveCardShown: boolean;
+  tabSwipeHintShown: boolean;
   colorChoice: ColorChoice | null;
+  customTheme: ProfileTheme | null;
   dynamicColors: boolean | null;
   materialYou: boolean;
   interfaceStyle: InterfaceStyleChoice;
   schemeChoice: SchemeChoice;
   readerStep: number;
+  keyboardHeights: string;
   readerSerif: boolean;
   readerTheme: "light" | "sepia" | "dark" | null;
 };
@@ -38,12 +43,15 @@ export const DEFAULT_PREFERENCES: Preferences = {
   autoOpensKeyboard: true,
   hasFinishedOnboarding: false,
   archiveCardShown: false,
+  tabSwipeHintShown: false,
   colorChoice: null,
+  customTheme: null,
   dynamicColors: null,
   materialYou: false,
   interfaceStyle: "matchMac",
   schemeChoice: "matchMac",
   readerStep: 2,
+  keyboardHeights: "",
   readerSerif: true,
   readerTheme: null,
 };
@@ -59,12 +67,15 @@ export const PREFERENCE_KEYS: Record<keyof Preferences, string> = {
   autoOpensKeyboard: "settings.autoOpenKeyboard",
   hasFinishedOnboarding: "settings.finishedOnboarding",
   archiveCardShown: "tabs.archiveCardShown",
+  tabSwipeHintShown: "tabs.swipeHintShown",
   colorChoice: "settings.color",
+  customTheme: "settings.customTheme",
   dynamicColors: "settings.dynamicColors",
   materialYou: "settings.materialYou",
   interfaceStyle: "settings.interfaceStyle",
   schemeChoice: "settings.schemeChoice",
   readerStep: "reader.sizeStep",
+  keyboardHeights: "search.keyboardHeights",
   readerSerif: "reader.serif",
   readerTheme: "reader.theme",
 };
@@ -73,6 +84,14 @@ const oneOf =
   <T extends string>(values: readonly T[]) =>
   (raw: string): T | undefined =>
     (values as readonly string[]).includes(raw) ? (raw as T) : undefined;
+
+function storedTheme(raw: string): ProfileTheme | undefined {
+  try {
+    return sanitizeTheme(JSON.parse(raw)) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 const flag = (raw: string) => (raw === "true" ? true : raw === "false" ? false : undefined);
 
@@ -87,19 +106,22 @@ const PARSERS: { [K in keyof Preferences]: (raw: string) => Preferences[K] | und
   autoOpensKeyboard: flag,
   hasFinishedOnboarding: flag,
   archiveCardShown: flag,
-  colorChoice: oneOf<ColorChoice>(["plum", "blue", "purple", "pink", "red", "orange", "yellow", "green", "neutral"]),
+  tabSwipeHintShown: flag,
+  colorChoice: oneOf<ColorChoice>(["plum", "blue", "purple", "pink", "red", "orange", "yellow", "green", "neutral", "custom"]),
+  customTheme: storedTheme,
   dynamicColors: flag,
   materialYou: flag,
   interfaceStyle: oneOf<InterfaceStyleChoice>(["matchMac", "glass", "classic"]),
   schemeChoice: oneOf<SchemeChoice>(["matchMac", "system", "light", "dark"]),
   readerStep: (raw) => (/^\d$/.test(raw) && Number(raw) <= 6 ? Number(raw) : undefined),
+  keyboardHeights: (raw) => (/^(\d{1,4}x\d{1,4}=\d{1,4})?(;\d{1,4}x\d{1,4}=\d{1,4}){0,3}$/.test(raw) ? raw : undefined),
   readerSerif: flag,
   readerTheme: oneOf<"light" | "sepia" | "dark">(["light", "sepia", "dark"]),
 };
 
 export const acceptsPreference = (name: keyof Preferences, raw: string) => PARSERS[name](raw) !== undefined;
 
-export const defaultPreferences = (platform?: string): Preferences => ({ ...DEFAULT_PREFERENCES, collapsesBottomBar: platform === "android" });
+export const defaultPreferences = (platform?: string): Preferences => ({ ...DEFAULT_PREFERENCES, collapsesBottomBar: platform === "android" || platform === "ios" });
 
 export function parsePreferences(stored: Record<string, string>, platform?: string): Preferences {
   const out = { ...defaultPreferences(platform) } as Record<keyof Preferences, unknown>;
@@ -113,4 +135,4 @@ export function parsePreferences(stored: Record<string, string>, platform?: stri
 }
 
 export const serializePreference = <K extends keyof Preferences>(value: Preferences[K]): string | null =>
-  value === null ? null : String(value);
+  value === null ? null : typeof value === "object" ? JSON.stringify(value) : String(value);

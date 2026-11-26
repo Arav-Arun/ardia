@@ -202,6 +202,18 @@ static NSString *LinkKeyAction(NSString *key) {
     if (view->_transferKey.length && [changed containsObject:view->_transferKey]) [view pushPeekModifier];
 }
 
++ (NSString *)peekModifierInUse {
+  return gPeekModifier;
+}
+
++ (NSString *)splitLinkModifierInUse {
+  return SplitLinkModifier();
+}
+
++ (BOOL)peeksLinksToOtherSitesInTab:(NSString *)transferKey {
+  return transferKey.length && [gPeekOtherSiteTabs containsObject:transferKey];
+}
+
 - (BOOL)peeksLinksToOtherSites {
   return _transferKey.length && [gPeekOtherSiteTabs containsObject:_transferKey];
 }
@@ -319,6 +331,21 @@ static NSString *LinkKeyAction(NSString *key) {
   for (CALayer *tree in widget.layer.sublayers)
     if (tree.sublayers.count) return YES;
   return NO;
+}
+
+@end
+
+@implementation ArdiaWebView (LeavePrompt)
+
+- (BOOL)asksBeforeLeaving {
+  ArdiaCoreTab *tab = _tab;
+  return tab && !tab.closed && tab.asksBeforeLeaving;
+}
+
+- (void)askBeforeLeaving:(void (^)(BOOL leave))answer {
+  ArdiaCoreTab *tab = _tab;
+  if (!tab || tab.closed) return answer(YES);
+  [tab askBeforeLeaving:answer];
 }
 
 @end

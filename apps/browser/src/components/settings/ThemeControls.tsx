@@ -1,13 +1,14 @@
 import { useRef, type ReactNode } from "react";
 import { StyleSheet, View, type GestureResponderEvent, type StyleProp, type ViewStyle } from "react-native";
-import { colorHex, flatColors, lookAngle, PAD_LIGHTNESS, padColor, stopLightness, themeGrainAlpha, themeLayerAlpha, themeUnderColor, withStopAt, withStopLightness, type ShownLook } from "../../lib/profileLook";
+import { colorHex, flatColors, lookAngle, PAD_LIGHTNESS, padColor, stopLightness, themeGrainAlpha, themeLayerAlpha, themeUnderColor, withStopAt, withStopLightness, type ShownLook, type ThemeStop } from "../../lib/profileLook";
+import { snapPointToStart, trackPress } from "../../lib/presetLook";
 import type { ProfileTheme } from "../../state/browser/types";
 import { Box, capsule, Dot, ink, ProgressTrack, radius, tabularNums, Text, ThemeSwatch, useTheme } from "../ui";
 import { MiniWindow } from "./MiniWindow";
 import { settingsInk, themePreview } from "./tokens";
 import { perLook } from "../ui/tokens";
 
-export const PAD = 172;
+const PAD = 172;
 const KNOB = 22;
 export const LABEL = 112;
 const LIGHTNESS_STEPS = 24;
@@ -23,7 +24,7 @@ export function DirectionDial({ angle, onChange }: { angle: number; onChange: (a
   const ui = useTheme();
   const ref = useRef<View>(null);
   const centre = useRef({ x: 0, y: 0 });
-  const measure = () => ref.current?.measureInWindow((x, y, width, height) => (centre.current = { x: x + width / 2, y: y + height / 2 }));
+  const measure = () => ref.current?.measure((_x, _y, width, height, pageX, pageY) => (centre.current = { x: pageX + width / 2, y: pageY + height / 2 }));
   const at = (e: GestureResponderEvent) => {
     const dx = e.nativeEvent.pageX - centre.current.x, dy = e.nativeEvent.pageY - centre.current.y;
     const degrees = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
@@ -93,18 +94,22 @@ export function ColorPad({
   selected,
   onSelect,
   onChange,
+  onBegin,
+  start,
 }: {
   theme: ProfileTheme;
   selected: number;
   onSelect: (index: number) => void;
   onChange: (next: ProfileTheme, settle?: boolean) => void;
+  onBegin?: () => void;
+  start?: readonly ThemeStop[];
 }) {
   const ref = useRef<View>(null);
   const origin = useRef({ x: 0, y: 0 });
   const dragging = useRef(0);
   const latest = useRef(theme);
   latest.current = theme;
-  const measure = () => ref.current?.measureInWindow((x, y) => (origin.current = { x, y }));
+  const measure = () => ref.current?.measure((_x, _y, _width, _height, pageX, pageY) => (origin.current = { x: pageX, y: pageY }));
   const point = (e: GestureResponderEvent) => ({
     x: clamp01((e.nativeEvent.pageX - origin.current.x) / PAD),
     y: clamp01((e.nativeEvent.pageY - origin.current.y) / PAD),
@@ -114,7 +119,8 @@ export function ColorPad({
     return r <= 0.5 ? p : { x: 0.5 + (dx / r) * 0.5, y: 0.5 + (dy / r) * 0.5 };
   };
   const move = (e: GestureResponderEvent, settle = false) => {
-    const p = insideCircle(point(e));
+    const origin = start?.[dragging.current];
+    const p = origin ? snapPointToStart(insideCircle(point(e)), origin, PAD) : insideCircle(point(e));
     onChange(withStopAt(latest.current, dragging.current, p.x, p.y), settle);
   };
   return (
@@ -131,6 +137,7 @@ export function ColorPad({
         const hit = stops.findIndex((s) => Math.hypot((s.x - p.x) * PAD, (s.y - p.y) * PAD) <= KNOB / 2 + 3);
         dragging.current = hit >= 0 ? hit : selected;
         onSelect(dragging.current);
+        onBegin?.();
         if (hit < 0) move(e);
       }}
       onResponderMove={(e) => move(e)}
@@ -162,12 +169,13 @@ export function ColorPad({
     </View>
   );
 }
-export function LightnessBar({ theme, index, onChange }: { theme: ProfileTheme; index: number; onChange: (next: ProfileTheme, settle?: boolean) => void }) {
+export function LightnessBar({ theme, index, onChange, snapTo }: { theme: ProfileTheme; index: number; onChange: (next: ProfileTheme, settle?: boolean) => void; snapTo?: number }) {
   const stop = theme.stops[index]!;
   return (
     <View style={{ width: PAD }}>
       <Track
         value={stopLightness(stop)}
+        snapTo={snapTo}
         thumbColor={colorHex(stop.color)}
         tooltip="Brightness"
         onChange={(v, settle) => onChange(withStopLightness(theme, index, v), settle)}
@@ -198,17 +206,20 @@ export function Slider({
   onChange,
   stacked,
   children,
+  snapTo,
 }: {
   label: string;
   value: number;
   onChange: (value: number, settle: boolean) => void;
   stacked?: boolean;
   children?: ReactNode;
+  snapTo?: number;
 }) {
   const ui = useTheme();
   const track = (
     <Track
       value={value}
+      snapTo={snapTo}
       onChange={onChange}
       bar={<ProgressTrack value={value} height={4} tone="formAccent" style={{ backgroundColor: ui.switchOff }} />}
     />
@@ -254,17 +265,23 @@ function Track({
   bar,
   thumbColor,
   tooltip,
+  snapTo,
 }: {
   value: number;
   onChange: (value: number, settle: boolean) => void;
   bar: ReactNode;
   thumbColor?: string;
   tooltip?: string;
+  snapTo?: number;
 }) {
   const ref = useRef<View>(null);
-  const frame = useRef({ x: 0, width: 1 });
-  const measure = () => ref.current?.measureInWindow((x, _y, width) => (frame.current = { x, width: Math.max(1, width) }));
-  const at = (e: GestureResponderEvent) => clamp01((e.nativeEvent.pageX - frame.current.x) / frame.current.width);
+  const frame = useRef({ x: 0, width: 0 });
+  const measure = () => ref.current?.measure((_x, _y, width, _height, pageX) => (frame.current = { x: pageX, width }));
+  const press = useRef(trackPress()).current;
+  const report = (e: GestureResponderEvent, settle: boolean) => {
+    const value = press.at(e.nativeEvent.pageX, frame.current.x, frame.current.width, snapTo);
+    if (value !== null) onChange(value, settle);
+  };
   return (
     <View
       onLayout={measure}
@@ -273,12 +290,13 @@ function Track({
       style={{ paddingHorizontal: THUMB / 2 }}
       onStartShouldSetResponder={() => true}
       onResponderGrant={(e) => {
+        press.grant(frame.current.width);
         measure();
-        onChange(at(e), false);
+        report(e, false);
       }}
-      onResponderMove={(e) => onChange(at(e), false)}
-      onResponderRelease={(e) => onChange(at(e), true)}
-      onResponderTerminate={() => onChange(value, true)}
+      onResponderMove={(e) => report(e, false)}
+      onResponderRelease={(e) => report(e, true)}
+      onResponderTerminate={() => press.armed() && onChange(value, true)}
     >
       <View ref={ref} style={{ height: 20, justifyContent: "center" }}>
         {bar}

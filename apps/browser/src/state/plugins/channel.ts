@@ -3,6 +3,7 @@ import { errorText } from "../../lib/errors";
 import { redactedEventData } from "../automation/eventRedaction";
 import type { PluginManifest } from "../../lib/pluginManifest";
 import { failure, parseRequest, parseSubscription, type RequestId, type Subscription } from "../automation/automationMethods";
+import { changeSubscription } from "../automation/automationFeed";
 import { eventTargets, refreshFeed, setFeedConsumer, type Body } from "../automation/controlSocket";
 import { launchToReplay } from "../automation/lifecycleEvents";
 import { isDecideEvent, type AutomationEventName } from "../automation/eventNames";
@@ -12,13 +13,14 @@ import { acceptsLine, onProcessStopped, processExited } from "./process";
 import { valuesFor } from "./values";
 import { dropHiddenRetainedSidePanels } from "./surfaces";
 import { answerMethod } from "./channelApi";
+import { dropStateSubscriptions } from "./stateEvents";
 
-export { CHANNEL_PROTOCOL, MAX_OPEN_URLS, type ChannelCaller } from "./channelApi";
-export { pluginWebUrl, MAX_OPEN_URL_LENGTH, type PluginWebUrl } from "../../lib/pluginWebUrl";
+export { pluginWebUrl } from "../../lib/pluginWebUrl";
 
 type Connection = { name: string; run: number; sub: Subscription | null; launchSent: boolean };
 
 const connections = new Map<string, Connection>();
+const idleReplays = new Map<Connection, Record<string, unknown>[]>();
 const key = (name: string, run: number) => `${name}#${run}`;
 
 function connectionFor(name: string, run: number): Connection {
@@ -28,7 +30,7 @@ function connectionFor(name: string, run: number): Connection {
   return c;
 }
 
-export const observedHooks = (m: PluginManifest) => m.hooks.filter((h) => !isDecideEvent(h));
+const observedHooks = (m: PluginManifest) => m.hooks.filter((h) => !isDecideEvent(h));
 
 function subscribe(c: Connection, m: PluginManifest, params: Record<string, unknown>): Body {
   const given = params.events;
@@ -39,8 +41,11 @@ function subscribe(c: Connection, m: PluginManifest, params: Record<string, unkn
   if (outside.length) return failure("refused", `This plugin's hooks don't list ${outside.join(", ")}.`);
   const sub = parseSubscription({ events, idle: params.idle, fullUrls: m.permissions.fullUrls });
   if ("error" in sub) return sub;
-  c.sub = sub.events.size ? sub : null;
-  refreshFeed();
+  const replay = changeSubscription(c.sub, sub.events.size ? sub : null, () => {
+    c.sub = sub.events.size ? sub : null;
+    refreshFeed();
+  });
+  if (replay.length) idleReplays.set(c, replay);
   if (c.sub?.events.has("app.launched") && !c.launchSent) {
     const launch = launchToReplay();
     if (launch) {
@@ -57,10 +62,13 @@ function answer(c: Connection, m: PluginManifest, method: string, params: Record
 }
 
 function reply(c: Connection, id: RequestId, body: Body) {
+  const replay = idleReplays.get(c) ?? [];
+  idleReplays.delete(c);
   replyToPlugin(c.name, c.run, JSON.stringify({ id, ...body }));
+  for (const data of replay) deliverTo(c, "tab.idle", data, Date.now());
 }
 
-export function handlePluginLine({ name, run, launch, line }: PluginLine) {
+function handlePluginLine({ name, run, launch, line }: PluginLine) {
   if (!acceptsLine(name, run, launch)) return;
   const manifest = activeManifest(currentPlugins(), name);
   const c = connectionFor(name, run);
@@ -95,7 +103,7 @@ function deliver(name: AutomationEventName, data: Record<string, unknown>, time:
   for (const index of [...full, ...plain]) deliverTo(byIndex[index]!, name, data, time);
 }
 
-export function dropConnections(name: string) {
+function dropConnections(name: string) {
   let changed = false;
   for (const [k, c] of connections) {
     if (c.name !== name) continue;
@@ -126,7 +134,7 @@ export function startChannels() {
   onProcessStopped(dropConnections);
   onProcessStopped(dropCalls);
   onProcessStopped(dropHiddenRetainedSidePanels);
+  onProcessStopped(dropStateSubscriptions);
   setFeedConsumer("plugins", { subscriptions: () => [...connections.values()].flatMap((c) => (c.sub ? [c.sub] : [])), deliver });
 }
 
-export const channelCount = () => connections.size;

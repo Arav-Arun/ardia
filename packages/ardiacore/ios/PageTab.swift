@@ -18,6 +18,7 @@ protocol PageTab: NSView {
   var contentsBackgroundColor: NSColor? { get set }
   var shownURL: String? { get set }
   var autoPictureInPicture: Bool { get set }
+  var pageMenuItems: [[String: String]] { get set }
   var frozen: Bool { get set }
   var mediaCaptureSourceId: String? { get }
 
@@ -51,9 +52,12 @@ protocol PageTab: NSView {
   func requestPictureInPicture(clickAt: Double, control: Int, _ completion: @escaping (Bool) -> Void)
   func takeControlPress(clickAt: Double, control: Int) -> Bool
   func exitPictureInPicture()
+  func armElementPick() -> Double
+  func takeElementPick(_ armed: Double) -> Bool
 
   func securityInfo(_ completion: @escaping ([String: Any]) -> Void)
   func pageCookies(_ urls: [String], completion: @escaping ([[String: Any]]?) -> Void)
+  func siteData(_ request: [String: Any], completion: @escaping ([String: Any]?) -> Void)
   func openBlockedPopup(_ popupId: String, always: Bool)
   func clearSiteData(_ reply: @escaping (Any?, String?) -> Void)
 

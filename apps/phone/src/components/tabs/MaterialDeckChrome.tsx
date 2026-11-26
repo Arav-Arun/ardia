@@ -1,13 +1,13 @@
+import { actionWords, listWords } from "../../lib/sharedWords";
 import { useEffect, useRef } from "react";
 import { Platform, Pressable, StyleSheet, Text, View, type ViewInstance } from "react-native";
 import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { withAlpha } from "../../lib/color";
 import type { MaterialScheme } from "../../lib/material/schemes";
-import { haptics } from "../../state/app/haptics";
 import { menuOpenedHaptic } from "../../state/browse/tabMenus";
 import { useCanReopen } from "../../state/tabs/hooks";
 import { noteDeckBarTop, watchDeckBar } from "../../state/toasts/store";
-import { Symbol, type MenuItem } from "../ui";
+import { Symbol } from "../ui";
 import { MATERIAL_STATE } from "../ui/materialRoles";
 import { materialBottomBar, materialDuration, materialMove, materialShape, materialSize, materialType } from "../ui/materialTokens";
 import { MenuTrigger } from "../ui/MenuTrigger";
@@ -47,7 +47,7 @@ export function MaterialDeckChrome({ shown, barBlocked, safeTop, safeSide, safeB
   return (
     <>
       <MaterialDeckTopBar safeTop={safeTop} safeSide={safeSide} incognito={incognito} privateCount={privateCount} hasTabs={hasTabs} chromeStyle={chromeStyle} onCloseIncognito={onCloseIncognito} onCloseAll={onCloseAll} menusShown={menusShown} onMenu={onMenu} />
-      <MaterialDeckBottomRow shown={shown} barBlocked={barBlocked} safeSide={safeSide} safeBottom={safeBottom} deckHeight={deckHeight} incognito={incognito} chromeStyle={chromeStyle} onQuery={onQuery} menusShown={menusShown} onMenu={onMenu} />
+      <MaterialDeckBottomRow shown={shown} barBlocked={barBlocked} safeSide={safeSide} safeBottom={safeBottom} deckHeight={deckHeight} incognito={incognito} privateCount={privateCount} onCloseIncognito={onCloseIncognito} chromeStyle={chromeStyle} onQuery={onQuery} menusShown={menusShown} onMenu={onMenu} />
     </>
   );
 }
@@ -65,12 +65,11 @@ export function MaterialDeckTopBar({ safeTop, safeSide, incognito, privateCount,
   const { syncEnabled, spaces, current, spaceItems } = useDeckSpaces();
   const side = safeSide + MATERIAL_DECK.barSide;
   const below = safeTop + materialSize.topAppBar;
-  const menu = { trigger: "tap" as const, fixedOrder: true, haptic: menuOpenedHaptic, disabled: !menusShown, onOpen: () => onMenu(true), onClose: () => onMenu(false) };
-  const moreItems = deckMoreMenuItems({ syncEnabled, canReopen, hasTabs, onCloseAll });
-  const incognitoItems: MenuItem[] = [{ label: "Close Incognito Tabs", destructive: true, onPress: onCloseIncognito }];
+  const menu = { trigger: "tap" as const, fixedOrder: true, haptic: menuOpenedHaptic, disabled: !menusShown, privately: incognito, onOpen: () => onMenu(true), onClose: () => onMenu(false) };
+  const moreItems = deckMoreMenuItems({ syncEnabled, canReopen, hasTabs, onCloseAll, material: true });
   const title = current?.name ?? "Tabs";
   return (
-    <Animated.View testID="materialDeckTopBar" pointerEvents="box-none" style={[styles.topBar, { paddingTop: safeTop, height: safeTop + materialSize.topAppBar, paddingHorizontal: side, backgroundColor: scheme.surface }, chromeStyle]}>
+    <Animated.View testID="materialDeckTopBar" pointerEvents="box-none" style={[styles.topBar, { paddingTop: safeTop, height: safeTop + materialSize.topAppBar, paddingHorizontal: side }, chromeStyle]}>
       <View style={styles.titleSlot}>
         {current && spaces.length > 1 ? (
           <MenuTrigger items={spaceItems} {...menu} place={{ top: below, left: side + MATERIAL_DECK.titleInset }}>
@@ -84,7 +83,7 @@ export function MaterialDeckTopBar({ safeTop, safeSide, incognito, privateCount,
                 onPress={onPress}
                 style={styles.spaceButton}
               >
-                <Text numberOfLines={1} style={[materialType.titleLarge, styles.shrink, { color: scheme.onSurface }]}>
+                <Text numberOfLines={1} style={[materialType.titleMedium, styles.shrink, { color: scheme.onSurface }]}>
                   {current.name}
                 </Text>
                 <Symbol name="chevronDown" size={materialSize.icon} color={scheme.onSurfaceVariant} />
@@ -92,48 +91,23 @@ export function MaterialDeckTopBar({ safeTop, safeSide, incognito, privateCount,
             )}
           </MenuTrigger>
         ) : (
-          <Text testID="materialDeckTitle" accessibilityRole="header" numberOfLines={1} style={[materialType.titleLarge, styles.title, { color: scheme.onSurface }]}>
+          <Text testID="materialDeckTitle" accessibilityRole="header" numberOfLines={1} style={[materialType.titleMedium, styles.title, { color: scheme.onSurface }]}>
             {title}
           </Text>
         )}
       </View>
-      {privateCount > 0 ? (
-        <MenuTrigger items={incognitoItems} {...menu} place={{ top: below, right: side + materialSize.touchTarget }}>
-          {({ onPress }) => <IncognitoChip count={privateCount} onPress={onPress ?? noop} />}
-        </MenuTrigger>
-      ) : null}
       <MenuTrigger items={moreItems} {...menu} place={{ top: below, right: side }}>
-        {({ onPress }) => <MaterialIconButton testID="materialDeckMore" icon="ellipsis" label="More" scheme={scheme} turned onPress={onPress ?? noop} />}
+        {({ onPress }) => <MaterialIconButton testID="materialDeckMore" icon="ellipsis" label={actionWords.more} scheme={scheme} turned onPress={onPress ?? noop} />}
       </MenuTrigger>
     </Animated.View>
   );
 }
 
-function IncognitoChip({ count, onPress }: { count: number; onPress: () => void }) {
-  const dark = useDeckScheme(true);
-  return (
-    <Pressable
-      testID="materialDeckIncognito"
-      accessibilityRole="button"
-      accessibilityLabel={`Incognito, ${count} ${count === 1 ? "tab" : "tabs"}`}
-      accessibilityHint="Shows the option to close incognito tabs."
-      android_ripple={ripple(dark)}
-      hitSlop={{ top: (materialSize.touchTarget - MATERIAL_DECK.chipHeight) / 2, bottom: (materialSize.touchTarget - MATERIAL_DECK.chipHeight) / 2 }}
-      onPressIn={haptics.barPress}
-      onPress={onPress}
-      style={[styles.chip, { backgroundColor: dark.surfaceContainerHighest }]}
-    >
-      <Symbol name="eyes" size={MATERIAL_DECK.chipGlyph} color={dark.onSurface} />
-      <Text style={[materialType.labelLarge, styles.count, { color: dark.onSurface }]}>{count}</Text>
-    </Pressable>
-  );
-}
-
-type BottomProps = Menus & { barBlocked?: boolean; shown: boolean; safeSide: number; safeBottom: number; deckHeight: number; incognito: boolean; chromeStyle?: AnimatedOpacityStyle; onQuery: (needle: string) => void };
+type BottomProps = Menus & { barBlocked?: boolean; shown: boolean; safeSide: number; safeBottom: number; deckHeight: number; incognito: boolean; privateCount?: number; onCloseIncognito?: () => void; chromeStyle?: AnimatedOpacityStyle; onQuery: (needle: string) => void };
 
 export const materialKeyboardLift = (keyboard: number, safeBottom: number, os: string) => Math.max(0, keyboard + MATERIAL_DECK.keyboardGap - (os === "android" ? 0 : safeBottom) - materialBottomBar.inset);
 
-export function MaterialDeckBottomRow({ shown, barBlocked = false, safeSide, safeBottom, incognito, chromeStyle, onQuery, menusShown, onMenu }: BottomProps) {
+export function MaterialDeckBottomRow({ shown, barBlocked = false, safeSide, safeBottom, incognito, privateCount = 0, onCloseIncognito, chromeStyle, onQuery, menusShown, onMenu }: BottomProps) {
   const scheme = useDeckScheme(incognito);
   const canReopen = useCanReopen();
   const search = useSearchTabs(shown, incognito, onQuery);
@@ -151,7 +125,7 @@ export function MaterialDeckBottomRow({ shown, barBlocked = false, safeSide, saf
       if (height > 0) noteDeckBarTop(y);
     });
   const hosted = useMaterialBarRegistration("deck", {
-    bar: { isTabOverview: true, scheme, search, incognito, canReopen, menusShown, onMenu, container: { ref: row, onLayout: measure, style: riseStyle } },
+    bar: { isTabOverview: true, scheme, search, incognito, privateCount, onCloseIncognito, canReopen, menusShown, onMenu, container: { ref: row, onLayout: measure, style: riseStyle } },
     hidden: !shown,
     blocked: !menusShown || barBlocked,
     measure,
@@ -169,6 +143,8 @@ export function MaterialDeckBottomRow({ shown, barBlocked = false, safeSide, saf
       scheme={scheme}
       search={search}
       incognito={incognito}
+      privateCount={privateCount}
+      onCloseIncognito={onCloseIncognito}
       canReopen={canReopen}
       menusShown={menusShown}
       onMenu={onMenu}
@@ -181,7 +157,7 @@ export function MaterialDeckEmpty({ centerY, showsArchive, onArchive, searching 
   const scheme = useDeckScheme(incognito);
   return (
     <View testID="materialDeckEmpty" pointerEvents="box-none" style={[styles.empty, { top: centerY - materialSize.listItemTwoLine }]}>
-      <Text style={[materialType.titleLarge, styles.centered, { color: scheme.onSurface }]}>{searching ? "No Matching Tabs" : "No Open Tabs"}</Text>
+      <Text style={[materialType.titleLarge, styles.centered, { color: scheme.onSurface }]}>{searching ? listWords.noResults : "No Open Tabs"}</Text>
       {searching ? null : <Text style={[materialType.bodyMedium, styles.centered, { color: scheme.onSurfaceVariant }]}>Tabs you open appear here. Inactive tabs move to the Archive.</Text>}
       {showsArchive && !searching ? (
         <Pressable accessibilityRole="button" android_ripple={ripple(scheme, scheme.primary)} onPress={onArchive} style={styles.textButton}>

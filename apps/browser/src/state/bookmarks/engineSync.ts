@@ -12,10 +12,13 @@ import { migrateLegacyFile } from "../app/legacyFiles";
 import { noteBookmarkSyncDiff } from "../telemetry/bookmarkMoves";
 import { consentToken } from "../telemetry/client";
 import { warnFor } from "../telemetry/logs";
+import { withDeadline } from "../../lib/deadline";
+import { isFields } from "../../lib/decode";
 
 const LEGACY_FILE = "bookmarks.json";
 type LegacyFile = { bookmarks?: { nodes: Bookmarks["nodes"]; roots: Record<string, { bar: string; other: string }> } };
 const LEGACY_KEPT_MS = 10_000;
+const LEGACY_MODEL_WAIT_MS = 30_000;
 const CACHE_FILE = "bookmarks-cache.json";
 const CACHE_SAVE_MS = 2000;
 const store = () => useBrowser.getState();
@@ -32,6 +35,27 @@ type EngineState = {
 };
 const engines = new Map<string, EngineState>();
 const isCurrent = (engine: string, state: EngineState) => engines.get(engine) === state;
+const BOOKMARK_WRITE_WAIT_MS = 10_000;
+const BOOKMARKS_CURRENT_WAIT_MS = 15_000;
+const idleWaiters = new Map<string, (() => void)[]>();
+const idle = (state: EngineState | undefined) => !state?.shadow || (!state.busy && !state.needPush && !state.needRead);
+
+function wakeIdle(engine: string) {
+  const waiting = idleWaiters.get(engine);
+  if (!waiting || !idle(engines.get(engine))) return;
+  idleWaiters.delete(engine);
+  for (const wake of waiting) wake();
+}
+
+export function bookmarksWritten(engine: string, deadlineMs = BOOKMARK_WRITE_WAIT_MS): Promise<boolean> {
+  if (idle(engines.get(engine))) return Promise.resolve(true);
+  const written = new Promise<boolean>((resolve) => {
+    const waiting = idleWaiters.get(engine) ?? [];
+    waiting.push(() => resolve(true));
+    idleWaiters.set(engine, waiting);
+  });
+  return withDeadline(written, deadlineMs, false);
+}
 
 const stateOf = (engine: string) => {
   let state = engines.get(engine);
@@ -40,14 +64,11 @@ const stateOf = (engine: string) => {
 };
 let legacyMoved = false;
 let adopting = false;
+let syncing = false;
 
 function adopt(engine: string, flat: Flat, { ready = legacyMoved } = {}) {
   adopting = true;
-  try {
-    adoptNow(engine, flat, ready);
-  } finally {
-    adopting = false;
-  }
+  try { adoptNow(engine, flat, ready); } finally { adopting = false; }
 }
 
 function adoptNow(engine: string, flat: Flat, ready: boolean) {
@@ -141,6 +162,7 @@ function work(engine: string) {
       warnFor(consent, `[bookmarks] couldn't read ${engine || "the default profile"}'s bookmarks`, error);
     } finally {
       state.busy = false;
+      wakeIdle(engine);
     }
   })();
 }
@@ -163,8 +185,6 @@ const CACHE_VERSION = 1;
 const CACHE_MIGRATIONS: Migrations = {};
 
 type CacheDoc = { trees: Record<string, BookmarkNode[]> };
-
-const isFields = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 const isCachedNode = (n: unknown): n is BookmarkNode =>
   isFields(n) &&
@@ -231,9 +251,10 @@ function saveCache() {
   }
 }
 
-export const migrateBookmarksFile = ({ keepMs = LEGACY_KEPT_MS } = {}) => migrateLegacyFile(LEGACY_FILE, "bookmarks", moveBookmarks, keepMs);
+export const migrateBookmarksFile = ({ keepMs = LEGACY_KEPT_MS, modelWaitMs = LEGACY_MODEL_WAIT_MS } = {}) =>
+  migrateLegacyFile(LEGACY_FILE, "bookmarks", (file: LegacyFile) => moveBookmarks(file, modelWaitMs), keepMs);
 
-async function moveBookmarks(file: LegacyFile) {
+async function moveBookmarks(file: LegacyFile, modelWaitMs: number) {
   const b = file.bookmarks ?? { nodes: {}, roots: {} };
   const s = store();
   const done = new Set<string>();
@@ -261,12 +282,32 @@ async function moveBookmarks(file: LegacyFile) {
     walk(roots.bar, "bar");
     walk(roots.other, "other");
     if (!ops.length) continue;
+    const loaded = await withDeadline(bookmarkTree(engine).then(() => true), modelWaitMs, false);
+    if (!loaded) throw new Error(`Chrome's bookmarks for ${engine || "the default profile"} didn't load within ${modelWaitMs / 1000} s`);
     const result = await applyBookmarkOps(engine, ops);
     if (result.skipped) throw new Error(`${result.skipped} of ${ops.length} bookmarks couldn't be added`);
   }
 }
 
+export function bookmarksCurrent(engine: string, waitMs = BOOKMARKS_CURRENT_WAIT_MS): Promise<boolean> {
+  const read = () => !syncing || !!engines.get(engine)?.shadow;
+  if (read()) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const finish = (current: boolean) => {
+      clearTimeout(timer);
+      stop();
+      resolve(current);
+    };
+    const timer = setTimeout(() => finish(false), waitMs);
+    const stop = useBrowser.subscribeTo(["bookmarks"], () => {
+      if (read()) finish(true);
+    });
+    openProfile(engine);
+  });
+}
+
 export function startBookmarks() {
+  syncing = true;
   for (const [engine, flat] of Object.entries(launchTrees())) {
     if (!engineProfiles(store()).includes(engine)) continue;
     stateOf(engine).shown = flat;
@@ -291,6 +332,7 @@ export function startBookmarks() {
       state.shadow = null;
       state.needRead = false;
       state.needPush = false;
+      wakeIdle(engine);
     }
   });
   const stop = useBrowser.subscribeTo(["profiles", "bookmarks"], (s, prev) => {
@@ -307,6 +349,7 @@ export function startBookmarks() {
   });
   return () => {
     stopped = true;
+    syncing = false;
     clearTimeout(cacheTimer);
     if (cacheTimer) saveCache();
     cacheTimer = undefined;
@@ -315,11 +358,12 @@ export function startBookmarks() {
     unloaded();
     stop();
     engines.clear();
+    for (const engine of [...idleWaiters.keys()]) wakeIdle(engine);
     legacyMoved = false;
   };
 }
 
-export function editedUnopened(before: Bookmarks, s: Pick<BrowserState, "bookmarks" | "profiles">): string[] {
+function editedUnopened(before: Bookmarks, s: Pick<BrowserState, "bookmarks" | "profiles">): string[] {
   const unopened = engineProfiles(s).filter((engine) => !profileOpened(engine));
   if (!unopened.length || before.nodes === s.bookmarks.nodes) return [];
   const byRoot = new Map<string, string>();

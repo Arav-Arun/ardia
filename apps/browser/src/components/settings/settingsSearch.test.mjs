@@ -23,6 +23,8 @@ const TOP = [
   ["tint", ["appearance.glassTint", "appearance.glassTint"]],
   ["default browser", ["general.defaultBrowser"]],
   ["search engine", ["profiles.searchEngine"]],
+  ["webkit only", ["general.engineMode"]],
+  ["chromium only", ["general.engineMode"]],
   ["ad block", ["general.blockAds"]],
   ["adblock", ["general.blockAds"]],
   ["block ads", ["general.blockAds"]],
@@ -34,6 +36,7 @@ const TOP = [
   ["sidebar", ["tabs.sidebarSide"]],
   ["right sidebar", ["tabs.sidebarSide"]],
   ["vertical tabs", ["tabs.layout"]],
+  ["tab menu button", ["tabs.showTabMenuButton"]],
   ["pinned", ["profiles.shareTopApps", "tabs.balancedTopApps", "tabs.sleepingTabs"]],
   ["strikethrough", ["tabs.sleepingTabs"]],
   ["sleeping tabs", ["tabs.sleepingTabs"]],
@@ -51,6 +54,27 @@ const TOP = [
   ["keyboard shortcuts", ["shortcuts.menuCommands"]],
   ["hotkeys", ["shortcuts.menuCommands", "shortcuts.extensionShortcuts"]],
   ["⌘L", ["appearance.commandBarPlacement"]],
+  ["alt tab", ["appearance.ctrlTab"]],
+  ["ctrl tab", ["appearance.ctrlTab"]],
+  ["control tab", ["appearance.ctrlTab"]],
+  ["tab switcher", ["appearance.ctrlTab", "appearance.tabSwitcherView"]],
+  ["switch tabs", ["appearance.ctrlTab"]],
+  ["recent tabs", ["appearance.ctrlTab"]],
+  ["compact list", ["appearance.tabSwitcherView"]],
+  ["thumbnails", ["appearance.tabSwitcherView"]],
+  ["after closing a tab", ["appearance.afterClosingTab"]],
+  ["closing a tab", ["appearance.afterClosingTab"]],
+  ["tab above", ["appearance.afterClosingTab"]],
+  ["tab to the left", ["appearance.afterClosingTab"]],
+  ["tab below", ["appearance.afterClosingTab"]],
+  ["tab closing", ["appearance.afterClosingTab"]],
+  ["close behavior", ["appearance.afterClosingTab"]],
+  ["address bar", ["appearance.addressBar"]],
+  ["url bar", ["appearance.addressBar"]],
+  ["command bar", ["appearance.commandBarPlacement"]],
+  ["cmd l", ["appearance.commandBarPlacement"]],
+  ["hide toolbar", ["tabs.hideToolbarWhileScrolling"]],
+  ["auto hide toolbar", ["tabs.hideToolbarWhileScrolling"]],
   ["shrink", ["tabs.hideToolbarWhileScrolling"]],
   ["⌘z", ["shortcuts.undoReopensClosedTab"]],
   ["update", ["general.updateChannel", "general.autoUpdate"]],
@@ -60,6 +84,9 @@ const TOP = [
   ["extensions", ["profiles.extensions"]],
   ["font", ["advanced.chromeSettings"]],
   ["default zoom", ["advanced.chromeSettings"]],
+  ["⌘-scroll", ["advanced.commandScrollZoom"]],
+  ["mouse wheel", ["advanced.commandScrollZoom"]],
+  ["scroll zoom", ["advanced.commandScrollZoom"]],
   ["chrome settings", ["advanced.chromeSettings"]],
   ["preload", ["profiles.preloadPages"]],
   ["preload pages", ["profiles.preloadPages"]],
@@ -111,12 +138,25 @@ const TOP = [
   ["thme", ["appearance.theme"]],
   ["upscalling", ["tabs.videoUpscaling"]],
   ["extensoins", ["profiles.extensions", "profiles.webStore"]],
+  ["safe browsing", ["advanced.webKitFraudWarnings"]],
+  ["phishing", ["advanced.webKitFraudWarnings"]],
+  ["unsaved", ["advanced.engineSwitchAsksAboutUnsavedWork"]],
+  ["seamless", ["advanced.engineSwitchKeepsPage"]],
+  ["bring sign-ins", ["advanced.engineSwitchCarriesSiteData"]],
+  ["drm prompt", ["advanced.offerWebKitForProtectedVideo"]],
+  ["webkit limitations", ["advanced.enginesDiffer", "general.engineMode"]],
 ];
 
 test("real queries put the setting people mean first", () => {
   const misses = TOP.filter(([q, want]) => !want.includes(first(q))).map(([q, want]) => `${q}: got ${first(q)}, want ${want.join(" or ")}`);
   assert.deepEqual(misses, []);
   assert.ok(TOP.length >= 40);
+});
+
+test("arc finds the Ctrl+Tab picker and the toolbar's address bar and command bar pickers", () => {
+  const found = ids("arc");
+  assert.ok(found.includes("appearance.ctrlTab"));
+  assert.ok(found.some((id) => ["appearance.addressBar", "appearance.commandBarPlacement"].includes(id)));
 });
 
 test("whole-word hits rank above word prefixes, and a loose keyword no longer wins", () => {
@@ -158,6 +198,14 @@ test("rows named by the query stay apart even when they share a place", () => {
   assert.ok(tabs.length >= 2, "several Layout rows say tabs in their names");
   assert.equal(first("command line"), "plugins.cli");
   assert.equal(first("devtools"), "advanced.ardiaCommand");
+});
+
+test("a lower-tier named row in the same section does not suppress a higher-tier unnamed match", () => {
+  const hits = search(SETTINGS_INDEX, "switch tabs");
+  assert.equal(hits[0]?.entry.id, "appearance.ctrlTab");
+  assert.ok(hits[0].tier > (hits.find((h) => h.entry.id === "appearance.afterClosingTab")?.tier ?? -1));
+  assert.equal(first("check for updates"), "general.autoUpdate");
+  assert.equal(first("corner radius"), "appearance.tabCornerRadius");
 });
 
 test("a pane's name finds that pane's rows", () => {
@@ -283,7 +331,8 @@ test("a row its pane doesn't draw is left out of search, by the same rule the pa
   for (const id of ["tabs.sidebarSide", "appearance.sidebarTextSize", "general.syncFolder", "automations.meetingAlert"]) assert.ok(!sidebar.has(id), id);
   for (const id of ["appearance.interfaceStyle", "appearance.glassTint"]) assert.ok(unshown({}, { top: false }).has(id), id);
   assert.ok(unshown({ interfaceStyle: "classic" }, { top: false, glass: true }).has("appearance.glassTint"));
-  assert.ok(unshown({ memorySaver: false }, { top: false }).has("advanced.keepActiveSites"));
+  assert.ok(unshown({ memorySaver: false, busyTabWarnings: false }, { top: false }).has("advanced.keepActiveSites"));
+  assert.ok(!unshown({ memorySaver: false, busyTabWarnings: true }, { top: false }).has("advanced.keepActiveSites"), "busy-tab warnings read the kept sites too");
   assert.ok(!unshown({ memorySaver: true }, { top: false }).has("advanced.keepActiveSites"));
   assert.ok(unshown({ newTabOpens: "commandBar" }, { top: false }).has("tabs.newTabUrl"));
   assert.ok(unshown({ cleanUpInactiveTabsAfterMinutes: 60 }, { top: false }).has("tabs.suggestCleanUp"));
@@ -291,6 +340,13 @@ test("a row its pane doesn't draw is left out of search, by the same rule the pa
   assert.ok(unshown({}, { top: false }).has("profiles.profileDownloadsFolder"));
   assert.ok(unshown({ addressBar: "sidebar" }, { top: false }).has("appearance.compactToolbar"));
   assert.ok(!unshown({ addressBar: "sidebar" }, { top: true }).has("appearance.compactToolbar"));
+  const chromiumOnly = unshown({ engineMode: "chromium" }, { top: false });
+  for (const id of ["advanced.pageEngine", "advanced.websiteEngines", "advanced.enginesDiffer", "advanced.offerWebKitForProtectedVideo", "advanced.webKitFraudWarnings"]) assert.ok(chromiumOnly.has(id), id);
+  for (const id of ["general.engineMode", "advanced.engineSwitchKeepsPage", "advanced.engineSwitchAsksAboutUnsavedWork", "advanced.engineSwitchCarriesSiteData"]) assert.ok(!chromiumOnly.has(id), id);
+  const webkitOnly = unshown({ engineMode: "webkit" }, { top: false });
+  for (const id of ["advanced.pageEngine", "advanced.websiteEngines", "advanced.offerWebKitForProtectedVideo"]) assert.ok(webkitOnly.has(id), id);
+  for (const id of ["general.engineMode", "advanced.enginesDiffer", "advanced.webKitFraudWarnings"]) assert.ok(!webkitOnly.has(id), id);
+  assert.ok(unshown({}, { top: false }).has("appearance.windowButtons"), "the Mac and Windows have no choice of window buttons");
 });
 
 const SHOWN_BY_LOADED_DATA = ["UpdatesSection.tsx: general.autoUpdate", "UpdatesSection.tsx: general.updateChannel"];
@@ -330,6 +386,12 @@ test("Interface size turns up for every word people use for UI scaling", () => {
   for (const query of ["interface size", "ui size", "scaling", "fractional scaling", "1440p", "ui scale"]) assert.equal(first(query), "appearance.interfaceScale", query);
 });
 
+test("the profile switcher toggle turns up for the words of the old three-way row", () => {
+  for (const query of ["profile switcher", "profile dots", "profile icons", "dots", "space icons", "switcher in the sidebar shows"]) assert.ok(ids(query).includes("profiles.showProfileDots"), query);
+  for (const query of ["profile switcher", "profile dots"]) assert.equal(first(query), "profiles.showProfileDots", query);
+  assert.equal(findSetting("profiles.switcherShows"), undefined);
+});
+
 test("Minimalism mode turns up for every word people use for it", () => {
   for (const query of ["minimal", "minimalism", "clean", "zen", "distraction free", "no toolbar"]) assert.ok(ids(query).includes("appearance.minimalismMode"), query);
 });
@@ -351,4 +413,24 @@ test("search leaves out the official plugins when Settings › Plugins doesn't d
   const bundled = unshown({ top: false, officialPlugins: ["cli"] });
   assert.ok(!bundled.has("plugins.cli"));
   assert.ok(!bundled.has("plugins.official"));
+});
+
+test("with Minimalism mode off, searching favicons or site logos still finds Minimalism tiles and says what it needs (#3609)", async () => {
+  const { unshownSettings } = await import("./settingsIndex.ts");
+  const { DEFAULT_SETTINGS } = await import("../../state/settings/settings.ts");
+  const { settingsResults } = await import("./SettingsSearch.tsx");
+  const unshown = new Set(unshownSettings({ ...DEFAULT_SETTINGS, minimalismMode: false }, { top: false }).split("\n").filter(Boolean));
+  assert.ok(unshown.has("appearance.minimalismPinnedIcons"), "the pane hides the row while Minimalism mode is off");
+  for (const query of ["favicons", "site logos", "letters"]) {
+    const hit = settingsResults(query, unshown).find((h) => h.entry.id === "appearance.minimalismPinnedIcons");
+    assert.ok(hit, query);
+    assert.equal(hit.entry.needs, "Turn on Minimalism mode to use this");
+  }
+  assert.equal(findSetting("appearance.minimalismPinnedIcons").description.includes("With Letters"), true);
+});
+
+test("searching for hiding or showing the control pill surfaces advanced.showCliPill", () => {
+  for (const query of ["show control pill", "hide control pill", "dismiss control pill"]) {
+    assert.ok(ids(query).includes("advanced.showCliPill"), query);
+  }
 });

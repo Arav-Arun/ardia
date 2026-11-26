@@ -13,11 +13,13 @@ import { SIDEBAR_FOOTER_DOWNLOADS } from "../sidebar/geometry";
 import { switcherCellWidth, switcherIcons, SwitcherMark } from "./ProfileIcons";
 import { openProfileItemMenu } from "./profileMenu";
 import { profileSwitcherShown } from "../../state/profiles/switcherShown";
+import { switcherIconOf } from "../../state/profiles/switcherMark";
 import { profileSwitcher } from "./tokens";
 import { buttonMotion, usePressScaleMotion } from "../ui/motion";
 import { useProfileHold, useProfileTarget } from "../sidebar/DragProvider";
 import { useSidebarTokens } from "../sidebar/tokens";
 import { useDotReorder } from "./useDotReorder";
+import { dotsRowLeftInset } from "./dotsRow";
 
 export const PROFILE_DOTS_HEIGHT = profileSwitcher.height;
 const { band: BAND, dotTooltipLift, holdPlate } = profileSwitcher;
@@ -33,13 +35,14 @@ export function useProfileDotsShown() {
 
 export function ProfileDots({ windowId, width, besideDownloads }: { windowId: string; width: number; besideDownloads: boolean }) {
   const ids = useProfileOrder(useShallow((o) => o));
-  const saved = useProfileRecords(useShallow((profiles) => ids.map((id) => profiles[id]?.icon ?? null)));
-  const shown = useSettings((s) => s.profileSwitcherIcons);
-  const icons = switcherIcons(saved, shown, width - 2 * (besideDownloads ? SIDE_ROOM_BESIDE_DOWNLOADS : SIDE_ROOM));
+  const saved = useProfileRecords(useShallow((profiles) => ids.map((id) => switcherIconOf(profiles[id]))));
+  const icons = switcherIcons(saved, width - 2 * (besideDownloads ? SIDE_ROOM_BESIDE_DOWNLOADS : SIDE_ROOM));
   const { pages, pager } = usePagerPages(windowId);
-  const reorder = useDotReorder(ids, ids.map((_, i) => switcherCellWidth(icons[i] ?? null)));
+  const cells = ids.map((_, i) => switcherCellWidth(icons[i] ?? null));
+  const reorder = useDotReorder(ids, cells);
+  const rowWidth = cells.reduce((sum, cell) => sum + cell, 0);
   return (
-    <View style={{ height: PROFILE_DOTS_HEIGHT, alignItems: "center" }}>
+    <View style={{ height: PROFILE_DOTS_HEIGHT, alignItems: "center", paddingLeft: besideDownloads ? dotsRowLeftInset(width, rowWidth, SIDE_ROOM_BESIDE_DOWNLOADS) : 0 }}>
       <View style={{ marginTop: (PROFILE_DOTS_HEIGHT - 3 - BAND) / 2, height: BAND, flexDirection: "row" }}>
         {ids.map((id, i) => (
           <Dot
