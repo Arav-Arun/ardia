@@ -251,7 +251,7 @@ pub fn base64_decode(text: &str) -> Option<Vec<u8>> {
         } as u32)
     };
     let body = text.trim_end_matches('=');
-    if text.len() - body.len() > 2 || body.len() % 4 == 1 {
+    if !text.len().is_multiple_of(4) || text.len() - body.len() > 2 || body.len() % 4 == 1 {
         return None;
     }
     let mut out = Vec::with_capacity(body.len() * 3 / 4);
@@ -371,6 +371,8 @@ impl Mode {
 #[derive(Clone, Debug)]
 struct Progress {
     mode: Mode,
+    key: Option<String>,
+    skipped: [u64; 3],
     profiles: Vec<(String, String)>,
     staged: bool,
     local_state: bool,
@@ -382,6 +384,8 @@ impl Progress {
         json!({
             "version": REPORT_VERSION,
             "mode": self.mode.as_str(),
+            "key": self.key,
+            "skipped": self.skipped,
             "profiles": self.profiles.iter().map(|(from, to)| json!([from, to])).collect::<Vec<_>>(),
             "staged": self.staged,
             "local_state": self.local_state,
@@ -398,6 +402,17 @@ impl Progress {
             "restored" => Mode::Restored,
             _ => return None,
         };
+        let key = match value.get("key")? {
+            Value::Null => None,
+            Value::String(key) => Some(key.clone()),
+            _ => return None,
+        };
+        let skipped = value.get("skipped")?.as_array()?;
+        let skipped: [u64; 3] = [
+            skipped.first()?.as_u64()?,
+            skipped.get(1)?.as_u64()?,
+            skipped.get(2)?.as_u64()?,
+        ];
         let mut profiles = Vec::new();
         for pair in value.get("profiles")?.as_array()? {
             let pair = pair.as_array()?;
@@ -425,6 +440,8 @@ impl Progress {
         }
         Some(Progress {
             mode,
+            key,
+            skipped,
             profiles,
             staged: value.get("staged")?.as_bool()?,
             local_state,
@@ -609,19 +626,16 @@ impl Run<'_> {
             .write(names::CHROMIUM_PROGRESS_NAME, &Self::progress_bytes(progress)?)
     }
 
-    fn read_progress(&self) -> Option<Progress> {
-        match self
-            .webui
-            .dir()
-            .read(names::CHROMIUM_PROGRESS_NAME, PROGRESS_LIMIT)
-            .ok()?
-        {
-            Fetched::Data(bytes) => serde_json::from_slice::<Value>(&bytes)
-                .ok()
-                .as_ref()
-                .and_then(Progress::parse),
-            _ => None,
-        }
+    fn read_progress(&self) -> io::Result<Option<Progress>> {
+        Ok(
+            match self.webui.dir().read(names::CHROMIUM_PROGRESS_NAME, PROGRESS_LIMIT)? {
+                Fetched::Data(bytes) => serde_json::from_slice::<Value>(&bytes)
+                    .ok()
+                    .as_ref()
+                    .and_then(Progress::parse),
+                _ => None,
+            },
+        )
     }
 
     fn kept(&mut self) -> io::Result<&Dir> {
@@ -980,7 +994,7 @@ impl Run<'_> {
         Ok(())
     }
 
-    fn swap(&mut self, progress: &mut Progress, rnw: &RnwKey, webui: &WebUIState) -> StepResult<()> {
+    fn swap(&mut self, progress: &mut Progress, webui: &WebUIState) -> StepResult<()> {
         let swap = |e| (ChromiumStage::Swap, e);
         let pending: Vec<String> = progress
             .profiles
@@ -989,9 +1003,10 @@ impl Run<'_> {
             .filter(|to| !progress.installed.contains(to))
             .collect();
         if !progress.local_state {
-            let key = rnw
-                .encrypted_key()
-                .filter(|key| progress.mode == Mode::Replace && webui.encrypted_key() != Some(*key));
+            let key = progress
+                .key
+                .clone()
+                .filter(|key| progress.mode == Mode::Replace && webui.encrypted_key() != Some(key.as_str()));
             if let Some(key) = key {
                 self.back_up_live(&pending, webui)?;
                 for to in &pending {
@@ -999,12 +1014,18 @@ impl Run<'_> {
                         self.journal.push(Undo::MovedAside(to.clone()));
                     }
                 }
-                self.write_key(key, webui).map_err(|e| (ChromiumStage::LocalState, e))?;
+                self.write_key(&key, webui)
+                    .map_err(|e| (ChromiumStage::LocalState, e))?;
             }
             progress.local_state = true;
             self.save_progress(progress)?;
         }
         for to in &pending {
+            if progress.mode == Mode::Restored
+                && self.live().and_then(|live| live.entry(to)).map_err(swap)? != Entry::Missing
+            {
+                continue;
+            }
             self.install(to).map_err(swap)?;
             progress.installed.insert(to.clone());
             self.save_progress(progress)?;
@@ -1069,7 +1090,10 @@ impl Run<'_> {
                 return Ok(Step::Busy);
             }
         }
-        let stored = self.read_progress().filter(|progress| progress.staged);
+        let stored = self
+            .read_progress()
+            .map_err(|e| (ChromiumStage::Progress, e))?
+            .filter(|progress| progress.staged);
         let planned = match &stored {
             Some(progress) => progress.profiles.clone(),
             None => self.plan(source).map_err(|e| (ChromiumStage::Scan, e))?,
@@ -1096,8 +1120,17 @@ impl Run<'_> {
             self.counts.local_state_malformed = 1;
         }
 
+        let stored =
+            stored.filter(|progress| progress.local_state || progress.key.as_deref() == rnw_key.encrypted_key());
         let mut progress = match stored {
-            Some(progress) => progress,
+            Some(progress) => {
+                [
+                    self.counts.skipped_links,
+                    self.counts.skipped_invalid,
+                    self.counts.skipped_clash,
+                ] = progress.skipped;
+                progress
+            }
             None => {
                 let shared = rnw_key.encrypted_key().is_some() && rnw_key.encrypted_key() == webui.encrypted_key();
                 let mode = if shared { Mode::Restored } else { Mode::Replace };
@@ -1114,6 +1147,8 @@ impl Run<'_> {
                 }
                 let progress = Progress {
                     mode,
+                    key: rnw_key.encrypted_key().map(str::to_string),
+                    skipped: [0; 3],
                     profiles,
                     staged: false,
                     local_state: false,
@@ -1122,6 +1157,11 @@ impl Run<'_> {
                 self.stage_profiles(source, &progress.profiles)?;
                 let progress = Progress {
                     staged: true,
+                    skipped: [
+                        self.counts.skipped_links,
+                        self.counts.skipped_invalid,
+                        self.counts.skipped_clash,
+                    ],
                     ..progress
                 };
                 self.save_progress(&progress)?;
@@ -1131,7 +1171,7 @@ impl Run<'_> {
         self.counts.key_shared = u64::from(progress.mode == Mode::Restored);
 
         let swapped_here = !progress.local_state;
-        if let Err((stage, error)) = self.swap(&mut progress, &rnw_key, &webui) {
+        if let Err((stage, error)) = self.swap(&mut progress, &webui) {
             if swapped_here && !crashed(&error) {
                 let _ = self.roll_back(&mut progress);
             }

@@ -1091,7 +1091,7 @@ fn base64_round_trips_and_rejects_junk() {
         let bytes: Vec<u8> = (0..length).map(|i| (i * 37 + 11) as u8).collect();
         assert_eq!(base64_decode(&base64(&bytes)).unwrap(), bytes, "{length}");
     }
-    for junk in ["***", "A", "AB=C", "ABC===", "AB\nC"] {
+    for junk in ["***", "A", "AB=C", "ABC===", "AB\nC", "ABCD=", "ABC"] {
         assert!(base64_decode(junk).is_none(), "{junk}");
     }
 }
@@ -1122,4 +1122,85 @@ fn profile_folders_map_the_way_both_shells_name_them() {
     assert!(!names::profile_transient(&["Network".into()], "Cache"));
     assert!(names::profile_transient(&["IndexedDB".into(), "x".into()], "LOCK"));
     assert!(!names::profile_transient(&[], "History"));
+    let package: Vec<String> = vec!["Extensions".into(), "abc".into(), "1.0_0".into()];
+    assert!(!names::profile_transient(&package, "singleton.js"));
+    assert!(!names::profile_transient(&package, "LOCK"));
+    assert!(!names::profile_transient(&package, "lockfile"));
+    assert!(names::profile_transient(&[], "SingletonLock"));
+}
+
+#[test]
+fn a_staged_copy_is_bound_to_the_key_it_was_staged_with() {
+    let scratch = Scratch::new("chromium-key-binding");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    seed_rnw(&layout, &sealer);
+    let first = migrate_chromium(&layout, &sealer, &faults(Some(Stop::Fail(2))));
+    assert_eq!(first.outcome, Outcome::Failed);
+    assert!(layout.webui_data.join(names::CHROMIUM_PROGRESS_NAME).exists());
+    let newer = chromium_key(&sealer, &[5; 32]);
+    let state = json!({ "os_crypt": { "encrypted_key": newer } });
+    fs::write(
+        layout.rnw_chromium.join(names::LOCAL_STATE),
+        serde_json::to_vec(&state).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        layout.rnw_chromium.join("Default/Network/Cookies"),
+        cookie(&newer, "after-rnw-ran-again"),
+    )
+    .unwrap();
+    let second = run(&layout, &sealer);
+    assert_eq!(second.outcome, Outcome::Migrated, "{}", second.to_json());
+    let chromium = webui_chromium(&layout);
+    assert_eq!(live_key(&chromium).as_deref(), Some(newer.as_str()));
+    assert!(has_line(
+        &chromium.join("Ardia default/Network/Cookies"),
+        &format!("{newer}|after-rnw-ran-again")
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn skips_found_while_staging_still_count_after_a_resume() {
+    let scratch = Scratch::new("chromium-skips-resume");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    seed_rnw(&layout, &sealer);
+    let elsewhere = scratch.0.join("elsewhere.txt");
+    write(&elsewhere, b"linked");
+    fs::hard_link(&elsewhere, layout.rnw_chromium.join("Default/hard.txt")).unwrap();
+    assert_eq!(
+        migrate_chromium(&layout, &sealer, &faults(Some(Stop::Fail(2)))).outcome,
+        Outcome::Failed
+    );
+    let resumed = run(&layout, &sealer);
+    assert_eq!(resumed.outcome, Outcome::MigratedWithSkips, "{}", resumed.to_json());
+    assert_eq!(counts(&resumed)["skipped_invalid"], 1);
+}
+
+#[test]
+fn a_profile_restored_by_hand_between_tries_is_still_left_alone() {
+    let scratch = Scratch::new("chromium-restored-between");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    let rnw_key = seed_rnw(&layout, &sealer);
+    let chromium = webui_chromium(&layout);
+    write(&chromium.join(names::LOCAL_STATE), &webui_state_with(&rnw_key));
+    write(&chromium.join("Ardia default/Preferences"), b"{}");
+    assert_eq!(
+        migrate_chromium(&layout, &sealer, &faults(Some(Stop::Fail(2)))).outcome,
+        Outcome::Failed
+    );
+    write(
+        &chromium.join("Ardia p-work/History"),
+        b"restored by hand between tries",
+    );
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    assert_eq!(
+        fs::read(chromium.join("Ardia p-work/History")).unwrap(),
+        b"restored by hand between tries"
+    );
+    assert!(kept_folders(&layout).is_empty());
 }

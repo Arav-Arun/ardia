@@ -248,6 +248,11 @@ test("both steps report once each, with their own reported marks", async () => {
   store.docs.set(CHROMIUM_MIGRATION_ATTEMPT_DOC, chromiumAttempt({ run: "e".repeat(32), outcome: "failed", failed_stage: "space" }));
   assert.equal(await reportShellMigrations(reporting(store, true, sent)), "reported");
   assert.equal(sent.at(-1).failed_stage, "space");
+  const failing = documents({ [SHELL_MIGRATION_ATTEMPT_DOC]: attempt(), [CHROMIUM_MIGRATION_ATTEMPT_DOC]: chromiumAttempt() });
+  const save = failing.save;
+  failing.save = async (name, contents) => (name === SHELL_MIGRATION_REPORTED_DOC ? Promise.reject(new Error("disk full")) : save(name, contents));
+  await assert.rejects(reportShellMigrations({ ...reporting(failing, true), save: failing.save }), /disk full/);
+  assert.deepEqual(JSON.parse(failing.docs.get(CHROMIUM_MIGRATION_REPORTED_DOC)), { run: "f".repeat(32) }, "a failed documents mark doesn't stop the Chromium report");
   const held = documents({ [CHROMIUM_MIGRATION_ATTEMPT_DOC]: chromiumAttempt() });
   assert.equal(await reportShellMigrations(reporting(held, false)), "held");
   assert.equal(held.docs.has(CHROMIUM_MIGRATION_REPORTED_DOC), false);

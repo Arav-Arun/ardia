@@ -370,10 +370,40 @@ mod sys {
 
     pub fn move_entry(from: &File, name: &str, to: &File, to_name: &str) -> io::Result<()> {
         let (name, to_name) = (c_name(name)?, c_name(to_name)?);
-        if unsafe { libc::renameat(from.as_raw_fd(), name.as_ptr(), to.as_raw_fd(), to_name.as_ptr()) } != 0 {
+        if unsafe { rename_no_replace(from.as_raw_fd(), name.as_ptr(), to.as_raw_fd(), to_name.as_ptr()) } != 0 {
             return Err(io::Error::last_os_error());
         }
         Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    unsafe fn rename_no_replace(
+        from: libc::c_int,
+        name: *const libc::c_char,
+        to: libc::c_int,
+        to_name: *const libc::c_char,
+    ) -> libc::c_int {
+        unsafe { libc::renameatx_np(from, name, to, to_name, libc::RENAME_EXCL) }
+    }
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    unsafe fn rename_no_replace(
+        from: libc::c_int,
+        name: *const libc::c_char,
+        to: libc::c_int,
+        to_name: *const libc::c_char,
+    ) -> libc::c_int {
+        unsafe { libc::renameat2(from, name, to, to_name, libc::RENAME_NOREPLACE) }
+    }
+
+    #[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
+    unsafe fn rename_no_replace(
+        from: libc::c_int,
+        name: *const libc::c_char,
+        to: libc::c_int,
+        to_name: *const libc::c_char,
+    ) -> libc::c_int {
+        unsafe { libc::renameat(from, name, to, to_name) }
     }
 
     pub fn held_open(dir: &File, name: &str) -> io::Result<bool> {

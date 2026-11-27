@@ -38,7 +38,11 @@ const PROFILE_CACHE_SUBFOLDERS: [(&str, &str); 1] = [("Service Worker", "CacheSt
 
 pub fn profile_transient(parents: &[String], name: &str) -> bool {
     let same = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
-    if same(name, "LOCK") || same(name, CHROMIUM_LOCK_FILE) || name.to_ascii_lowercase().starts_with("singleton") {
+    let in_extension_package = parents.first().is_some_and(|top| same(top, "Extensions"));
+    if same(name, "LOCK") && !in_extension_package {
+        return true;
+    }
+    if parents.is_empty() && (same(name, CHROMIUM_LOCK_FILE) || name.to_ascii_lowercase().starts_with("singleton")) {
         return true;
     }
     match parents {

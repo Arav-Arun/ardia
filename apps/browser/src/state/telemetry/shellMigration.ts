@@ -154,9 +154,15 @@ export async function reportShellMigration(reporting: ShellMigrationReporting, s
 
 export async function reportShellMigrations(reporting: ShellMigrationReporting): Promise<ShellMigrationOutcome> {
   let first: ShellMigrationOutcome = "none";
+  let failure: { error: unknown } | null = null;
   for (const step of SHELL_MIGRATION_STEPS) {
-    const outcome = await reportShellMigration(reporting, step);
-    if (first === "none") first = outcome;
+    try {
+      const outcome = await reportShellMigration(reporting, step);
+      if (first === "none") first = outcome;
+    } catch (error) {
+      failure ??= { error };
+    }
   }
+  if (failure) throw failure.error;
   return first;
 }
