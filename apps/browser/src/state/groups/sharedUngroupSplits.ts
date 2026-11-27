@@ -1,7 +1,7 @@
 import type { BrowserState } from "../browser/store";
 import type { Tab } from "../browser/types";
 import { inPinnedContainer, newId, pinKeyOf } from "../browser/model";
-import { hasPage, holderOfPage, wakeOf } from "../tabs/pageSession";
+import { adoptOf, hasPage, holderOfPage, wakeOf } from "../tabs/pageSession";
 import { splitTabIds } from "../splits/splits";
 import { isRegularWindow } from "../windows/small";
 import { keepShownProfile, swapPlaces } from "../tabs/tabShare";
@@ -12,7 +12,7 @@ export const keepUngroupedTabs = (s: BrowserState, homeId: string, members: Set<
 
 const ownsPage = (t: Tab) => hasPage(t) || !!wakeOf(t);
 
-const rankFor = (homeId: string) => (t: Tab) => (hasPage(t) ? 2 : 0) + (t.windowId === homeId ? 1 : 0);
+const rankFor = (homeId: string) => (t: Tab) => (hasPage(t) ? 4 : 0) + (wakeOf(t) || adoptOf(t) ? 2 : 0) + (t.windowId === homeId ? 1 : 0);
 
 const sharedRow = (s: BrowserState, t: Tab, paired: Set<string>) => !t.pin && !paired.has(t.id) && !inPinnedContainer(s, t.id) && isRegularWindow(s.windows[t.windowId]);
 
@@ -76,11 +76,14 @@ function keepSameTabRows(s: BrowserState, members: Set<string>): BrowserState {
 
 function keepSplitsHome(s: BrowserState, homeId: string, members: Set<string>): BrowserState {
   if (!Object.keys(s.splits ?? {}).length) return s;
-  const leaving = (v: BrowserState["splits"][string]) => splitTabIds(v).every((id) => members.has(id) && s.tabs[id] && !inPinnedContainer(s, id));
-  const homePanes = Object.values(s.splits).filter((v) => v.windowId === homeId && leaving(v)).flatMap((v) => splitTabIds(v));
+  const released = (id: string) => members.has(id) && !!s.tabs[id] && !inPinnedContainer(s, id);
+  const releasing = (v: BrowserState["splits"][string]) => splitTabIds(v).some(released) && splitTabIds(v).every((id) => !!s.tabs[id]);
+  const homeSplits = Object.values(s.splits).filter((v) => v.windowId === homeId && releasing(v));
+  const homePanes = homeSplits.flatMap((v) => splitTabIds(v)).filter(released);
   if (!homePanes.length) return s;
+  const homeKeys = new Set(homeSplits.flatMap((v) => splitTabIds(v)).map((id) => pinKeyOf(s.tabs[id]!)));
   const profileOf = new Map(homePanes.map((id) => [pinKeyOf(s.tabs[id]!), s.tabs[id]!.profileId]));
-  const away = Object.values(s.splits).filter((v) => v.windowId !== homeId && leaving(v) && splitTabIds(v).every((id) => profileOf.has(pinKeyOf(s.tabs[id]!))));
+  const away = Object.values(s.splits).filter((v) => v.windowId !== homeId && releasing(v) && splitTabIds(v).every((id) => homeKeys.has(pinKeyOf(s.tabs[id]!))));
   const splits = { ...s.splits };
   for (const v of away) delete splits[v.id];
   let next: BrowserState = { ...s, splits };
