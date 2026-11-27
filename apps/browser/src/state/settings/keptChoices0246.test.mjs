@@ -19,7 +19,7 @@ const stub = await import("../../test-native/index.ts");
 const S = () => useBrowser.getState();
 const THEME = { stops: [{ x: 0.5, y: 0.5, color: { r: 0.95, g: 0.9, b: 0.3, a: 1 } }], intensity: 1, mode: "dark", grain: 0, texture: "grain", translucency: 0 };
 const PROFILE = { id: "default", name: "Personal", color: "plum", icon: null, createdAt: 0, theme: THEME };
-const OFF_IN_0246 = { commandScrollZoom: false, sidebarMediaControls: false, adaptTextToColor: false, pageScrollBars: "system" };
+const OFF_IN_0246 = { commandScrollZoom: false, sidebarMediaControls: false, adaptTextToColor: false, pageScrollBars: "thin" };
 
 const sessionOf0246 = (choices) => ({
   version: 11,
@@ -77,7 +77,7 @@ function hiddenPlayers() {
 
 const adaptiveInk = () => mount(() => useProfileTheme("default")).value.adaptiveInk;
 
-test("the four 0.2.46 choices still load from a 0.2.46 file, with the Import button's under its new name", () => {
+test("the five 0.2.46 choices still load from a 0.2.46 file, with the Import button's under its new name", () => {
   load({ ...OFF_IN_0246, hideBookmarksBarImport: true });
   for (const [key, value] of Object.entries(OFF_IN_0246)) {
     assert.equal(S().settings[key], value, key);
@@ -115,9 +115,9 @@ test("a hidden Import button on the empty bookmarks bar stays hidden", () => {
   assert.equal(S().settings.bookmarksImportDismissed, false);
 });
 
-test("page scroll bars default to thin and follow a saved system choice", () => {
+test("page scroll bars follow the system by default and keep a saved thin choice", () => {
   load({});
-  assert.deepEqual(thinScrollBarsSent(), [true]);
+  assert.deepEqual(thinScrollBarsSent(), [false]);
   load({ pageScrollBars: "system" });
   assert.deepEqual(thinScrollBarsSent(), [false]);
   load({ pageScrollBars: "thin" });

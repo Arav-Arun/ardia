@@ -21,6 +21,7 @@ import { noteSettingChoices } from "../telemetry/settingChoices";
 import { checkedSettingsPatch, settledPatch } from "./settingsPatch";
 
 export const DEFAULT_PROFILE_ID = "default";
+
 export type SettingSpec<T> = { default: T; valid: (value: unknown) => boolean; synced: boolean; schema: JsonSchema; values?: readonly T[] };
 
 const SYNCED = true;
@@ -143,7 +144,7 @@ export const SETTING_SPECS = {
   bookmarksBar: oneOf(["always", "newTab", "never"], "never", SYNCED),
   bookmarksImportDismissed: flag(false),
   appearance: oneOf(["auto", "light", "dark"], "auto", SYNCED),
-  pageScrollBars: oneOf(["system", "thin"], "thin", SYNCED),
+  pageScrollBars: oneOf(["system", "thin"], "system", SYNCED),
   addressBar: oneOf(["toolbar", "sidebar"], "toolbar", SYNCED),
   compactToolbar: flag(false, SYNCED),
   addressBarButtons: oneOf(["hover", "always"], "hover", SYNCED),
