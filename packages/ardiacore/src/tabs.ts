@@ -41,6 +41,7 @@ export type TabStripTransaction = {
   deferred?: boolean;
   deferredInferred?: boolean;
   deferredCmd?: number;
+  consent?: string;
 };
 
 export type TabStripCommand =

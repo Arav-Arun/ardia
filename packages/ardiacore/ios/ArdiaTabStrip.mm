@@ -92,6 +92,13 @@ void NoteActivationAsked(ArdiaCoreTab *tab, ArdiaCoreTab *before, ArdiaCoreTab *
   if (deferral.inferred) tx[@"deferredInferred"] = @YES;
 }
 
+NSMutableDictionary *Acknowledgement(NSInteger commandId, NSArray *strips) {
+  NSMutableDictionary *tx = [@{@"rev" : @(++gRev), @"cmd" : @(commandId), @"strips" : strips} mutableCopy];
+  NSString *consent = ArdiaEvents.consentEpoch;
+  if (consent.length) tx[@"consent"] = consent;
+  return tx;
+}
+
 NSString *AppWindowOf(ArdiaWindowController *controller) {
   NSMutableArray<NSView *> *views = [NSMutableArray array];
   if (controller.root) [views addObject:controller.root];
@@ -306,7 +313,7 @@ NSArray<ArdiaCoreProfile *> *ProfilesWithTabs(ArdiaWindowController *controller)
       ArdiaWindowController *controller = found;
       ArdiaCoreProfile *p = profile;
       [ArdiaServices call:@"ac_tabs_group" profile:ardia_host::OriginalProfileNameOf(profile) args:args completion:^(NSDictionary *result) {
-        NSMutableDictionary *tx = [@{@"rev" : @(++gRev), @"cmd" : @(commandId), @"strips" : @[ Strip(controller, p) ]} mutableCopy];
+        NSMutableDictionary *tx = Acknowledgement(commandId, @[ Strip(controller, p) ]);
         if (result[@"error"]) tx[@"rejected"] = @YES;
         if ([ArdiaEvents listens:@"tabs"]) Send(tx);
       }];
@@ -314,7 +321,7 @@ NSArray<ArdiaCoreProfile *> *ProfilesWithTabs(ArdiaWindowController *controller)
     }
   }
   gCommand = nil;
-  NSMutableDictionary *tx = [@{@"rev" : @(++gRev), @"cmd" : @(commandId), @"strips" : found ? @[ Strip(found, profile) ] : @[]} mutableCopy];
+  NSMutableDictionary *tx = Acknowledgement(commandId, found ? @[ Strip(found, profile) ] : @[]);
   if (rejected) tx[@"rejected"] = @YES;
   [tx addEntriesFromDictionary:activation];
   if ([ArdiaEvents listens:@"tabs"]) Send(tx);

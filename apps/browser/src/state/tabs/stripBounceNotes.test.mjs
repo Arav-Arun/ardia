@@ -31,7 +31,8 @@ class FakeStrip {
     };
   }
   emit(cmd, extra = {}) {
-    this.outbox.push({ rev: ++this.rev, cmd, strips: [this.state()], ...extra });
+    const consent = typeof cmd === "number" && cmd >= 0 ? client.consentToken() : null;
+    this.outbox.push({ rev: ++this.rev, cmd, strips: [this.state()], ...(consent ? { consent } : {}), ...extra });
   }
   select(key) {
     this.active = this.tabs.find((t) => t.key === key).browser;
@@ -155,23 +156,25 @@ test("a report from an older native build without a trigger still counts, as unk
   await settle();
 });
 
-test("an answer Chromium gave while sharing was off never reaches a warning sent after sharing is turned on", async () => {
-  assert.equal(shownIn(w), a);
+async function postponedSwitchAcrossOptIn(optInBeforeDelivery) {
+  const from = shownIn(w);
+  const to = from === a ? b : a;
   await client.setSharing(false, "settings");
-  S().activate(b);
+  S().activate(to);
   await tick();
   const asked = chrome.commands.shift();
-  assert.equal(asked.command.key, b);
+  assert.equal(asked.command.key, to);
   chrome.emit(asked.id, { deferred: true });
+  if (optInBeforeDelivery) await client.setSharing(true, "settings");
   chrome.deliver();
   await tick();
   assert.equal(chrome.commands.length, 0, "the postponed switch is not sent again");
-  await client.setSharing(true, "settings");
+  if (!optInBeforeDelivery) await client.setSharing(true, "settings");
   takeStripBounceCounts();
-  S().activate(a);
+  S().activate(from);
   await tick();
   assert.equal(chrome.commands.length, 0, "Chromium already shows the tab, so nothing is sent");
-  chrome.select(b);
+  chrome.select(to);
   chrome.emit(null, { trigger: "activate", deferred: true, deferredCmd: asked.id });
   chrome.deliver();
   assert.equal(takeStripBounceCounts().strip_bounces_back, 1);
@@ -180,4 +183,8 @@ test("an answer Chromium gave while sharing was off never reaches a warning sent
   assert.doesNotMatch(log, /"deferredFor"[^}]*"lastAck"/);
   assert.match(log, /"deferredFor"[^}]*"older"/);
   await settle();
-});
+}
+
+test("an answer Chromium gave while sharing was off never reaches a warning sent after sharing is turned on", () => postponedSwitchAcrossOptIn(false));
+
+test("an answer Chromium sent while sharing was off but that arrived after sharing was turned on is not used either", () => postponedSwitchAcrossOptIn(true));

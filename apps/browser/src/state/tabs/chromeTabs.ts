@@ -42,9 +42,9 @@ if (__DEV__) {
 
 export const chromeTabsBookkeeping = () => ({ groups: groups.size, tried: tried.size, changedAt: changedAt.size, acked: acked.size });
 
-function noteAck(strip: number, cmd: number, at: number) {
+function noteAck(strip: number, cmd: number, at: number, stamped: string | undefined) {
   const consent = consentToken();
-  if (consent) acked.set(strip, { at, cmd, consent });
+  if (consent && stamped === consent) acked.set(strip, { at, cmd, consent });
   else acked.delete(strip);
 }
 
@@ -136,7 +136,7 @@ function receive(tx: TabStripTransaction) {
         },
       });
       if (s !== unchanged) for (const windowId of switchedWindows(unchanged, s)) notes.set(windowId, noteFor(tx, strip.strip, waiting, siblings.length > 0, now));
-    } else if (!strip.closed && tx.cmd >= 0) noteAck(strip.strip, tx.cmd, now);
+    } else if (!strip.closed && tx.cmd >= 0) noteAck(strip.strip, tx.cmd, now, tx.consent);
     for (const t of strip.tabs) if (t.key) seen.add(t.key);
   }
   if (seen.size > 2 * Object.keys(s.tabs).length + 64) for (const key of seen) if (!s.tabs[key]) seen.delete(key);
