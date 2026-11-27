@@ -552,6 +552,23 @@ void TestStartFocus() {
   assert(NextStartStep(true, false, true, false) == StartStep::kFocusFront);
   assert(NextStartStep(true, false, false, true) == StartStep::kFocusFront);
 }
+
+void TestShortcutPriority() {
+  for (const char* command :
+       {"newTab", "newWindow", "newIncognitoWindow", "reopenClosedTab",
+        "closeTab", "closeWindow", "nextTab", "previousTab", "tabSwitcher",
+        "quit"}) {
+    assert(ShortcutReservedFromPages(command));
+  }
+  for (const char* command :
+       {"toggleSidebar", "findInPage", "focusCommandBar", "selectAll", "copyUrl",
+        "selectTab", "back", "forward", "reload", "print", "", "NEWTAB",
+        "newTab "}) {
+    assert(!ShortcutReservedFromPages(command));
+  }
+  assert(ShortcutRegisters(false));
+  assert(!ShortcutRegisters(true));
+}
 }
 
 int main() {
@@ -574,6 +591,7 @@ int main() {
   TestRequestedMaximized();
   TestHostileSinks();
   TestStartFocus();
+  TestShortcutPriority();
   std::cout << "webui_window_policy_test: all assertions passed\n";
   return 0;
 }
