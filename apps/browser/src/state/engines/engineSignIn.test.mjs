@@ -120,37 +120,63 @@ test("WebKit's newer value goes back to Chromium, and an unchanged carry writes 
   assert.equal(webKit.writes.length + page.writes.length, before);
 });
 
-test("a value WebKit changed goes back to Chromium with Chromium's own SameSite, which WebKit can't hold, and the hourly counts say so", async () => {
+const webKitWrites = { None: undefined, Strict: "Strict", Lax: "Lax", undefined: "Lax" };
+
+function asWebKitHolds({ sameSite, ...cookie }, override) {
+  const held = override === undefined ? webKitWrites[String(sameSite)] : override;
+  return held ? { ...cookie, sameSite: held } : cookie;
+}
+
+test("a value WebKit changed goes back to Chromium with the SameSite WebKit can't tell apart taken from Chromium, and one WebKit set itself as it is", async () => {
   const { takeSiteDataCounts } = await import("../telemetry/siteDataCounts.ts");
   const { setSharing, consentToken } = await import("../telemetry/client.ts");
   const { tabId } = setup();
   const later = Date.now() / 1000 + 30 * 86400;
-  const crossSite = { ...signedIn, name: "__Secure-3PSID", value: "c1", session: false, expires: later, sameSite: "None" };
-  const unspecified = { ...signedIn, name: "lax_default", value: "c1", session: false, expires: later };
-  const strict = { ...signedIn, name: "strict", value: "c1", session: false, expires: later, sameSite: "Strict" };
-  const page = chromiumPage({ cookies: [crossSite, unspecified, strict], storage: {} });
+  const cookie = (name, sameSite) => ({ ...signedIn, name, value: "c1", session: false, expires: later, ...(sameSite ? { sameSite } : {}) });
+  const page = chromiumPage({ cookies: [cookie("__Secure-3PSID", "None"), cookie("lax_default"), cookie("explicit_lax", "Lax"), cookie("now_strict", "Lax"), cookie("now_lax", "None")], storage: {} });
   webviews.set(tabId, page);
   await setSharing(true, "settings");
   try {
     await carrySignIn(tabId, `${ORIGIN}/home`, "webkit", null);
-    assert.equal(webKit.cookies.length, 3);
-    const asWebKitHolds = { None: undefined, Strict: "Strict" };
-    webKit.cookies = webKit.cookies.map((c) => {
-      const { sameSite, ...rest } = c;
-      const held = sameSite in asWebKitHolds ? asWebKitHolds[sameSite] : "Lax";
-      return { ...rest, value: "w2", ...(held ? { sameSite: held } : {}) };
-    });
+    assert.equal(webKit.cookies.length, 5);
+    const setInWebKit = { now_strict: "Strict", now_lax: "Lax" };
+    webKit.cookies = webKit.cookies.map((c) => ({ ...asWebKitHolds(c, setInWebKit[c.name]), value: "w2" }));
     takeSiteDataCounts();
     await carrySite("", "app.test", "chromium", { consent: consentToken() });
-    const byName = Object.fromEntries(page.jar.cookies.map((c) => [c.name, c]));
-    assert.deepEqual(
-      Object.fromEntries(Object.entries(byName).map(([name, c]) => [name, [c.value, c.sameSite]])),
-      { "__Secure-3PSID": ["w2", "None"], lax_default: ["w2", undefined], strict: ["w2", "Strict"] },
-    );
+    assert.deepEqual(Object.fromEntries(page.jar.cookies.map((c) => [c.name, [c.value, c.sameSite]])), {
+      "__Secure-3PSID": ["w2", "None"],
+      lax_default: ["w2", undefined],
+      explicit_lax: ["w2", "Lax"],
+      now_strict: ["w2", "Strict"],
+      now_lax: ["w2", "Lax"],
+    });
     const counts = takeSiteDataCounts();
     assert.equal(counts.site_data_same_site_kept, 2);
-    assert.equal(counts.site_data_chromium_values_replaced, 3);
-    assert.equal(counts.site_data_unshown_chromium_writes, 3);
+    assert.equal(counts.site_data_chromium_values_replaced, 5);
+    assert.equal(counts.site_data_chromium_writes_no_webkit_load, 5);
+  } finally {
+    await setSharing(false, "settings");
+  }
+});
+
+test("the hourly counts take only the cookies Chromium accepted, not the ones a carry sent", async () => {
+  const { takeSiteDataCounts } = await import("../telemetry/siteDataCounts.ts");
+  const { setSharing, consentToken } = await import("../telemetry/client.ts");
+  const { tabId } = setup();
+  const page = chromiumPage({ cookies: [{ ...signedIn, value: "c1", sameSite: "None" }], storage: {} });
+  webviews.set(tabId, page);
+  await setSharing(true, "settings");
+  try {
+    await carrySignIn(tabId, `${ORIGIN}/home`, "webkit", null);
+    webKit.cookies = webKit.cookies.map((c) => ({ ...asWebKitHolds(c), value: "w2" }));
+    const write = page.siteData;
+    page.siteData = async (request) => (request.op === "write" ? { cookiesWritten: 0, removed: 0, storageWritten: 0 } : write(request));
+    takeSiteDataCounts();
+    await carrySite("", "app.test", "chromium", { consent: consentToken() });
+    const counts = takeSiteDataCounts();
+    assert.equal(counts.site_data_same_site_kept, 0);
+    assert.equal(counts.site_data_chromium_values_replaced, 0);
+    assert.equal(counts.site_data_chromium_writes_no_webkit_load, 0);
   } finally {
     await setSharing(false, "settings");
   }

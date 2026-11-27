@@ -202,8 +202,9 @@ export async function writeChromium(
   const sent = cookies.map((c) => keepChromiumSameSite(c, present.get(cookieKey(c))));
   const reply = sent.length || remove.length ? await read.page.siteData({ op: "write", cookies: sent.map(chromiumCookie), remove, storage: {} }).catch(() => null) : { cookiesWritten: 0, removed: 0 };
   if (!reply) return null;
-  const sameSiteKept = sent.filter((c, i) => c !== cookies[i]).length;
-  const replaced = cookies.filter((c) => (present.get(cookieKey(c))?.value ?? c.value) !== c.value).length;
+  const landedCookies = reply.cookiesWritten ?? 0;
+  const sameSiteKept = Math.min(landedCookies, sent.filter((c, i) => c !== cookies[i]).length);
+  const replaced = Math.min(landedCookies, cookies.filter((c) => (present.get(cookieKey(c))?.value ?? c.value) !== c.value).length);
   const landed = new Set<string>();
   let stored = 0;
   let overQuota = 0;
@@ -220,7 +221,7 @@ export async function writeChromium(
     if (count >= wanted) landed.add(origin);
     stored += count;
   }
-  return { cookies: reply.cookiesWritten ?? 0, removed: reply.removed ?? 0, storage: stored, landed, overQuota, sameSiteKept, replaced };
+  return { cookies: landedCookies, removed: reply.removed ?? 0, storage: stored, landed, overQuota, sameSiteKept, replaced };
 }
 
 export async function readChromiumStorageWithoutPage(profile: string, origins: string[]): Promise<SiteStorage> {
