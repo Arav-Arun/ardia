@@ -47,8 +47,7 @@ Profile* LinuxExtensionViewProfile(Profile* page_profile,
     *code = "ERR_PROFILE_ENDING";
     return nullptr;
   }
-  if (!ardia_win::webui_extension::ViewProfileMatches(
-          requested, ardia_win::webui::WindowProfileName(page_profile))) {
+  if (!ardia_win::webui::SomeWindowIsNamed(page_profile, requested)) {
     *code = "ERR_PROFILE_WINDOW";
     return nullptr;
   }
@@ -68,16 +67,24 @@ std::string ArdiaProfileName(Profile* profile) {
              : NameOfProfile(profile);
 }
 
-std::string WindowProfileName(Profile* profile) {
+std::string ShellHostView::WindowProfileName(Profile* profile) const {
   if (!profile) {
     return std::string();
   }
-  for (ShellHostView* host : WindowRegistry::Get().Hosts()) {
-    if (host->private_window() && host->page_profile() == profile) {
-      return host->page_profile_id();
-    }
+  if (private_window() && profile == page_profile()) {
+    return config_.page_profile;
   }
   return profile->IsOffTheRecord() ? std::string() : ArdiaProfileName(profile);
+}
+
+bool SomeWindowIsNamed(Profile* profile, std::string_view requested) {
+  for (ShellHostView* host : WindowRegistry::Get().Hosts()) {
+    if (webui_extension::ViewProfileMatches(requested,
+                                            host->WindowProfileName(profile))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 namespace {
@@ -154,7 +161,12 @@ std::string ExecuteExtensionAction(content::WebContents* contents,
   const extensions::Extension* extension =
       EnabledExtension(contents->GetBrowserContext(), (*values)[0].GetString());
   auto* runner = extensions::ExtensionActionRunner::GetForWebContents(contents);
-  if (!extension || !runner) {
+  const extensions::ExtensionAction* action =
+      extension ? extensions::ExtensionActionManager::Get(
+                      contents->GetBrowserContext())
+                      ->GetExtensionAction(*extension)
+                : nullptr;
+  if (!action || !runner) {
     return "none";
   }
   switch (runner->RunAction(extension, true)) {
@@ -234,6 +246,13 @@ void ShellHostView::InvokeExtensionView(const std::string& method,
   const uint64_t generation = renderer_generation_;
   const double zoom = ShellZoom(shell_contents());
   if (method == "extensionView.create") {
+    const std::string* requested = args.FindString("profile");
+    if (requested && !webui_extension::ViewProfileMatches(
+                         *requested, WindowProfileName(profile))) {
+      return std::move(done).Run(
+          false, Failure("ERR_PROFILE_WINDOW",
+                         "Extension views need this window's own profile"));
+    }
     return surfaces->Invoke(
         method, args, profile, generation, zoom,
         base::BindOnce(

@@ -48,7 +48,7 @@ std::span<const std::string_view> HostCapabilities(bool utility);
 
 std::string ArdiaProfileName(Profile* profile);
 
-std::string WindowProfileName(Profile* profile);
+bool SomeWindowIsNamed(Profile* profile, std::string_view requested);
 
 std::string ExecuteExtensionAction(content::WebContents* contents,
                                    const base::ListValue* values);

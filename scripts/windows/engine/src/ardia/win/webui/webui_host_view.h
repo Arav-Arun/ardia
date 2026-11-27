@@ -171,6 +171,7 @@ class ShellHostView : public views::View,
   BrowserWindowInterface* browser() const { return browser_; }
   Profile* app_profile() const { return app_profile_; }
   Profile* page_profile() const;
+  std::string WindowProfileName(Profile* profile) const;
   content::WebContents* shell_contents() const;
   base::WeakPtr<ShellHostView> GetWeakPtr() {
     return weak_factory_.GetWeakPtr();
