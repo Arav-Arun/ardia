@@ -318,6 +318,32 @@ test("in WebKit only, a link from a website into the Web Store moves to Chromium
   webviews.clear();
 });
 
+test("in WebKit only, a site check a CLI hold put off waits out a Google sign-in instead of moving it to WebKit", async () => {
+  const { holdForCli, releaseFromCli } = await import("../tabs/cliHolds.ts");
+  S().hydrate({});
+  S().updateSettings({ engineMode: "webkit" });
+  const w = S().createWindow({ url: "chrome://extensions/" });
+  const tabId = model.activeTabId(S(), w);
+  webviews.set(tabId, { evaluate: () => Promise.resolve(false), pageCookies: () => Promise.resolve([]) });
+  assert.equal(tabEngine(S(), tabId), "chromium");
+  holdForCli("cli-session", [tabId]);
+  S().updateTab(tabId, { url: "https://developer.chrome.com/docs" });
+  followSiteChoice(tabId, "chromium", "https://developer.chrome.com/docs", "chrome://extensions/");
+  for (let i = 0; i < 6; i++) await settle();
+  assert.equal(tabEngine(S(), tabId), "chromium", "held, so it stays");
+  releaseFromCli("cli-session");
+  S().updateTab(tabId, { url: "https://accounts.google.com/signin" });
+  followSiteChoice(tabId, "chromium", "https://accounts.google.com/signin", "https://developer.chrome.com/docs");
+  for (let i = 0; i < 6; i++) await settle();
+  assert.equal(tabEngine(S(), tabId), "chromium", "Google sign-in keeps its Chromium exception");
+  S().updateTab(tabId, { url: "https://developer.chrome.com/docs/next" });
+  followSiteChoice(tabId, "chromium", "https://developer.chrome.com/docs/next", "https://developer.chrome.com/docs");
+  for (let i = 0; i < 6; i++) await settle();
+  assert.equal(tabEngine(S(), tabId), "webkit", "the check the hold put off applies once sign-in is over");
+  dropSwap(tabId);
+  webviews.clear();
+});
+
 test("in WebKit only, leaving the Web Store or its Google sign-in for another site moves the tab back to WebKit", async () => {
   S().hydrate({});
   S().updateSettings({ engineMode: "webkit" });

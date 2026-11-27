@@ -87,8 +87,8 @@ function keepForCli(tabId: string, move: Move) {
   noteSiteMove("keptForCli", openedByPage(tabId), move.consent);
 }
 
-function owedAfterCli(tabId: string): boolean {
-  if (!keptForCli.has(tabId) || heldByCli(tabId)) return false;
+function owedAfterCli(tabId: string, deferred: boolean): boolean {
+  if (!keptForCli.has(tabId) || heldByCli(tabId) || deferred) return false;
   keptForCli.delete(tabId);
   return true;
 }
@@ -182,13 +182,14 @@ export function followSiteChoice(tabId: string, engine: PageEngine, url: string,
   const moves = tabMoves.get(tabId);
   if (moves && siteOf(url) !== siteOf(previousUrl)) moves.visit++;
   const navigation = navigationNow(tabId);
-  const owed = owedAfterCli(tabId);
   if (singleEngine(s)) {
+    const owed = owedAfterCli(tabId, googleSignIn(url));
     const forced = modeEngineFor(s, t, url);
     const followsMode = owed || forced === "chromium" || chromiumOnly(previousUrl) || (leftForChromium(previousUrl) && !googleSignIn(url));
     if (forced && forced !== engine && followsMode && (canSwitchEngine(url) || needsChromium(url))) startMove(tabId, { from: engine, to: forced, url, navigation, previousUrl, consent });
     return;
   }
+  const owed = owedAfterCli(tabId, false);
   const site = siteOf(url);
   if (!site || (site === siteOf(previousUrl) && !owed)) return;
   const chosen = chosenEngine(s, url);
