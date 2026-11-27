@@ -84,8 +84,10 @@ export const routedTo = (tabId: string, engine: PageEngine) => (url: string) => 
 
 function keepForCli(tabId: string, move: Move) {
   keptForCli.add(tabId);
-  noteSiteMove("keptForCli", openedByPage(tabId), move.consent);
+  noteKeptForCli(tabId, move);
 }
+
+const noteKeptForCli = (tabId: string, move: Move) => noteSiteMove("keptForCli", openedByPage(tabId), move.consent);
 
 function owedAfterCli(tabId: string, deferred: boolean): boolean {
   if (!keptForCli.has(tabId) || heldByCli(tabId) || deferred) return false;
@@ -117,7 +119,10 @@ async function runMove(tabId: string, moves: TabMoves, move: Move) {
   const video = move.forVideo;
   let stoppedForCli = false;
   const routedHere = (url: string) => {
-    if (heldByCli(tabId)) stoppedForCli = true;
+    if (!stoppedForCli && heldByCli(tabId)) {
+      stoppedForCli = true;
+      keptForCli.add(tabId);
+    }
     return !stoppedForCli && routedTo(tabId, move.to)(url);
   };
   const options = video
@@ -137,7 +142,7 @@ async function runMove(tabId: string, moves: TabMoves, move: Move) {
   } finally {
     moves.moving = false;
   }
-  if (!moved && stoppedForCli) keepForCli(tabId, move);
+  if (!moved && stoppedForCli) noteKeptForCli(tabId, move);
   else if (!video && (moved || !moves.pending)) noteSiteMove(moved ? "moved" : "dropped", opened, move.consent);
   if (moved) {
     moves.lastMovedAt = Date.now();

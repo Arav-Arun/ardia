@@ -318,6 +318,40 @@ test("in WebKit only, a link from a website into the Web Store moves to Chromium
   webviews.clear();
 });
 
+test("a same-site page after the hold ends, while the stopped move is still settling, gets the site's rule", async () => {
+  const { cliHoldsClockForTests, holdForCli, releaseFromCli } = await import("../tabs/cliHolds.ts");
+  S().hydrate({});
+  S().updateSettings({ websiteEngines: { "https://read.example": "webkit" } });
+  const w = S().createWindow({ url: "https://search.example/" });
+  const tabId = model.activeTabId(S(), w);
+  S().updateTab(tabId, { engine: "chromium", url: "https://search.example/" });
+  webviews.set(tabId, { evaluate: () => new Promise((resolve) => setTimeout(() => resolve(false), 20)), pageCookies: () => new Promise((resolve) => setTimeout(() => resolve([]), 20)) });
+  S().updateTab(tabId, { url: "https://read.example/a" });
+  followSiteChoice(tabId, "chromium", "https://read.example/a", "https://search.example/");
+  const base = performance.now();
+  holdForCli("cli-session", [tabId], 60);
+  let navigatedWhileSettling = false;
+  let guardSawHold = false;
+  cliHoldsClockForTests(() => {
+    if (guardSawHold) return base + 120_000;
+    if (!new Error().stack?.includes("routedHere")) return base;
+    guardSawHold = true;
+    queueMicrotask(() => {
+      releaseFromCli("cli-session");
+      S().updateTab(tabId, { url: "https://read.example/b" });
+      followSiteChoice(tabId, "chromium", "https://read.example/b", "https://read.example/a");
+      navigatedWhileSettling = true;
+    });
+    return base;
+  });
+  assert.ok(await waitFor(() => navigatedWhileSettling), "the same-site page arrived before the stopped move settled");
+  cliHoldsClockForTests(() => performance.now());
+  assert.ok(await waitFor(() => tabEngine(S(), tabId) === "webkit"), "the rule the hold put off applies to that page");
+  dropSwap(tabId);
+  webviews.clear();
+  S().updateSettings({ websiteEngines: {} });
+});
+
 test("in WebKit only, a site check a CLI hold put off waits out a Google sign-in instead of moving it to WebKit", async () => {
   const { holdForCli, releaseFromCli } = await import("../tabs/cliHolds.ts");
   S().hydrate({});
