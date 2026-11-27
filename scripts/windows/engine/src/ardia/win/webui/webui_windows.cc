@@ -489,6 +489,13 @@ ShellHostView* WindowRegistry::HostOf(
   return nullptr;
 }
 
+bool WindowRegistry::ReservesShortcut(const views::FocusManager* focus,
+                                      const ui::Accelerator& accelerator) const {
+  return std::ranges::any_of(Hosts(), [&](ShellHostView* host) {
+    return host->ReservesShortcut(focus, accelerator);
+  });
+}
+
 std::vector<ShellHostView*> WindowRegistry::Hosts() const {
   std::vector<ShellHostView*> hosts;
   for (const auto& [id, host] : hosts_) {

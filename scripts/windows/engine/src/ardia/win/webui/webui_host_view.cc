@@ -818,13 +818,25 @@ void ShellHostView::RegisterShortcuts(views::FocusManager* focus) {
     return;
   }
   for (const auto& [accelerator, binding] : shortcuts_) {
-    focus->RegisterAccelerator(
-        accelerator,
-        webui_window::ShortcutReservedFromPages(Text(binding, "command"))
-            ? ui::AcceleratorManager::kHighPriority
-            : ui::AcceleratorManager::kNormalPriority,
-        this);
+    focus->RegisterAccelerator(accelerator,
+                               ui::AcceleratorManager::kNormalPriority, this);
   }
+}
+
+bool ShellHostView::ReservesShortcut(const views::FocusManager* focus,
+                                     const ui::Accelerator& accelerator) const {
+  if (!focus || !CanHandleAccelerators()) {
+    return false;
+  }
+  const auto found = shortcuts_.find(accelerator);
+  if (found == shortcuts_.end() ||
+      !webui_window::ShortcutReservedFromPages(Text(found->second, "command"))) {
+    return false;
+  }
+  return focus == focus_manager_ ||
+         std::ranges::any_of(companions_, [this, focus](const auto& companion) {
+           return CompanionFocusManager(companion.get()) == focus;
+         });
 }
 
 void ShellHostView::UnregisterShortcutsEverywhere() {
