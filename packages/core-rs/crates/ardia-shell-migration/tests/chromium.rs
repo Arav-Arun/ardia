@@ -1379,3 +1379,19 @@ fn a_profile_removed_from_rnw_after_its_key_changed_is_dropped_from_the_plan() {
     assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
     assert_eq!(profiles(&webui_chromium(&layout)), ["Ardia default"]);
 }
+
+#[cfg(unix)]
+#[test]
+fn a_hard_linked_lockfile_is_refused_and_left_alone() {
+    let scratch = Scratch::new("chromium-hard-lockfile");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    seed_rnw(&layout, &sealer);
+    let elsewhere = scratch.0.join("elsewhere");
+    write(&elsewhere, b"not a lockfile");
+    let root = ardia_shell_migration::fsafe::Root::new(&layout.rnw_chromium).unwrap();
+    fs::hard_link(&elsewhere, layout.rnw_chromium.join("held")).unwrap();
+    assert!(root.dir().hold_lockfile("held").is_err());
+    assert_eq!(fs::read(&elsewhere).unwrap(), b"not a lockfile");
+    assert!(layout.rnw_chromium.join("held").exists());
+}

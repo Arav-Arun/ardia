@@ -941,7 +941,7 @@ impl Dir {
         }
         let file = sys::child_file(&self.file, name, Opening::Hold)?;
         let meta = file.metadata()?;
-        if is_link(&meta) || !meta.is_file() {
+        if is_link(&meta) || !meta.is_file() || link_count(&file)? != 1 {
             return Err(unsafe_path(self.path.join(name)));
         }
         Ok(HeldLock {
