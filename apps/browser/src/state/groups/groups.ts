@@ -15,7 +15,7 @@ import { groupingOnto } from "../pins/placing";
 import type { CloseOptions } from "../tabs/tabs";
 import { isRegularWindow } from "../windows/small";
 import { noteSharedGroupUngroup } from "../telemetry/sharedGroupCounts";
-import { keepUngroupedSplitsHome } from "./sharedUngroupSplits";
+import { keepUngroupedTabs } from "./sharedUngroupSplits";
 
 export { ancestorIds, canNest, commonGroup, depthOf, depthsIn, descendantIds, groupPath, innermostGroupOf, nestGroups, reparent, rootOf, rootsIn, withParent } from "./groupNesting";
 
@@ -250,7 +250,7 @@ export const createGroupsSlice: StateCreator<BrowserState, [], [], GroupsSlice> 
       }
       if (!shared) return { groups: next.groups, windows: next.windows };
       mirrored = new Set(removing.map((g) => g.windowId)).size > 1;
-      return keepUngroupedSplitsHome({ ...s, groups: next.groups, windows: next.windows }, group.windowId, new Set(removing.flatMap((g) => g.tabIds)));
+      return keepUngroupedTabs({ ...s, groups: next.groups, windows: next.windows }, group.windowId, new Set(removing.flatMap((g) => g.tabIds)));
     });
     if (mirrored) noteSharedGroupUngroup();
   },
