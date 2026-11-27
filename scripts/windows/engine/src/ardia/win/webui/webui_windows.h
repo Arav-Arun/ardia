@@ -83,8 +83,8 @@ class WindowRegistry : public BrowserCollectionObserver {
   bool PresentCompanion(const BrowserWindowInterface* browser, bool activate);
   int WindowTabCount(const BrowserWindowInterface* browser) const;
   bool ShellPassesPoint(gfx::NativeView child, const gfx::Point& location) const;
-  bool ReservesShortcut(const views::FocusManager* focus,
-                        const ui::Accelerator& accelerator) const;
+  bool DispatchReservedShortcut(const views::FocusManager* focus,
+                                const ui::Accelerator& accelerator) const;
 
   bool PreTranslate(const MSG& msg);
   void Relaunched(base::ListValue urls);

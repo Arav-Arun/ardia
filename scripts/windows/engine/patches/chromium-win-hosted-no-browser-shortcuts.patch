@@ -1,6 +1,6 @@
 --- a/chrome/browser/ui/views/frame/browser_view.cc
 +++ b/chrome/browser/ui/views/frame/browser_view.cc
-@@ -6,6 +6,16 @@
+@@ -6,6 +6,18 @@
  
  #include <stdint.h>
  
@@ -9,15 +9,17 @@
 +#if BUILDFLAG(IS_WIN)
 +#include "ardia/win/hooks.h"  // nogncheck
 +
-+bool (*g_ardia_win_reserved_shortcut)(const views::FocusManager* focus,
-+                                      const ui::Accelerator& accelerator) =
-+    nullptr;
++bool (*g_ardia_win_dispatch_reserved_shortcut)(
++    const views::FocusManager* focus,
++    const ui::Accelerator& accelerator) = nullptr;
++
++bool g_ardia_win_priority_shortcut_pass = false;
 +#endif
 +
  #include <algorithm>
  #include <memory>
  #include <optional>
-@@ -1674,6 +1684,18 @@
+@@ -1674,6 +1686,18 @@
        return true;
      }
    }
@@ -36,7 +38,7 @@
    return false;
  }
  
-@@ -4008,6 +4030,24 @@
+@@ -4008,6 +4032,29 @@
    }
  
    int id;
@@ -45,23 +47,28 @@
 +    const bool key_down =
 +        event.GetType() == blink::WebInputEvent::Type::kRawKeyDown &&
 +        event.windows_key_code != ui::VKEY_PROCESSKEY;
-+    if (key_down && g_ardia_win_reserved_shortcut &&
-+        g_ardia_win_reserved_shortcut(focus_manager, accelerator)) {
-+      return focus_manager->ProcessAccelerator(accelerator)
-+                 ? content::KeyboardEventProcessingResult::HANDLED
-+                 : content::KeyboardEventProcessingResult::NOT_HANDLED;
++    if (key_down && g_ardia_win_dispatch_reserved_shortcut &&
++        g_ardia_win_dispatch_reserved_shortcut(focus_manager, accelerator)) {
++      return content::KeyboardEventProcessingResult::HANDLED;
 +    }
-+    if (!focus_manager->HasPriorityHandler(accelerator)) {
-+      return key_down && focus_manager->IsAcceleratorRegistered(accelerator)
-+                 ? content::KeyboardEventProcessingResult::NOT_HANDLED_IS_SHORTCUT
-+                 : content::KeyboardEventProcessingResult::NOT_HANDLED;
++    const bool page_first =
++        key_down && focus_manager->IsAcceleratorRegistered(accelerator);
++    if (focus_manager->HasPriorityHandler(accelerator)) {
++      base::AutoReset<bool> priority_pass(&g_ardia_win_priority_shortcut_pass,
++                                          true);
++      if (focus_manager->ProcessAccelerator(accelerator)) {
++        return content::KeyboardEventProcessingResult::HANDLED;
++      }
 +    }
++    return page_first
++               ? content::KeyboardEventProcessingResult::NOT_HANDLED_IS_SHORTCUT
++               : content::KeyboardEventProcessingResult::NOT_HANDLED;
 +  }
 +#endif
    if (!FindCommandIdForAccelerator(accelerator, &id)) {
      // |accelerator| is not a browser command, it may be handled by ash (e.g.
      // F4-F10). Report if we handled it.
-@@ -6489,6 +6529,14 @@
+@@ -6489,6 +6536,14 @@
    views::FocusManager* focus_manager = GetFocusManager();
    CHECK(focus_manager, base::NotFatalUntil::M162);
  

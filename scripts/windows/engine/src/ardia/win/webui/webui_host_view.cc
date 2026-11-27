@@ -17,6 +17,7 @@
 #include "ardia/desktop/ac_desktop_webui_process_policy.h"
 #include "ardia/desktop/ac_desktop_window_state.h"
 #include "ardia/desktop/generated/ac_desktop_routes.h"
+#include "ardia/win/hooks.h"
 #include "ardia/win/main.h"
 #include "ardia/win/private_sessions.h"
 #include "ardia/win/profiles.h"
@@ -1546,6 +1547,9 @@ bool ShellHostView::CommandFocusesShell(const std::string& command) {
 }
 
 bool ShellHostView::AcceleratorPressed(const ui::Accelerator& accelerator) {
+  if (g_ardia_win_priority_shortcut_pass) {
+    return false;
+  }
   auto found = shortcuts_.find(accelerator);
   if (found == shortcuts_.end()) {
     return false;
