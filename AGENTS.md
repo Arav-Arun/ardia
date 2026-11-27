@@ -223,6 +223,16 @@ cross-builds. Don't spin up Boat VMs.
   aimed at. Rare, larger moves (the sidebar opening and closing, onboarding, a sheet arriving) may feel premium:
   a longer curve, a soft spring, glass. When unsure, treat it as high-frequency and keep it plain. This is the
   owner's rule and it beats matching Dia: a Dia effect that bounces on something used all day is not copied.
+- **Design and motion skills.** For UI polish, motion, gestures and stress-testing UI, use Emil Kowalski's skills
+  (installed in `~/.claude/skills` from github.com/emilkowalski/skills). `ask-emil` picks the right one. The rest:
+  - motion: `animate`, `review-animations`, `improve-animations`, `remove-animations`, `choreograph`,
+    `animation-performance`;
+  - interaction and design: `gestures`, `apple-design`, `emil-design-eng`;
+  - stress tests: `break-ui`;
+  - capturing your corrections as rules: `learn-taste`.
+
+  Where a skill and this file disagree, this file wins: the motion-frequency rule above and Dia parity come first.
+  These skills are written for the web and React. Apply the principles, and take values from our own tokens.
 - **Owner recordings and screenshots.** Copy a recording out of its temp folder at once (it vanishes, and
   the name has a narrow no-break space: use a glob). Extract 30 fps frames with ffmpeg, find events by
   frame difference, and measure positions and timings from the pixels. A position or size in the owner's
