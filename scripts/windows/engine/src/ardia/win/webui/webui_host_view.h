@@ -279,6 +279,7 @@ class ShellHostView : public views::View,
   base::ListValue WindowFrame() const;
   void ReportWindowState();
   bool PageHoldsFullScreen() const;
+  void ReplyClaimed(Done done, int id);
   void ReleaseCompanionFullScreen();
   void WatchSystemState();
   void NoteUnhandled(const std::string& method);

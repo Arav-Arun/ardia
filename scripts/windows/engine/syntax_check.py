@@ -6,7 +6,7 @@ Use it when the Windows tree is behind the checkout (its //ardia/win copy or its
 engine/ardiacore-linux/src and engine/ardiacore-desktop/src are searched before the tree's own copies, so the
 checkout's headers win. A //ardia/win source is named by its path under scripts/windows/engine/src (ardia/win/...);
 any other file is checked as the tree source named by --as, so a patched scratch copy of a Chromium file compiles
-with that file's flags.
+with that file's flags (and the same shadowing, for its //ardia includes).
 
 Usage: scripts/windows/engine/syntax_check.py [--repo DIR] [--out DIR] SOURCE... | --as TREE_PATH SCRATCH_FILE
   --repo  the checkout whose sources shadow the tree's (default: the one holding this script)
@@ -106,7 +106,7 @@ def main():
     if args.tree_path:
         if len(args.sources) != 1:
             raise SystemExit("syntax_check.py: --as takes exactly one scratch file")
-        passed = check(out, rule, args.tree_path, Path(args.sources[0]).resolve(), [])
+        passed = check(out, rule, args.tree_path, Path(args.sources[0]).resolve(), shadow)
     else:
         for source in args.sources:
             relative = Path(source)
