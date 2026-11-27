@@ -14,8 +14,8 @@ apps/phone/                 the app, and the root of its own pnpm workspace with
                             arm64-v8a and x86_64)
   src/                      the Mac's folder rules (docs/conventions.md): components/ui, components/<feature>,
                             state/<domain>, platform, lib
-  ios/                      the iPhone and iPad project, checked in (bundle id com.ardia.browser.ios, the SwiftUI
-                            app's, iOS 27, React Native's prebuilt core)
+  ios/                      the iPhone project, checked in (bundle id com.ardia.browser.ios, the SwiftUI app's,
+                            iOS 27, React Native's prebuilt core); iPhone only, so an iPad runs it as an iPhone app
   scripts/gradle-locked     Gradle under one lock, so one Android build runs at a time
 packages/phone/             @ardia/phone-native, the Expo module package
   src/                      the TypeScript side: PageView and its types
@@ -2582,13 +2582,15 @@ Decided 2026-11-16: main has landscape and the Duo layouts, so the Expo app gets
 `SearchHomeView`, and the tokens in `ArdiaDesign/{BrowseTokens,TabsTokens,TabsDeckGeometry,Tokens}.swift`). Native
 side: the iPhone agent. Screens: the screens agent. Numbers are points.
 
-**Orientations.** On iPhone, portrait, landscape left and landscape right; never upside down. On iPad all four,
-so the app takes part in Split View and Slide Over (`TARGETED_DEVICE_FAMILY = "1,2"` on the app and its three
-extensions, no `UIRequiresFullScreen`). In Expo that is `UISupportedInterfaceOrientations` and
-`UISupportedInterfaceOrientations~ipad` in `apps/phone/ios/Ardia/Info.plist` (by hand: `app.json`'s `"default"` would
-add upside down on iPhone; `supportsTablet` there only records the choice). An iPad window at least 600 pt both ways
-gets the `wide` layout; a narrower one (a Split View third, Slide Over) gets `phone`, from the same probe
-as the Duo, never the device model. A new device joining sync on an iPad is named "iPad" (`SyncMeta.deviceName`).
+**Orientations.** Portrait, landscape left and landscape right; never upside down. The app is iPhone only (the
+owner, 2026-11-26, for the first App Store release): `TARGETED_DEVICE_FAMILY = 1` on the app and its three
+extensions, `supportsTablet: false` in `app.json`, and only `UISupportedInterfaceOrientations` in
+`apps/phone/ios/Ardia/Info.plist` (by hand: `app.json`'s `"default"` would add upside down; there is no `~ipad` key, since
+an iPad runs an iPhone-only app in its iPhone window with the iPhone's orientations). The iPhone Duo is an iPhone, so
+it keeps every layout below. The `wide` layout and the iPad notes that follow stay in the code for a later iPad
+release: they come from the same probe as the Duo, never the device model, so an iPad window at least 600 pt both
+ways would get `wide` and a narrower one `phone`. A new device joining sync on an iPad is named "iPad"
+(`SyncMeta.deviceName`).
 From @mantrakp04's #2263 on the SwiftUI app. In a window (Windowed Apps, Split View, Slide Over) iPadOS draws its
 window controls over the window's top-left corner; `WindowControlsClearance` (SceneDelegate.swift) adds the extra the
 corner-adapted safe area asks for (43 pt on an iPad Pro 11-inch) to the root view controller's top safe area, so
@@ -4530,8 +4532,9 @@ d5fbaabc1). After a hand edit to the project, run `pod install` and commit what 
   ids and the same entitlement files, now in `apps/phone/ios/Config`: the app group `group.com.ardia.browser.ios`, and the default
   browser off (`ARDIA_DEFAULT_BROWSER = NO`).
 - **Version and build number:**
-  - The Apple version is TestFlight's pin, `1.0.1` for now ("TestFlight: the workflow, its certificate and its
-    testers" below). Until 2026-11-19 it was the Mac's release version.
+  - The Apple version is the iPhone's pin, `apps/phone/ios/Config/release-version` (`1.0.1` for now), which TestFlight
+    and the App Store share ("TestFlight: the workflow, its certificate and its testers" below). Until 2026-11-19 it
+    was the Mac's release version.
   - The build number goes above the highest one App Store Connect holds. On 15 Nov that is 0.2.47 (9), uploaded that
     day, internal "in testing", external "waiting for review" (`gh workflow run ios-release.yml -f mode=status`).
   - The first Expo candidate at the time was 0.2.47 (10) or later.
@@ -4578,7 +4581,7 @@ d5fbaabc1). After a hand edit to the project, run `pod install` and commit what 
   3. **The upload, the owner's moment:** `gh workflow run ios-release.yml --ref t3/unify-expo-architecture -f
      mode=upload -f public_testers=false`.
      - The build number is taken above App Store Connect's highest, from 10 on, unless `-f build=` sets it.
-     - The version is TestFlight's pin, `1.0.1`; the run refuses any other.
+     - The version is the pin in `apps/phone/ios/Config/release-version`; the run refuses any other.
   4. **On the owner's phone:** install it from TestFlight over the SwiftUI app. Settings' footer should read "Ardia
      <version> Nightly (<build>)".
 - **Who uploads, and how 0.2.47 (9) went up:**
@@ -4771,9 +4774,13 @@ core has its own). Not applicable: the default-browser status (no entitlement in
 
 This was `docs/ios.md`'s, for main's SwiftUI app; since the clean-up the workflow builds only the Expo app.
 - **The owner's rule** (2026-11-19). The owner asks for TestFlight before the dry run and upload.
-  - **Version:** every TestFlight build is `1.0.1` (`CFBundleShortVersionString`) until the owner changes it. It is
-    `TESTFLIGHT_VERSION` in `ios-release.yml`: `mode=dry-run` and `mode=upload` take it with `version` left empty, and
-    stop at their first step on any other version, such as an old `0.2.47`.
+  - **Version:** one committed file, `apps/phone/ios/Config/release-version` (`1.0.1` for now, one line, nothing else),
+    is the iPhone's version (`CFBundleShortVersionString`) for TestFlight and the App Store alike. `mode=dry-run` and `mode=upload`
+    read it with `version` left empty and stop on any other version, such as an old `0.2.47`; `release-ios` refuses
+    to upload anything else; `asc.mjs listing` and `app-store` work on that version and refuse a `--version` that
+    differs. Bumping it is one commit: once `1.0.1` is on the App Store, TestFlight needs `1.0.2` or later, because
+    App Store Connect takes no new builds for a version that is on sale. `app.json`'s `version` (`0.1.0`) is not
+    the release version: the app's telemetry reads it on iPhone and Android alike, so it stays as it is.
   - **Build number:** App Store Connect picks it. Leave `build` empty and the run takes the one after the highest it
     holds.
   - **Steps:** a dry run at the commit to upload, `gh workflow run ios-release.yml -f mode=dry-run`, then the upload,
@@ -4813,8 +4820,8 @@ This was `docs/ios.md`'s, for main's SwiftUI app; since the clean-up the workflo
   `sha256` in `VoiceDownload` (`packages/phone/ios/TalkToMe.swift`) with what `build-voice` printed. Phones that had
   the old voice download the new one the next time Talk to Me is on.
 - **The workflow** (`.github/workflows/ios-release.yml`). What each mode touches in App Store Connect:
-  - `mode=status` only reads: the app record, App IDs, devices, certificates, profiles, builds, build uploads and
-    tester groups.
+  - `mode=status` only reads: the app record, App IDs, devices, certificates, profiles, builds, App Store versions
+    and review submissions, build uploads and tester groups.
   - `mode=dry-run` reads the next build number, archives and signs with the stored development certificate
     (automatic signing, so Xcode may refresh its own managed profiles, as main's SwiftUI release always did), runs
     the checks and stops. It sends nothing. Until 2026-11-16 it also ran the app-store export, which opened an
@@ -4840,6 +4847,7 @@ This was `docs/ios.md`'s, for main's SwiftUI app; since the clean-up the workflo
   Review and prints the link, which stays the same for every build. Only one build of a version can wait in review.
   `mode=expire -f build=<number>` ends testing of an older build for good (never the newest), and `mode=add-tester -f
   email=<address>` invites someone to Public Testers.
+- **The App Store.** See "The App Store" below.
 - **The default browser grant.** iOS lists an app as a browser only when it is signed with
   `com.apple.developer.web-browser`, which Apple grants per App ID on request
   (https://developer.apple.com/contact/request/default-browser-entitlement/). It is granted and on by default
@@ -4850,6 +4858,156 @@ This was `docs/ios.md`'s, for main's SwiftUI app; since the clean-up the workflo
   CryptoKit; everything else is Apple's own (HTTPS, CryptoKit hashes). `ITSAppUsesNonExemptEncryption` is still false,
   which assumed Apple's encryption only: the owner decides whether the Rust core changes that answer before the next
   TestFlight upload.
+
+#### The App Store
+
+A stable iPhone release goes to App Review from a TestFlight build that has processed, only on the owner's word.
+`mode=status` lists the App Store versions with their state, release type and build, and the newest review
+submissions, beside the TestFlight builds. The first release (the owner, 2026-11-26) is iPhone only and free, and
+App Review gets no ChatGPT account: Browse for Me and Pinch to Summarize answer on the device without one.
+
+In order, each on the owner's word:
+1. **A TestFlight build** of the pinned version (`apps/phone/ios/Config/release-version`): `mode=dry-run`, then
+   `mode=upload` ("TestFlight: the workflow, its certificate and its testers" above). Note its build number.
+2. **The listing from the repo:** `gh workflow run ios-release.yml -f mode=listing`. It makes or takes the App Store
+   version for the pin and writes everything in `apps/phone/store/` (below). Run it again after any change there.
+3. **App Privacy by hand.** The data collection questions (the App Store's privacy "nutrition label") aren't in
+   Apple's App Store Connect API: its OpenAPI description (4.6.1, November 2026) has no resource for them, so answer
+   them in App Store Connect › App Privacy and publish them. `mode=listing` ends with this reminder, beside anything
+   else left to do by hand.
+4. **The submission:** `gh workflow run ios-release.yml -f mode=app-store -f build=<number> -f notes=<file in the repo>`.
+
+**The listing** (`asc.mjs listing`, the App Manager key below). It reads `apps/phone/store/`:
+- `<locale>/description.txt` (at most 4,000 characters), `keywords.txt` (100 bytes of UTF-8, as Apple counts it),
+  and, when present, `promotional-text.txt` (170 characters) and `subtitle.txt` (30 characters; a blank or missing
+  file clears what App Store Connect holds, as does dropping `marketingUrl`);
+  `<primary locale>/review-notes.txt` (4,000 bytes) is App Review's notes. One folder per locale, `en-US` for now.
+- `listing.json`: `supportUrl`, `marketingUrl` and `privacyPolicyUrl` (https strings; the policy is
+  `https://ardia.dev/privacy`), `copyright` (the year and the holder, without the ©, which Apple adds: the holder
+  in `NOTICE` is Mantra Patel, so "2026 Mantra Patel"), `primaryCategory` and, optionally, `secondaryCategory` (App
+  Store category ids such as `UTILITIES`; with no `secondaryCategory` the one App Store Connect holds is left alone,
+  so clearing it is done by hand), `ageRating` (the age rating declaration's answers by Apple's field names, each
+  checked against its type in Apple's OpenAPI description 4.6.1: true or false, or one of Apple's words such as
+  `NONE` or, for `ageRatingOverrideV2`, `EIGHTEEN_PLUS`; never null), `contentRights`
+  (`DOES_NOT_USE_THIRD_PARTY_CONTENT` or `USES_THIRD_PARTY_CONTENT`), `price: "free"`, `availability: "all"` and,
+  optionally, `baseTerritory` (`USA` when left out). Unknown keys are refused, so a typo never goes unnoticed.
+- `screenshots/iphone-medium/NN-<name>.png` (1206×2622 or 1179×2556, `APP_IPHONE_61`) and
+  `screenshots/iphone-large/NN-<name>.png` (1320×2868, 1290×2796 or 1260×2736, `APP_IPHONE_67`), 1 to 10 a set,
+  in file name order, portrait or landscape. Each is decoded: every chunk's checksum, the image data inflated to the
+  size its header gives, every row's filter type one PNG defines (0 to 4), no interlacing, no alpha channel or
+  transparency, nothing after `IEND`.
+
+It checks all of that before any request and lists every problem at once (`asc.mjs listing --check` stops there
+and needs no key; the workflow runs it first). A `version` (`--version`) other than the pin is refused there too.
+Then it writes only what differs from App Store Connect: the version (made with a manual release and the
+copyright, or a lone `PREPARE_FOR_SUBMISSION` draft renamed, as `app-store` does; a version in review is refused)
+and its copyright, each locale's text and URLs, the subtitle and privacy policy, the categories, the age rating
+answers, the content rights, a free price from the base territory, availability in every territory and in new ones,
+and App Review Information: the notes, no demo account and the contact. The contact comes from the
+`ASC_REVIEW_CONTACT_FIRST_NAME`, `_LAST_NAME`, `_PHONE` and `_EMAIL` secrets; with any of them unset it is left alone
+and the run says which, so set them (`gh secret set ASC_REVIEW_CONTACT_EMAIL`, and so on) and run it again. The
+contact is never committed and never printed: when Apple refuses the App Review Information, the run shows only
+the status, Apple's error code and the field it names, since Apple's message can repeat the phone number in a form
+GitHub's secret masking doesn't catch. Screenshots are matched to the repo's files by MD5 (Apple's
+`sourceFileChecksum`): a screenshot that matches and has finished uploading or is processing is kept, and only the
+files that differ are uploaded. New ones go up before the old ones are deleted, as far as a set's limit of 10
+allows, so a failed upload leaves the old screenshots in place. At the limit it deletes one old screenshot per
+upload, and only once the upload before it has finished processing, so a replacement Apple refuses costs at most
+one old screenshot. A finished screenshot Apple gives no checksum for counts as old and is kept until its
+replacements are in; one that never finished or that Apple refused is deleted first. The order is set last, to the file names' order.
+Each new screenshot is reserved, uploaded to the addresses Apple gives (without the App Store Connect token) and
+committed with its checksum, and the run waits up to `--timeout` (600 s) for Apple to finish processing it. A
+free price counts as set only when a free manual price is in effect today, by its start and end dates. A set for any other
+display type is left as it is. A re-run on an unchanged repo writes nothing. Two things the API can't do are
+listed at the end instead: territories missing from an existing availability, and availability in new
+territories once it was turned off.
+
+- **Its own key.** Editing the listing and submitting for App Review need the App Manager role, and the notary key
+  (`NOTARY_*`) stays a Developer key, so `mode=listing` and `mode=app-store` use a second key and stop at once when
+  its secrets are missing. To make it:
+  App Store Connect › Users and Access › Integrations › App Store Connect API › Team Keys › Generate API Key,
+  named "Ardia App Store", access **App Manager**. Download `AuthKey_<id>.p8` (Apple offers it once) and set the
+  secrets, then delete the download:
+
+  ```sh
+  base64 -i AuthKey_<id>.p8 | gh secret set ASC_APP_MANAGER_KEY_P8
+  gh secret set ASC_APP_MANAGER_KEY_ID --body <key id>
+  gh secret set ASC_APP_MANAGER_ISSUER --body <issuer id>
+  ```
+
+  A 403 from Apple during the run means the key lacks that role, and the run says so.
+- **On a Mac**, `node apps/phone/scripts/asc.mjs listing` and `node apps/phone/scripts/asc.mjs app-store --build
+  <number> [--notes <file>]` do the same with that key in `ASC_KEY`, `ASC_KEY_ID` and `ASC_ISSUER`. Each request carries a token minted for
+  15 minutes and made again a minute before it runs out, so a long wait for processing keeps working.
+
+`mode=app-store`, in order:
+- **The build floor.** `apps/phone/ios/Config/first-iphone-only-build` (`22`) is the first build of the iPhone-only
+  project: builds 1 to 21 were uploaded for 1.0.1 while the project targeted iPhone and iPad. App Store Connect's
+  API says nothing about a build's device families (its `builds` and `buildBundles` resources in OpenAPI 4.6.1 carry
+  no such field), so the committed number is the check: `app-store` refuses a lower build before any request, and
+  `release-ios` refuses to upload one. Upload TestFlight builds only from a checkout that has this change; if a
+  build from an older checkout reaches App Store Connect at or above the floor, expire it and raise the floor in a
+  commit. `asc.mjs version` prints the pin, and `version --first-build` the floor; the workflow and `release-ios`
+  read both through it, and each file must be one plain line.
+- **Preflight**, before any request (`asc.mjs preflight` alone needs no key): `ITSAppUsesNonExemptEncryption` in
+  `apps/phone/ios/Ardia/Info.plist`, the privacy manifest `apps/phone/ios/PrivacyInfo.xcprivacy` and, unless
+  `default_browser=false` (`--no-default-browser`), `com.apple.developer.web-browser` in
+  `Config/Ardia-DefaultBrowser.entitlements`, the Release `TARGETED_DEVICE_FAMILY` of `com.ardia.browser.ios` in
+  `Ardia.xcodeproj` (`1`: iPhone only), which decides the screenshots the listing needs, and the pinned version in
+  `Config/release-version` and the floor in `Config/first-iphone-only-build`. Each missing one is named and nothing is sent.
+- **The notes** (`notes`) must resolve, symlinks followed, to a file inside the checkout (`--notes-root`): anything
+  outside is refused before a request.
+- **The wait** for a build still processing never starts a read after `--timeout`: each pause is cut to the time
+  left, a read Apple answers with a server error is asked again only while time is left, and the run stops at the
+  deadline.
+- **The build** is picked by its number and the pinned version, so a build number another version shares never
+  gets in the way. A `version` (`--version`) other than the pin is refused before any request: change the pin in a
+  commit instead. The build must be `VALID`, not expired, and carry an export compliance answer.
+  A build that declares non-exempt encryption is refused unless its encryption declaration is `APPROVED`, which
+  can't happen while Info.plist says false. The workflow waits up to 20 minutes for one still processing (`--timeout`).
+- **Reads before writes.** Before it writes anything, it reads the App Store versions and every open review
+  submission with its items. It writes nothing when this version is already in a submission that is waiting for
+  review or in review with this build, whatever the version's own state says. It reads the attached build again
+  once it finds that review, and with another build it refuses, naming both. It also stops, listing them, when a submission is in
+  review with other items, is being cancelled or completed, or holds anything but this version.
+- **The version.** It refuses while another version is waiting for review, in review or pending release, and when the
+  build's version is already on sale (a new App Store release needs a new version, which is the owner's call). A
+  version already in review with this build is reported and left alone, but only as a success when its release is
+  manual: with any other release type the run exits non-zero and asks for Manual in App Store Connect, touching
+  nothing. A version it makes takes the copyright of the newest version that has one, by full creation time, and
+  keeps whatever copyright App Store Connect returns for it. Otherwise it takes this version's draft,
+  makes it, or renames the one other draft only when it is alone and still `PREPARE_FOR_SUBMISSION`; a rejected
+  draft, or more than one, stops the run with the list. Then it attaches the build (in place of an older one) and
+  sets the release to manual.
+- **What's New** comes from `notes`, at most 4,000 characters; without it the text is "Bug fixes and improvements."
+  and the run says so. The App Store shows no What's New on an app's first version, so the run leaves it out then.
+- **The checks** list everything missing at once and stop before the submission: the primary locale's description,
+  keywords, support URL and, for each device family the app targets, at least one screenshot whose upload has
+  finished (an empty set, or one still uploading or failed, counts as none), and App Review
+  Information's contact name, phone, email and notes, a demo account's name and password when one is required,
+  and the version's copyright, which Apple requires (`mode=listing` sets it). For iPhone that screenshot must be in the "iPhone with Dynamic Island (medium display)" class, which App Review
+  requires (`APP_IPHONE_61`: 1206×2622 or 1179×2556), or in the large class it scales down from (`APP_IPHONE_67`:
+  1320×2868, 1290×2796, 1260×2736); a finished set only in a smaller class (`APP_IPHONE_65`, `_58`, `_55` and older)
+  counts as none, and the gap names it (Apple's Screenshot specifications, checked 2026-11-26; the display type
+  values are `ScreenshotDisplayType` in the App Store Connect API).
+  Notes that don't say how to try Continue with ChatGPT (Browse for Me) only print a warning. Fill the gaps in App
+  Store Connect and run it again; the run never makes contact details up.
+- **The submission** reuses an open review submission that is ready and holds nothing or only this version, or one
+  with unresolved issues that holds only this version; otherwise it opens one. Just before that it reads the
+  version and the submissions again and stops if either changed while it ran. A rejected item for this version,
+  left from the last review, is marked resolved. Then, right before submitting, it reads the version once more (its
+  version string, build and release type must be what the run set) and the submission's items (only this
+  version), and stops without submitting on any change, so a release type switched mid-run or an App Event added
+  meanwhile never goes to App Review. The version's state may move only the way the run's own writes move it:
+  from `PREPARE_FOR_SUBMISSION` to `READY_FOR_REVIEW` (Apple does that when the version joins a submission), and
+  from a rejected state to either of those two; anything else, such as `WAITING_FOR_REVIEW` set elsewhere, stops it.
+  Apple's API can't tie a review submission to a build, so right after submitting the run reads the version's build
+  once more and only reports: when Apple shows another build, or the read fails or leaves the version out, it exits
+  non-zero with the review submission's id, the build it submitted and the build Apple shows, and asks you to cancel
+  the submission in App Store Connect if it's wrong. It never cancels anything itself. The summary prints the release type Apple holds.
+
+Every step reports what is already done, so a re-run after a failure picks up where it stopped. After Apple approves
+it, the owner presses Release in App Store Connect. Google Play is not set up.
 
 #### Launch arguments on iPhone
 
