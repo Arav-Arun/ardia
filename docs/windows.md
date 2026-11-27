@@ -970,7 +970,8 @@ in `webui_frame.cc`: top-edge resize, `HTMAXBUTTON` over the shell's maximize bu
   SHA-256 is not on its list fails with `ERR_PAGE_EVALUATION_REFUSED`), in `ISOLATED_WORLD_ID_CHROME_INTERNAL`, and
   answers with the operation's result as a string, or `null` when the page can't run it; Reading Mode's article check
   and `F9` depend on it. `webui_page_evaluation.h` holds that reply (`PreparePageEvaluation`, `PageEvaluationAnswered`):
-  only a string of at most 4 MiB reaches the shell, anything else answers `null`, and
+  only a string of at most 4 MiB reaches the shell, anything else answers `null`, an answer for a page whose
+  document, claim or binding changed while the script ran answers `null` (`EvaluationStillCurrent`), and
   `tests/webui_page_evaluation_test.cc` sends the shared hostile corpus through it (`windows-webui-page:evaluate` in
   `apps/browser/src/boundaries.json`). A page's find lives in its claim (`ClaimBound` in `webui_window_policy.h`): a
   release, a reclaim, a renderer exit, a move to another window, a rebind or a close drops it, so an earlier search never

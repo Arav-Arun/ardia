@@ -1,6 +1,7 @@
 #ifndef ARDIA_WIN_WEBUI_WEBUI_PAGE_EVALUATION_H_
 #define ARDIA_WIN_WEBUI_WEBUI_PAGE_EVALUATION_H_
 
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -45,6 +46,20 @@ inline PageEvaluationStep PreparePageEvaluation(
   return {std::move(script), {}};
 }
 
+struct PageEvaluationTicket {
+  std::string claim;
+  uint64_t claim_epoch = 0;
+  uint64_t binding_generation = 0;
+};
+
+inline bool PageEvaluationStillCurrent(const PageEvaluationTicket& sent,
+                                       const PageEvaluationTicket& now,
+                                       bool same_document) {
+  return same_document && !sent.claim.empty() && sent.claim == now.claim &&
+         sent.claim_epoch == now.claim_epoch &&
+         sent.binding_generation == now.binding_generation;
+}
+
 inline PageReply PageEvaluationUnavailable() {
   return {true, base::Value()};
 }
@@ -53,6 +68,12 @@ inline PageReply PageEvaluationAnswered(const base::Value& value) {
   std::optional<std::string> result =
       ardiacore::LinuxPageEvaluationResult(value);
   return {true, result ? base::Value(std::move(*result)) : base::Value()};
+}
+
+inline PageReply PageEvaluationFinished(bool still_current,
+                                        const base::Value& value) {
+  return still_current ? PageEvaluationAnswered(value)
+                       : PageEvaluationUnavailable();
 }
 
 }

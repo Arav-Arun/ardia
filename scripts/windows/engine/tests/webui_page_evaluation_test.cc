@@ -13,6 +13,9 @@
 namespace {
 
 using ardia_win::webui_page::PageEvaluationAnswered;
+using ardia_win::webui_page::PageEvaluationFinished;
+using ardia_win::webui_page::PageEvaluationStillCurrent;
+using ardia_win::webui_page::PageEvaluationTicket;
 using ardia_win::webui_page::PageEvaluationStep;
 using ardia_win::webui_page::PageEvaluationUnavailable;
 using ardia_win::webui_page::PageReply;
@@ -121,6 +124,20 @@ void TestShapes() {
   Expect(RepliesNull(PageEvaluationAnswered(base::Value(std::move(listed)))), "a list result answers null");
 }
 
+void TestStalePages() {
+  const PageEvaluationTicket sent{"c1", 3, 7};
+  Expect(PageEvaluationStillCurrent(sent, {"c1", 3, 7}, true), "the same claim, epoch, binding and document is current");
+  Expect(!PageEvaluationStillCurrent(sent, {"c1", 3, 7}, false), "a reload or another document is stale");
+  Expect(!PageEvaluationStillCurrent(sent, {"c2", 4, 7}, true), "a reclaim with a new claim is stale");
+  Expect(!PageEvaluationStillCurrent(sent, {"c1", 5, 7}, true), "a release and reclaim with the same claim is stale");
+  Expect(!PageEvaluationStillCurrent(sent, {"", 4, 7}, true), "a released tab is stale");
+  Expect(!PageEvaluationStillCurrent(sent, {"c1", 3, 8}, true), "a rebound tab is stale");
+  Expect(!PageEvaluationStillCurrent({"", 0, 7}, {"", 0, 7}, true), "an unclaimed request is never current");
+  const base::Value result{std::string(kControlResult)};
+  Expect(RepliesText(PageEvaluationFinished(true, result), std::string(kControlResult)), "a current page's result reaches the shell");
+  Expect(RepliesNull(PageEvaluationFinished(false, result)), "a stale page's result answers null");
+}
+
 std::optional<std::string> Unhex(std::string_view hex) {
   if (hex.size() % 2) {
     return std::nullopt;
@@ -205,7 +222,8 @@ int RunHostileCorpus(const char* path) {
       ++refused;
     }
 
-    PageReply reply = PageEvaluationAnswered(value);
+    Expect(RepliesNull(PageEvaluationFinished(false, value)), "a stale page's result answers null: " + single);
+    PageReply reply = PageEvaluationFinished(true, value);
     Expect(reply.ok, "a page result never fails the call: " + single);
     if (is_string && text.size() <= kLinuxPageEvaluationResultMax) {
       Expect(RepliesText(reply, text), "a bounded string result reaches the shell unchanged: " + single);
@@ -229,6 +247,7 @@ int main(int argc, char** argv) {
     return RunHostileCorpus(argv[2]);
   }
   TestShapes();
+  TestStalePages();
   std::cout << "webui_page_evaluation_test: all assertions passed\n";
   return 0;
 }

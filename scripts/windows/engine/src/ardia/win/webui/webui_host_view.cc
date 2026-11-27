@@ -441,6 +441,10 @@ PageBinding::~PageBinding() {
   viewport = nullptr;
 }
 
+webui_page::PageEvaluationTicket PageBinding::EvaluationTicket() const {
+  return {claim(), claim_epoch(), binding_generation};
+}
+
 void PageBinding::SetClaim(std::string value) {
   claim_.Assign(std::move(value));
 }

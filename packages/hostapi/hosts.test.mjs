@@ -183,7 +183,7 @@ test("the Windows WebUI host answers tab.command find, stopFinding and evaluate 
   for (const command of ["find", "stopFinding", "evaluate"]) {
     assert.ok(handled(command), `the Windows WebUI host handles tab.command ${command}`);
   }
-  assert.ok(tabs.includes("webui_page::PreparePageEvaluation(") && tabs.includes("webui_page::PageEvaluationAnswered("), "evaluate replies through the shared evaluation module");
+  assert.ok(tabs.includes("webui_page::PreparePageEvaluation(") && tabs.includes("webui_page::PageEvaluationFinished(") && tabs.includes("EvaluationStillCurrent("), "evaluate replies through the shared evaluation module, and only for the page it was sent to");
   assert.ok(evaluation.includes("LinuxPageEvaluationScript(") && evaluation.includes("LinuxPageEvaluationResult("), "evaluate runs only the allow-listed page operations and bounds their result");
   assert.ok(evaluation.includes("ERR_PAGE_EVALUATION_REFUSED"), "evaluate refuses code outside the allow-list");
   assert.ok(tabs.includes("ExecuteJavaScriptInIsolatedWorld("), "evaluate runs in an isolated world");

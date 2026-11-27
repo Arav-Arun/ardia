@@ -15,6 +15,7 @@
 #include "ardia/win/webui/desktop_platform_win.h"
 #include "ardia/win/webui/webui_documents.h"
 #include "ardia/win/webui/webui_frame.h"
+#include "ardia/win/webui/webui_page_evaluation.h"
 #include "ardia/win/webui/webui_telemetry.h"
 #include "ardia/win/webui/webui_window_policy.h"
 #include "base/callback_list.h"
@@ -106,6 +107,8 @@ class PageBinding : public content::WebContentsObserver {
   void MoveTo(ShellHostView* owner);
 
   const std::string& claim() const { return claim_.value(); }
+  uint64_t claim_epoch() const { return claim_.epoch(); }
+  webui_page::PageEvaluationTicket EvaluationTicket() const;
   void SetClaim(std::string value);
   void ClearClaim();
 
@@ -191,6 +194,9 @@ class ShellHostView : public views::View,
   bool BindsTab(const content::WebContents* contents) const;
   PageBinding* BindingForKey(std::string_view key) const;
   PageBinding* BindingForContents(const content::WebContents* contents) const;
+  bool EvaluationStillCurrent(int tab_id,
+                              const webui_page::PageEvaluationTicket& sent,
+                              const content::WeakDocumentPtr& document) const;
   std::unique_ptr<PageBinding> TakeBinding(int id);
 
   bool Trusted(content::WebUI* ui) const;

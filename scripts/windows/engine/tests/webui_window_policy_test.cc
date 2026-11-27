@@ -171,13 +171,15 @@ void TestClaimBoundHelpers() {
   ClaimBound<PendingFind> binding;
   assert(binding.empty() && !binding.helper());
 
+  assert(binding.epoch() == 0);
   binding.Assign("c1");
+  assert(binding.epoch() == 1);
   binding.Hold(std::make_unique<PendingFind>(&reported, &binding.value()));
   binding.helper()->Deliver();
   assert(reported.size() == 1 && reported.back() == "c1:3 matches");
 
   binding.Clear();
-  assert(binding.empty() && !binding.helper() && PendingFind::dropped == 1);
+  assert(binding.empty() && !binding.helper() && PendingFind::dropped == 1 && binding.epoch() == 2);
   binding.Assign("c2");
   assert(binding.value() == "c2" && !binding.helper());
   assert(reported.size() == 1);
@@ -187,12 +189,14 @@ void TestClaimBoundHelpers() {
   assert(!binding.helper() && PendingFind::dropped == 2);
 
   binding.Hold(std::make_unique<PendingFind>(&reported, &binding.value()));
+  const uint64_t before_same_claim = binding.epoch();
   binding.Assign("c3");
-  assert(!binding.helper() && PendingFind::dropped == 3);
+  assert(!binding.helper() && PendingFind::dropped == 3 && binding.epoch() == before_same_claim + 1);
 
   binding.Hold(std::make_unique<PendingFind>(&reported, &binding.value()));
+  const uint64_t before_drop = binding.epoch();
   binding.DropHelper();
-  assert(binding.value() == "c3" && !binding.helper() && PendingFind::dropped == 4);
+  assert(binding.value() == "c3" && !binding.helper() && PendingFind::dropped == 4 && binding.epoch() == before_drop);
 
   binding.Hold(std::make_unique<PendingFind>(&reported, &binding.value()));
   binding.helper()->Deliver();

@@ -35,6 +35,7 @@
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/reload_type.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/weak_document_ptr.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/referrer.h"
 #include "content/public/common/page_zoom.h"
@@ -519,17 +520,40 @@ void ShellHostView::TabCommand(const base::DictValue& args, Done done) {
         base::UTF8ToUTF16(*step.script),
         mojo::WrapCallbackWithDefaultInvokeIfNotRun(
             base::BindOnce(
-                [](Done done, base::Value value) {
+                [](base::WeakPtr<ShellHostView> host, int tab_id,
+                   webui_page::PageEvaluationTicket sent,
+                   content::WeakDocumentPtr document, Done done,
+                   base::Value value) {
                   Answer(std::move(done),
-                         webui_page::PageEvaluationAnswered(value));
+                         webui_page::PageEvaluationFinished(
+                             host && host->EvaluationStillCurrent(
+                                         tab_id, sent, document),
+                             value));
                 },
-                std::move(done)),
+                GetWeakPtr(), binding->id(), binding->EvaluationTicket(),
+                frame->GetWeakDocumentPtr(), std::move(done)),
             base::Value()),
         ISOLATED_WORLD_ID_CHROME_INTERNAL);
     return;
   }
   NoteUnhandled("tab.command " + command);
   std::move(done).Run(true, base::Value());
+}
+
+bool ShellHostView::EvaluationStillCurrent(
+    int tab_id,
+    const webui_page::PageEvaluationTicket& sent,
+    const content::WeakDocumentPtr& document) const {
+  const auto found = bindings_.find(tab_id);
+  if (found == bindings_.end() || !found->second->contents()) {
+    return false;
+  }
+  content::RenderFrameHost* frame = document.AsRenderFrameHostIfValid();
+  const bool same_document =
+      frame && frame->IsActive() &&
+      frame == found->second->contents()->GetPrimaryMainFrame();
+  return webui_page::PageEvaluationStillCurrent(
+      sent, found->second->EvaluationTicket(), same_document);
 }
 
 void ShellHostView::ReleaseTab(const base::DictValue& args, Done done) {

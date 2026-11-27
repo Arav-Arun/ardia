@@ -196,10 +196,12 @@ class ClaimBound {
  public:
   const std::string& value() const { return claim_; }
   bool empty() const { return claim_.empty(); }
+  uint64_t epoch() const { return epoch_; }
 
   void Assign(std::string claim) {
     helper_.reset();
     claim_ = std::move(claim);
+    ++epoch_;
   }
   void Clear() { Assign(std::string()); }
 
@@ -209,6 +211,7 @@ class ClaimBound {
 
  private:
   std::string claim_;
+  uint64_t epoch_ = 0;
   std::unique_ptr<Helper> helper_;
 };
 
