@@ -26,13 +26,31 @@ For the architecture and the test tooling, read `docs/agent-brief.md`.
   instruction, so it can be fixed where it is written.
 - **Ask Codex for a second opinion** on risky logic (races, lifetimes, security, migrations, sync) and reviews,
   before and after the change. Ask a Codex subagent, not the CLI: T3's `delegate_task` with
-  `target: {providerInstanceId: "codex", model: "gpt-6.2-sol", options: {reasoningEffort: "high", serviceTier: "priority"}}`,
+  `target: {providerInstanceId: "codex", model: "gpt-6.2-sol", options: {reasoningEffort: "high"}}` (the model rejects `serviceTier`),
   `role: "review"`, `mode: "async"`, and a new `clientRequestId` per round. Codex may run any command it needs
   (builds, tests, scripts, hidden instances, captures) in its own target and data dirs, but never writes, edits,
   formats or stages code. Give it the full brief each round (it doesn't share your context), including what you
   changed since the last round, how you verified it and which earlier findings you fixed or rejected and why.
   Reproduce each finding before fixing it. Cap review loops at 5 rounds per PR (stop earlier once approved
   or only nits remain; if blockers stay open after round 5, stop and escalate to the owner).
+- **Checks improve and heal themselves.** Every bug found, whether by a review, the owner, a crash or telemetry,
+  leaves behind a check that would have caught it, so it can't come back unnoticed. Pick the cheapest kind that
+  catches it:
+  - a regression test on the real path;
+  - a case in a fuzzer or the race explorer;
+  - a hostile input in the shared corpus;
+  - a lint.
+  When the same kind of bug turns up twice, fix the kind, not the instance: add the invariant to the shared harness,
+  generator or lint. The differential fuzzers (new code against the old implementation) and the deterministic
+  race explorer run with every review round and before every release. A new failure gets fixed or assigned at once,
+  without waiting to be asked. Keep the checks honest:
+  - A test that fakes the path it claims to cover (a mock that answers without running the script, a harness that
+    refreshes everything and hides a cache) doesn't count.
+  - A check that fails because the code changed on purpose is updated in the same change. It is never deleted,
+    skipped or ignored just to get green.
+  - A flaky check is a bug to root-cause, not something to retry.
+  - When the owner or a reviewer corrects how agents work, write the rule where agents read it (this file, the
+    skill, the brief) in the same session.
 - **Worktrees are fine.** Use a git worktree or a scratch clone for isolated feature, PR and full-send work, so
   you can switch branches, reset and stash without touching anyone else. `scripts/agent/guard-git` only blocks
   `checkout`, `switch`, `restore`, `stash`, `reset --hard` and `clean` in the shared root checkout (the primary
