@@ -7,12 +7,18 @@ import { isTabReady, pageOf, usePages } from "../tabs/pageState";
 import { isInternalTab } from "../pages/urls";
 import { errorText } from "../../lib/errors";
 import { focusedWindowOf } from "../windows/ui";
-import { noteCliPillDismissed, noteCliPillShown } from "../telemetry/cliCounts";
+import { noteCliPillDismissed, noteCliPillShown, noteControlSelfStop } from "../telemetry/cliCounts";
 import { noteDragsEnded } from "../telemetry/stuckDrags";
 import { consentToken, type ConsentToken } from "../telemetry/client";
 import type { ControlCaller } from "./controlCaller";
 import { noteCliConnections } from "../automation/offscreen";
-import { compactControlPill, programControlOn, setProgramControl, showControlPill } from "./programControlSetting";
+import {
+  compactControlPill,
+  programControlOn,
+  setProgramControl,
+  setProgramControlInferredOff,
+  showControlPill,
+} from "./programControlSetting";
 import { startCommandInstall } from "./linuxCommandInstall";
 
 const INDICATOR_HOLD_MS = 3000;
@@ -166,8 +172,11 @@ export function startProgramControl() {
     if (generation < newest) return;
     newest = generation;
     useControlServer.setState({ server });
-    const stoppedItself = server.state === "off" && !!server.reason;
-    if (mayReconcile && stoppedItself && programControlOn(useBrowser.getState())) setProgramControl(false);
+    const stoppedItself = server.state === "off" ? server.reason : undefined;
+    if (mayReconcile && stoppedItself && programControlOn(useBrowser.getState())) {
+      setProgramControlInferredOff();
+      noteControlSelfStop(stoppedItself, consent);
+    }
   };
   onControlChanged((server) => apply(server, inFlight === 0));
   let applied: boolean | null = null;
