@@ -160,20 +160,22 @@ export function startProgramControl() {
   let latest = 0;
   let inFlight = 0;
   let newest = 0;
-  let restoring: { request: number; consent: ConsentToken | null } | null = null;
-  const settleRestore = (server: ControlStatus) => {
-    if (!restoring || restoring.request !== latest || (server.state !== "on" && server.state !== "off")) return;
+  let restoring: { request: number; consent: ConsentToken | null; generation: number | null } | null = null;
+  const settleRestore = (server: ControlStatus, generation: number, request: number | null) => {
+    if (!restoring || restoring.request !== latest) return;
+    if (request === restoring.request) restoring.generation = generation;
+    else if (restoring.generation === null || generation < restoring.generation) return;
     if (server.state === "on") noteControlRestored(restoring.consent);
-    restoring = null;
+    if (server.state === "on" || server.state === "off") restoring = null;
   };
-  const apply = (server: ControlStatus, mayReconcile: boolean, consent?: ConsentToken | null) => {
+  const apply = (server: ControlStatus, mayReconcile: boolean, consent?: ConsentToken | null, request: number | null = null) => {
     noteDragsEnded(server.dragsEnded, consent);
     const generation = server.state === "external" ? newest : server.generation;
     if (generation < newest) return;
     newest = generation;
     useControlServer.setState({ server });
     const stoppedItself = server.state === "off" ? server.reason : undefined;
-    settleRestore(server);
+    settleRestore(server, generation, request);
     if (mayReconcile && stoppedItself && programControlOn(useBrowser.getState())) {
       setControlByApp(false);
       noteControlSelfStop(stoppedItself, consent);
@@ -189,11 +191,11 @@ export function startProgramControl() {
     const request = ++latest;
     const consent = consentToken();
     const restore = takeControlRestore();
-    restoring = on && restore ? { request, consent: restore.consent } : null;
+    restoring = on && restore ? { request, consent: restore.consent, generation: null } : null;
     inFlight++;
     const settle = (server: ControlStatus) => {
       inFlight--;
-      if (request === latest) apply(server, true, consent);
+      if (request === latest) apply(server, true, consent, request);
     };
     const call = first && !on ? controlStatus() : setControl(on);
     void call.then(settle, (e: unknown) => settle({ state: "off", connections: 0, generation: newest, file: "", reason: errorText(e) }));

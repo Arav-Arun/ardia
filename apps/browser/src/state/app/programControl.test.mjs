@@ -226,3 +226,33 @@ test("a restore the person cancels with Off isn't counted when they turn control
   assert.equal(replies.length, 0);
   setConsentPeriod(false, null);
 });
+
+test("an earlier generation's off that arrives after a restore starts doesn't erase the restore", async () => {
+  const { restoreControlAtLaunch, controlStoppedItself } = await import("./programControlSetting.ts");
+  const { consentToken } = await import("../telemetry/consentPeriod.ts");
+  setConsentPeriod(true, "test-epoch");
+  setOn(false);
+  while (replies.length) replies.shift()({ state: "off", generation: 11 });
+  await settle();
+  setOn(true);
+  replies.shift()({ state: "on", generation: 11, connections: 0 });
+  await settle();
+  emit({ state: "off", generation: 11, reason: "The control server didn't start." });
+  await settle();
+  replies.shift()({ state: "off", generation: 11, reason: "The control server didn't start." });
+  await settle();
+  assert.equal(controlStoppedItself(), true);
+  takeCliCounts();
+  restoreControlAtLaunch(consentToken());
+  emit({ state: "off", generation: 11 });
+  await settle();
+  replies.shift()({ state: "starting", generation: 12 });
+  await settle();
+  emit({ state: "off", generation: 11 });
+  emit({ state: "on", generation: 12, connections: 0 });
+  await settle();
+  const counts = takeCliCounts();
+  assert.deepEqual([counts.cli_control_restore_tries_launch, counts.cli_control_restored], [1, 1], "the restore's own generation coming on is what counts");
+  assert.equal(replies.length, 0);
+  setConsentPeriod(false, null);
+});

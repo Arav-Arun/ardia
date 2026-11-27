@@ -115,7 +115,11 @@ async function runMove(tabId: string, moves: TabMoves, move: Move) {
   const holds = modeStillHolds();
   const opened = openedByPage(tabId);
   const video = move.forVideo;
-  const routedHere = (url: string) => !heldByCli(tabId) && routedTo(tabId, move.to)(url);
+  let stoppedForCli = false;
+  const routedHere = (url: string) => {
+    if (heldByCli(tabId)) stoppedForCli = true;
+    return !stoppedForCli && routedTo(tabId, move.to)(url);
+  };
   const options = video
     ? {
         routedHere,
@@ -133,7 +137,7 @@ async function runMove(tabId: string, moves: TabMoves, move: Move) {
   } finally {
     moves.moving = false;
   }
-  if (!moved && heldByCli(tabId)) keepForCli(tabId, move);
+  if (!moved && stoppedForCli) keepForCli(tabId, move);
   else if (!video && (moved || !moves.pending)) noteSiteMove(moved ? "moved" : "dropped", opened, move.consent);
   if (moved) {
     moves.lastMovedAt = Date.now();

@@ -585,6 +585,42 @@ test("a hold the ardia command takes while a move is getting ready stops the mov
   S().updateSettings({ websiteEngines: {} });
 });
 
+test("a hold that ends right after it stopped a move still counts as kept for the command and owes the site its rule", async () => {
+  const { cliHoldsClockForTests, holdForCli, releaseFromCli } = await import("../tabs/cliHolds.ts");
+  S().hydrate({});
+  S().updateSettings({ websiteEngines: { "https://read.example": "webkit" } });
+  setConsentPeriod(true, "test-epoch");
+  const w = S().createWindow({ url: "https://search.example/" });
+  const tabId = model.activeTabId(S(), w);
+  S().updateTab(tabId, { engine: "chromium", url: "https://search.example/" });
+  webviews.set(tabId, { evaluate: () => new Promise((resolve) => setTimeout(() => resolve(false), 20)), pageCookies: () => new Promise((resolve) => setTimeout(() => resolve([]), 20)) });
+  takeEngineSwitchCounts();
+  S().updateTab(tabId, { url: "https://read.example/a" });
+  followSiteChoice(tabId, "chromium", "https://read.example/a", "https://search.example/");
+  const base = performance.now();
+  holdForCli("cli-session", [tabId], 60);
+  let guardSawHold = false;
+  cliHoldsClockForTests(() => {
+    if (guardSawHold) return base + 120_000;
+    if (new Error().stack?.includes("routedHere")) guardSawHold = true;
+    return base;
+  });
+  for (let i = 0; i < 20; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.ok(guardSawHold, "the move's own check saw the hold");
+  assert.equal(tabEngine(S(), tabId), "chromium");
+  const counts = takeEngineSwitchCounts();
+  assert.deepEqual([counts.engine_site_moves_kept_for_cli, counts.engine_site_moves_dropped], [1, 0], "the hold had ended by the time the move settled, but it was what stopped it");
+  cliHoldsClockForTests(() => performance.now());
+  releaseFromCli("cli-session");
+  S().updateTab(tabId, { url: "https://read.example/b" });
+  followSiteChoice(tabId, "chromium", "https://read.example/b", "https://read.example/a");
+  assert.ok(await waitFor(() => tabEngine(S(), tabId) === "webkit"), "the same site's next page gets the rule the hold put off");
+  dropSwap(tabId);
+  webviews.clear();
+  setConsentPeriod(false, null);
+  S().updateSettings({ websiteEngines: {} });
+});
+
 function streamingWindow(source = "https://blog.example/", settings = {}) {
   S().hydrate({});
   S().updateSettings({ protectedVideoInWebKit: true, websiteEngines: {}, engineMode: "automatic", ...settings });
