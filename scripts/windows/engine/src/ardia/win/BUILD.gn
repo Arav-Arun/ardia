@@ -99,6 +99,7 @@ source_set("win") {
     "webui/webui_host_view.h",
     "webui/webui_mode.cc",
     "webui/webui_mode.h",
+    "webui/webui_page_evaluation.h",
     "webui/webui_policy.h",
     "webui/webui_shell.cc",
     "webui/webui_shell.h",

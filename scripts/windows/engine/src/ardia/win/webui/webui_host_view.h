@@ -105,7 +105,10 @@ class PageBinding : public content::WebContentsObserver {
   content::WebContents* contents() const { return web_contents(); }
   void MoveTo(ShellHostView* owner);
 
-  std::string claim;
+  const std::string& claim() const { return claim_.value(); }
+  void SetClaim(std::string value);
+  void ClearClaim();
+
   uint64_t renderer_generation = 0;
   uint64_t sequence = 1;
   uint64_t binding_generation = 1;
@@ -136,7 +139,7 @@ class PageBinding : public content::WebContentsObserver {
   int id_ = 0;
   std::string key_;
   std::string profile_;
-  std::unique_ptr<ardiacore::LinuxFind> find_;
+  webui_window::ClaimBound<ardiacore::LinuxFind> claim_;
 };
 
 class ShellHostView : public views::View,

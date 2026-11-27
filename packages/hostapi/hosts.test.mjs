@@ -178,16 +178,20 @@ test("the Windows WebUI host answers tab.command find, stopFinding and evaluate 
   const tabs = stripComments(read("scripts/windows/engine/src/ardia/win/webui/webui_host_tabs.cc"));
   const view = stripComments(read("scripts/windows/engine/src/ardia/win/webui/webui_host_view.cc"));
   const header = stripComments(read("scripts/windows/engine/src/ardia/win/webui/webui_host_view.h"));
+  const evaluation = stripComments(read("scripts/windows/engine/src/ardia/win/webui/webui_page_evaluation.h"));
   const handled = (command) => new RegExp(`command == "${command}"`).test(tabs);
   for (const command of ["find", "stopFinding", "evaluate"]) {
     assert.ok(handled(command), `the Windows WebUI host handles tab.command ${command}`);
   }
-  assert.ok(tabs.includes("LinuxPageEvaluationScript("), "evaluate runs only the allow-listed page operations");
-  assert.ok(tabs.includes("ERR_PAGE_EVALUATION_REFUSED"), "evaluate refuses code outside the allow-list");
+  assert.ok(tabs.includes("webui_page::PreparePageEvaluation(") && tabs.includes("webui_page::PageEvaluationAnswered("), "evaluate replies through the shared evaluation module");
+  assert.ok(evaluation.includes("LinuxPageEvaluationScript(") && evaluation.includes("LinuxPageEvaluationResult("), "evaluate runs only the allow-listed page operations and bounds their result");
+  assert.ok(evaluation.includes("ERR_PAGE_EVALUATION_REFUSED"), "evaluate refuses code outside the allow-list");
   assert.ok(tabs.includes("ExecuteJavaScriptInIsolatedWorld("), "evaluate runs in an isolated world");
   assert.ok(tabs.includes("ERR_PAGE_ARGUMENT"), "find and stopFinding reject malformed arguments");
   assert.ok(header.includes("ardiacore::LinuxFind") && view.includes("ardiacore::LinuxFind"), "find runs through LinuxFind");
   assert.ok(header.includes("ReportFind") && view.includes('"find"'), "find results reach the shell as the find page event");
+  assert.ok(header.includes("webui_window::ClaimBound<ardiacore::LinuxFind> claim_;"), "the find helper lives and dies with the binding's claim");
+  assert.doesNotMatch(header, /^\s*std::string claim;/m, "the claim is changed only through SetClaim and ClearClaim, which drop the find helper");
   const build = read("scripts/windows/engine/src/ardia/win/BUILD.gn");
   for (const file of ["ac_linux_find.cc", "ac_linux_find.h", "ac_linux_page_evaluation.cc", "ac_linux_page_evaluation.h", "ac_linux_page_operations.h"]) {
     assert.ok(build.includes(`"//ardia/linux/${file}"`), `the Windows engine compiles ${file}`);
