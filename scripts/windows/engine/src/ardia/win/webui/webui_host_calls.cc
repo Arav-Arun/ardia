@@ -625,14 +625,16 @@ void ShellHostView::SetActiveProfile(const base::ListValue* values, Done done) {
   if (!selection_.Admit(renderer_generation_, sequence)) {
     return std::move(done).Run(true, base::Value(false));
   }
-  const std::string requested = (*values)[0].GetString();
-  if (private_window() || is_utility() || requested == config_.page_profile ||
+  const std::string requested(
+      webui_window::RegularProfileName((*values)[0].GetString()));
+  const bool own =
+      webui_window::SameRegularProfile(requested, config_.page_profile);
+  if (private_window() || is_utility() || own ||
       ParseProfileName(requested).off_the_record) {
-    if (requested == config_.page_profile) {
+    if (own) {
       active_profile_.reset();
     }
-    return std::move(done).Run(true,
-                               base::Value(requested == config_.page_profile));
+    return std::move(done).Run(true, base::Value(own));
   }
   WithProfile(
       requested,
@@ -699,7 +701,10 @@ void ShellHostView::BroadcastProfileLoaded(const std::string& profile) {
   Emit("ArdiaProfiles", "profiles",
        base::Value(base::DictValue()
                        .Set("name", "profiles.loaded")
-                       .Set("data", base::DictValue().Set("profile", profile))));
+                       .Set("data", base::DictValue().Set(
+                                        "profile",
+                                        std::string(webui_window::ShellProfileName(
+                                            profile))))));
 }
 
 void ShellHostView::PrivateWindowsChanged() {

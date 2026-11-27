@@ -116,12 +116,15 @@ class PageBinding : public content::WebContentsObserver {
   base::DictValue Envelope(std::string_view type);
   void ReportNavigation();
   void ReportClosed();
+  void ReportFullscreen(bool fullscreen);
 
  private:
   void DidFinishNavigation(content::NavigationHandle* handle) override;
   void TitleWasSet(content::NavigationEntry* entry) override;
   void DidStartLoading() override;
   void DidStopLoading() override;
+  void DidToggleFullscreenModeForTab(bool entered,
+                                     bool will_cause_resize) override;
   void WebContentsDestroyed() override;
 
   raw_ptr<ShellHostView> owner_;
@@ -275,6 +278,8 @@ class ShellHostView : public views::View,
   base::DictValue WindowState() const;
   base::ListValue WindowFrame() const;
   void ReportWindowState();
+  bool PageHoldsFullScreen() const;
+  void ReleaseCompanionFullScreen();
   void WatchSystemState();
   void NoteUnhandled(const std::string& method);
   views::Widget* widget() const;

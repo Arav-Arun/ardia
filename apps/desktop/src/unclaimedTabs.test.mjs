@@ -144,3 +144,21 @@ test("a tab Chrome inserts for another engine profile joins the window in that p
   assert.equal(adoptUnclaimedTab(useBrowser, "main", { adoptId: "tab:43", url: "https://gone.test/", active: false, profile: "p-missing" }), undefined,
     "an offer for an engine profile no UI profile uses is left alone");
 });
+
+test("a tab the Windows engine offers under its own name for the default profile opens in the default profile", async () => {
+  freshWindow();
+  const work = S().createProfile({ name: "Work" });
+  const host = nativeHost();
+  const stop = watchUnclaimedTabs(host, useBrowser);
+  await tick();
+  host.emit("ArdiaTabs", "unclaimed", { adoptId: "tab:61", url: "https://default-link.test/", active: true, profile: "default" });
+  host.emit("ArdiaTabs", "unclaimed", { adoptId: "tab:62", url: "https://linux-link.test/", active: false, profile: "" });
+  host.emit("ArdiaTabs", "unclaimed", { adoptId: "tab:63", url: "https://work-link.test/", active: false, profile: work });
+  stop();
+  const [fromWindows] = tabsAt("https://default-link.test/");
+  assert.ok(fromWindows, "the engine's \"default\" names the default profile, as hostProfile sends it");
+  assert.equal(fromWindows.profileId, "default");
+  assert.equal(active(), fromWindows.id);
+  assert.equal(tabsAt("https://linux-link.test/")[0]?.profileId, "default");
+  assert.equal(tabsAt("https://work-link.test/")[0]?.profileId, work);
+});

@@ -515,6 +515,32 @@ inline constexpr size_t kPickerPromptLimit = 200;
 inline constexpr size_t kDocumentEngineRequestLimit = 8 * 1024 * 1024;
 inline constexpr char kAppProfileName[] = "default";
 
+constexpr bool IsAppProfileName(std::string_view profile) {
+  return profile.empty() || profile == kAppProfileName;
+}
+
+constexpr std::string_view RegularProfileName(std::string_view requested) {
+  return requested.empty() ? std::string_view(kAppProfileName) : requested;
+}
+
+constexpr bool SameRegularProfile(std::string_view a, std::string_view b) {
+  return a == b || (IsAppProfileName(a) && IsAppProfileName(b));
+}
+
+constexpr std::string_view ShellProfileName(std::string_view engine_name) {
+  return engine_name == kAppProfileName ? std::string_view() : engine_name;
+}
+
+constexpr bool ReportsWindowFullScreen(bool widget_full_screen,
+                                       bool page_holds_full_screen) {
+  return widget_full_screen && !page_holds_full_screen;
+}
+
+constexpr bool ReleasesCompanionFullScreen(bool owner_full_screen,
+                                           bool companion_tab_full_screen) {
+  return !owner_full_screen && companion_tab_full_screen;
+}
+
 constexpr size_t Utf8SequenceLength(unsigned char lead) {
   if (lead < 0x80) {
     return 1;

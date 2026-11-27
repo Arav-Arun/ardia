@@ -169,6 +169,45 @@ void TestUnclaimedTabs() {
   assert(!ParseAdoptId("tab:99999999999"));
 }
 
+void TestProfileNames() {
+  assert(IsAppProfileName(""));
+  assert(IsAppProfileName("default"));
+  assert(!IsAppProfileName("p-work"));
+  assert(!IsAppProfileName("Default"));
+  assert(!IsAppProfileName("incognito:w@default"));
+
+  assert(RegularProfileName("") == "default");
+  assert(RegularProfileName("default") == "default");
+  assert(RegularProfileName("p-work") == "p-work");
+  assert(RegularProfileName("incognito:w@") == "incognito:w@");
+
+  assert(SameRegularProfile("", "default"));
+  assert(SameRegularProfile("default", ""));
+  assert(SameRegularProfile("p-work", "p-work"));
+  assert(!SameRegularProfile("", "p-work"));
+  assert(!SameRegularProfile("default", "p-work"));
+  assert(!SameRegularProfile("incognito:w@", "default"));
+
+  assert(ShellProfileName("default").empty());
+  assert(ShellProfileName("").empty());
+  assert(ShellProfileName("p-work") == "p-work");
+  assert(ShellProfileName("incognito:w@") == "incognito:w@");
+  assert(ShellProfileName(PrivateLinkProfile("default")).empty());
+  assert(ShellProfileName(PrivateLinkProfile("p-work")) == "p-work");
+}
+
+void TestFullScreenReports() {
+  assert(ReportsWindowFullScreen(true, false));
+  assert(!ReportsWindowFullScreen(true, true));
+  assert(!ReportsWindowFullScreen(false, false));
+  assert(!ReportsWindowFullScreen(false, true));
+
+  assert(ReleasesCompanionFullScreen(false, true));
+  assert(!ReleasesCompanionFullScreen(true, true));
+  assert(!ReleasesCompanionFullScreen(false, false));
+  assert(!ReleasesCompanionFullScreen(true, false));
+}
+
 void TestDocumentVerbs() {
   assert(ParseDocumentVerb("documents.watch") == DocumentVerb::kWatch);
   assert(ParseDocumentVerb("documents.unwatch") == DocumentVerb::kUnwatch);
@@ -470,6 +509,8 @@ int main() {
   TestBindingGenerations();
   TestClaims();
   TestUnclaimedTabs();
+  TestProfileNames();
+  TestFullScreenReports();
   TestDocumentVerbs();
   TestRects();
   TestPlacement();

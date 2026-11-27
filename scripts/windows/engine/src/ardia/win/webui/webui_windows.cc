@@ -356,13 +356,14 @@ void WindowRegistry::OpenRequested(ShellHostView* requester,
         false, Failure("ERR_WINDOW_LIMIT", "Too many windows are open"));
   }
   const bool utility = webui_window::IsUtility(*kind);
-  const std::string requested_profile =
-      options && options->FindString("profile") ? *options->FindString("profile")
-                                                : std::string();
+  const std::string* requested_profile =
+      options ? options->FindString("profile") : nullptr;
   const std::string profile =
       utility ? std::string(kAppProfileName)
-              : (requested_profile.empty() ? requester->page_profile_id()
-                                           : requested_profile);
+              : (requested_profile
+                     ? std::string(
+                           webui_window::RegularProfileName(*requested_profile))
+                     : requester->page_profile_id());
   const base::DictValue* private_seed =
       options ? options->FindDict("privateWindow") : nullptr;
   const base::DictValue* small_seed =

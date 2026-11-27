@@ -40,6 +40,8 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/browser_window/public/create_browser_window.h"
+#include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
+#include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/lifetime/application_lifetime_desktop.h"
 #include "chrome/browser/lifetime/browser_shutdown.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -489,6 +491,19 @@ void PageBinding::ReportNavigation() {
                base::Value(std::move(delivery)));
 }
 
+void PageBinding::ReportFullscreen(bool fullscreen) {
+  if (!owner_ || claim.empty()) {
+    return;
+  }
+  base::DictValue delivery = Envelope("pageEvent");
+  delivery.Set("event",
+               base::DictValue()
+                   .Set("name", "fullscreen")
+                   .Set("data", base::DictValue().Set("fullscreen", fullscreen)));
+  owner_->Emit("ArdiaWebView", base::NumberToString(id_),
+               base::Value(std::move(delivery)));
+}
+
 void PageBinding::ReportClosed() {
   if (!owner_ || claim.empty()) {
     return;
@@ -515,8 +530,9 @@ bool PageBinding::ReportOpenPrivateWindow(const GURL& url,
                                     .Set("url", url.spec())
                                     .Set("disposition", "incognito")
                                     .Set("profile",
-                                         webui_window::PrivateLinkProfile(
-                                             profile))));
+                                         std::string(webui_window::ShellProfileName(
+                                             webui_window::PrivateLinkProfile(
+                                                 profile))))));
   owner_->Emit("ArdiaWebView", base::NumberToString(id_),
                base::Value(std::move(delivery)));
   return true;
@@ -546,6 +562,14 @@ void PageBinding::DidStartLoading() {
 
 void PageBinding::DidStopLoading() {
   ReportNavigation();
+}
+
+void PageBinding::DidToggleFullscreenModeForTab(bool entered,
+                                                bool will_cause_resize) {
+  ReportFullscreen(entered);
+  if (owner_) {
+    owner_->ReportWindowState();
+  }
 }
 
 void PageBinding::WebContentsDestroyed() {
@@ -1223,7 +1247,40 @@ base::DictValue ShellHostView::WindowState() const {
       .Set("windowId", config_.window_id)
       .Set("maximized", frame && frame->IsMaximized())
       .Set("tiled", false)
-      .Set("fullScreen", frame && frame->IsFullscreen());
+      .Set("fullScreen",
+           webui_window::ReportsWindowFullScreen(
+               frame && frame->IsFullscreen(), PageHoldsFullScreen()));
+}
+
+bool ShellHostView::PageHoldsFullScreen() const {
+  for (BrowserWindowInterface* member : Members()) {
+    ExclusiveAccessManager* access = ExclusiveAccessManager::From(member);
+    const FullscreenController* controller =
+        access ? access->fullscreen_controller() : nullptr;
+    if (controller && controller->IsWindowFullscreenForTabOrPending() &&
+        controller->IsFullscreenCausedByTab()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void ShellHostView::ReleaseCompanionFullScreen() {
+  views::Widget* frame = widget();
+  const bool owner_full_screen = frame && frame->IsFullscreen();
+  for (BrowserWindowInterface* member : Members()) {
+    if (member == browser_.get()) {
+      continue;
+    }
+    ExclusiveAccessManager* access = ExclusiveAccessManager::From(member);
+    FullscreenController* controller =
+        access ? access->fullscreen_controller() : nullptr;
+    if (controller &&
+        webui_window::ReleasesCompanionFullScreen(
+            owner_full_screen, controller->IsWindowFullscreenForTabOrPending())) {
+      controller->WindowFullscreenStateChanged();
+    }
+  }
 }
 
 base::ListValue ShellHostView::WindowFrame() const {
@@ -1242,7 +1299,13 @@ void ShellHostView::ReportWindowState() {
   if (!frame) {
     return;
   }
-  const bool full_screen = frame->IsFullscreen();
+  if (!frame->IsFullscreen()) {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(&ShellHostView::ReleaseCompanionFullScreen,
+                                  GetWeakPtr()));
+  }
+  const bool full_screen = webui_window::ReportsWindowFullScreen(
+      frame->IsFullscreen(), PageHoldsFullScreen());
   if (reported_full_screen_ != full_screen) {
     const bool announce = reported_full_screen_.has_value() || full_screen;
     reported_full_screen_ = full_screen;

@@ -115,7 +115,8 @@ void ShellHostView::StartTab(base::DictValue args,
         false, base::Value("The shell document that asked for this tab is gone"));
   }
   const std::string profile = Text(args, "profile");
-  if (profile.empty() || profile == config_.page_profile) {
+  if (profile.empty() ||
+      webui_window::SameRegularProfile(profile, config_.page_profile)) {
     return CreateTabIn(std::move(args), std::move(done), std::move(origin),
                        generation, page_profile());
   }
@@ -277,7 +278,12 @@ void ShellHostView::CreateTabIn(base::DictValue args,
   announced_.erase(id);
   bindings_[id] = std::move(binding);
   ReattachViewports();
+  const bool fullscreen = contents->IsFullscreen();
   std::move(done).Run(true, base::Value(Identity(created)));
+  if (const auto bound = bindings_.find(id);
+      fullscreen && bound != bindings_.end()) {
+    bound->second->ReportFullscreen(true);
+  }
 }
 
 void ShellHostView::SetViewport(const base::DictValue& args, Done done) {
@@ -564,8 +570,9 @@ base::DictValue ShellHostView::UnclaimedOffer(content::WebContents* contents,
       .Set("adoptId", std::string(webui_window::kAdoptTabPrefix) +
                           base::NumberToString(TabId(contents)))
       .Set("url", contents->GetVisibleURL().spec())
-      .Set("profile", profile == page_profile() ? config_.page_profile
-                                                : NameOfProfile(profile))
+      .Set("profile", std::string(webui_window::ShellProfileName(
+                          profile == page_profile() ? config_.page_profile
+                                                    : NameOfProfile(profile))))
       .Set("active", active);
 }
 
