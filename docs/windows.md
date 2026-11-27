@@ -1024,10 +1024,75 @@ as an empty switch followed by a stray argument; `--ardia-migrate-from-rnw` unde
 | config, hooks, themes | `%APPDATA%\Ardia\{config.json,hooks.json,themes\*.json}` (`<data>\config` with `ARDIA_DATA_DIR`) | `Ardia WebUI\config\…` | byte copy |
 | sealed sync keys | `%LOCALAPPDATA%\Ardia\Sync\sync-key-<account>.dpapi`, DPAPI with entropy `ardia-sync-key/v1[/test-instance]/<account>` | `Ardia WebUI\Sync\sync-key-x<lowercase hex of the account>.dpapi`, the name and entropy the WebUI host's DPAPI secret store (`desktop_platform_win.cc`, #4039) reads | byte copy under the new name, only once the key unseals to 32 bytes for its own account |
 | connected accounts | Credential Manager `Ardia Connected Accounts/<account>` (`… [<data dir>]/` with `ARDIA_DATA_DIR`): the first 2,560 bytes on the base item, comment `Ardia g<1|2> <chunks>`, the rest on `<base>#g<generation>#<n>` (`<base>#<n>` before generations), up to 64 chunks | `Ardia WebUI\Secrets\account-x<lowercase hex of the UTF-8 account>.dpapi`, DPAPI with entropy `ardia-connected-account/v1[/test-instance]/<account>`; the WebUI host has no connected-accounts store yet (`ArdiaKeychain` is refused on desktop), so the cutover's store reads this layout | reassembled as `CredentialStore::Get` does. RNW writes continuation chunks (no comment) before the base (comment `Ardia …`), each with the account as its `UserName`, so an item counts as a chunk only when it has no comment and a chunk-shaped name, and a chunk completes a secret only when its `UserName` and the base's are both exactly the account (blank owners never match); a chunk name two bases could both claim (`acct` generation 1 and legacy `acct#g1`) fails both. The namespace (`Ardia Connected Accounts [<dir>]/`) matches without case, as Credential Manager does, while the account keeps its case: one no base claims is an orphan of an interrupted first write and is left out (`credential_chunks_orphaned`), while a chunk-shaped name with its own comment is an account of its own. A missing chunk leaves the account out |
-| Chromium's profile (cookies, saved passwords, extensions) and the install identity | `%LOCALAPPDATA%\Ardia\User Data`, the installer's registry | untouched and not copied | stays where it is |
+| Chromium's profiles (history, cookies, saved passwords, extensions and their data) and the `os_crypt` key that unlocks them | `%LOCALAPPDATA%\Ardia\User Data\{Default,Ardia <id>}` and its `Local State` (`<data>\Chromium` with `ARDIA_DATA_DIR`) | `Ardia WebUI\Chromium\{Ardia default,Ardia <id>}` and its `Local State` | a separate step, `--chromium-profiles`, that setup runs while Ardia is closed (below) |
+| the install identity | the installer's registry | untouched | stays where it is |
 
 Scratch files (`dialog.json`, `menu.json`, `activation.log`, `file-chooser.txt`, `Ardia.png`), dot files, staged
 `.partial`/`.tmp` files and the folders beside the documents (`Logs`, `Telemetry`, `Crashpad` and the like) are left.
+
+#### Chromium profiles (#4609, #4619)
+
+0.2.49 left every user's history, cookies, saved passwords and extensions behind in `%LOCALAPPDATA%\Ardia\User Data`,
+because the step above skipped Chromium's profile. That step can't copy it: the WebUI host runs the migrator in
+`PostBrowserStart`, after Chromium has loaded `Local State` and made its own `os_crypt` key, so cookies and passwords
+copied then would never decrypt, and Chromium would write its key back over any change. So the profiles move in their own
+step, `ardia-webui-migrate --from-rnw --chromium-profiles` (`src/chromium.rs`). Setup runs it as its first `[Run]` entry
+(`Ardia.iss`, hidden, as the user who started setup, only when the migrator is bundled), after the files are in place and
+before it starts Ardia. That covers an upgrade from 0.2.47 and one from 0.2.49 alike, and every later update retries
+until the step's marker exists. It never changes `User Data`, which stays as a backup the RNW build can still open.
+
+- **Which folders.** RNW's `Default` becomes `Ardia default`, the WebUI host's folder for the default profile, and each
+  `Ardia <id>` (`[a-z0-9-]`, RNW's `IsProfileFolderName`) keeps its name. `System Profile`, `Guest Profile`, Chromium's own
+  `Profile N` and anything else are left. Inside a profile it copies everything except what Chromium rebuilds: `Cache`,
+  `Code Cache`, `GPUCache`, `DawnGraphiteCache`, `DawnWebGPUCache`, `GraphiteDawnCache`, `GrShaderCache`, `ShaderCache`,
+  `Sessions`, `Sessions_Encrypted`, `Crashpad`, `Service Worker\CacheStorage`, and every `LOCK`, `lockfile` and
+  `Singleton*`. Links, junctions and files with more than one link are skipped, as above.
+- **The key.** Chromium on Windows seals each cookie and password (`v10`) with the AES key in `Local State`'s
+  `os_crypt.encrypted_key` (`DPAPI` + a `CryptProtectData` blob with no entropy). The step carries RNW's whole `os_crypt`
+  object (also `app_bound_encrypted_key` and `audit_enabled` when present) into the WebUI `Local State` and keeps every
+  other field there. It carries a key only once it unseals to 32 bytes for this user. A missing key, or one that won't
+  unseal, still copies the profiles (history, bookmarks and extensions don't need it) but writes no key (`key_missing`,
+  `key_unreadable`).
+- **Nobody may be running.** The step waits (`busy`, `failed_stage: in_use`, exit 3) while either `Chromium\lockfile` or
+  `User Data\lockfile` is held: Chromium holds it open with `FILE_SHARE_READ` only while it runs, so the step tries to open
+  it for writing and a sharing violation means a running shell. It shares `rnw-migration.lock` with the documents step.
+- **What it decides.** The rule is "the React Native profile wins, and nothing is ever deleted":
+  - *Fresh* (0.2.47 to 0.2.50; no WebUI `Chromium` yet): every profile is copied and `Local State` is written with RNW's key.
+  - *Already on 0.2.49* (its `Local State` holds a different key): each WebUI profile that has an RNW counterpart moves
+    whole to `Ardia WebUI\rnw-migration-kept\Chromium-<run>\<folder>`, its `Local State` is copied there too, and the
+    RNW profile takes its place with RNW's key. Profiles made only on 0.2.49 stay, but their cookies and passwords were
+    sealed with 0.2.49's key and stop decrypting (that key's `Local State` is kept beside them). 0.2.49 had been out for
+    days, while the RNW profile holds the user's whole history, so the old data wins and the new copy is kept, never lost.
+  - *Restored by hand* (the WebUI `Local State` already holds RNW's key, as in #4619's workaround): nothing in place is
+    replaced and the key isn't touched; only RNW profiles missing from `Chromium` are copied (`key_shared`).
+  - *Nothing there* (no `User Data` at all): it answers `nothing_to_migrate` and writes nothing, not even `Ardia WebUI`,
+    so a clean machine looks the same after setup. A `User Data` with no profile folder writes the marker.
+- **Crash-safe and restartable.** It checks free space first (the bytes to copy plus 256 MiB; `failed_stage: space`), then
+  copies every profile into `Ardia WebUI\rnw-chromium-staging\<folder>` with four workers, each file written in place,
+  given its source's write time and flushed. A later run reuses a staged file whose size and write time match its source,
+  so an interrupted copy resumes and a torn file is copied again. Nothing reaches `Chromium` until the copy is whole.
+  `rnw-chromium-migration-progress.json` then records the plan (mode, profiles, backup folder) and each step of the swap:
+  the backup and new `Local State` first, then for each profile the move of the WebUI copy aside and of the staged copy
+  in, both directory renames on the same volume through held handles (`NtSetInformationFile(FileRenameInformation)` with
+  the destination folder's handle, `renameat`). A run that stops at any of those points (`tests/chromium.rs` stops before
+  every one in turn) finishes on the next run with the same result and one backup folder. A copy that runs out of disk
+  removes its staging folder. `rnw-chromium-migration.json` is the marker, written after its attempt report.
+- **Report and telemetry.** `rnw-chromium-migration-attempt.json` carries `step: "chromium"`, the outcome, stage
+  (`layout`, `lock`, `in_use`, `local_state`, `scan`, `space`, `staging`, `swap`, `progress`, `report`, `marker`), attempt,
+  prior stage, duration and counts (`profiles`, `profiles_replaced`, `webui_profiles_left`, `files`, `files_reused`,
+  `megabytes`, `skipped_links`, `skipped_invalid`, `skipped_unreadable`, `skipped_clash`, `key_carried`, `key_shared`,
+  `key_missing`, `key_unreadable`, `local_state_kept`, `local_state_malformed`, `staging_cleared`, `partials_swept`).
+  It also writes a report when it waits, so `in_use` shows up. The WebUI host sends it as `shell_migration` with
+  `step: "chromium"` (the documents step now says `step: "documents"`), under the same consent rule and its own
+  `rnw-chromium-migration-reported.json`. Watch `shell_migration{step=chromium}`: `failed` and `busy` near zero,
+  `key_carried` on nearly every `migrated`, and `key_unreadable` and `space` rare.
+- **Checks.** `tests/chromium.rs` covers the fresh upgrade, a second run, the 0.2.49 recovery, the hand restore, a stop
+  before every rename, a copy stopped part way and a torn staged file, every kind of bad or missing key, a malformed
+  WebUI `Local State`, a running shell, too little disk, no RNW profile, `ARDIA_DATA_DIR` layouts, overlapping folders,
+  links and hard links, and that `User Data` is unchanged byte for byte and in write time. `tests/hostile.rs` runs the
+  shared corpus as profile and file names, and `tests/windows.rs` carries a key sealed by real DPAPI, holds `lockfile` the way
+  Chromium does, and moves profile trees on NTFS. On a Windows 11 machine the release binary moved 10,005 files (212 MB)
+  in 6.4 s.
 
 - **Rollback.** The RNW folders and Credential Manager items are only read (the vault interface has no write), so the
   RNW build opens exactly what it left. The tests compare every file's bytes and write time and the vault before and

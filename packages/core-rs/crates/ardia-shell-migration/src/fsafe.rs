@@ -198,6 +198,7 @@ enum Opening {
     Read,
     CreateNew,
     Lock,
+    Replace,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -267,7 +268,7 @@ mod sys {
             | match opening {
                 Opening::Read => libc::O_RDONLY | libc::O_NONBLOCK,
                 Opening::CreateNew => libc::O_RDWR | libc::O_CREAT | libc::O_EXCL,
-                Opening::Lock => libc::O_RDWR | libc::O_CREAT,
+                Opening::Lock | Opening::Replace => libc::O_RDWR | libc::O_CREAT,
             };
         let fd = unsafe { libc::openat(dir.as_raw_fd(), c.as_ptr(), flags, 0o600 as libc::c_uint) };
         if fd < 0 {
@@ -357,6 +358,36 @@ mod sys {
         }
         Ok(())
     }
+
+    pub fn remove_folder(dir: &File, name: &str) -> io::Result<()> {
+        let c = c_name(name)?;
+        if unsafe { libc::unlinkat(dir.as_raw_fd(), c.as_ptr(), libc::AT_REMOVEDIR) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub fn move_entry(from: &File, name: &str, to: &File, to_name: &str) -> io::Result<()> {
+        let (name, to_name) = (c_name(name)?, c_name(to_name)?);
+        if unsafe { libc::renameat(from.as_raw_fd(), name.as_ptr(), to.as_raw_fd(), to_name.as_ptr()) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub fn held_open(dir: &File, name: &str) -> io::Result<bool> {
+        Ok(!matches!(child_entry(dir, name)?, Entry::Missing))
+    }
+
+    pub fn free_space(path: &std::path::Path) -> io::Result<u64> {
+        use std::os::unix::ffi::OsStrExt;
+        let c = CString::new(path.as_os_str().as_bytes()).map_err(|_| unsafe_path(path.to_path_buf()))?;
+        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+        if unsafe { libc::statvfs(c.as_ptr(), &mut stat) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok((stat.f_bavail as u64).saturating_mul(stat.f_frsize as u64))
+    }
 }
 
 #[cfg(windows)]
@@ -396,6 +427,7 @@ mod sys {
     const ERROR_NO_MORE_FILES: i32 = 18;
     const ERROR_CANT_ACCESS_FILE: i32 = 1920;
     const ERROR_STOPPED_ON_SYMLINK: i32 = 681;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
 
     fn status_error(status: NTSTATUS) -> io::Error {
         io::Error::from_raw_os_error(unsafe { RtlNtStatusToDosError(status) } as i32)
@@ -488,7 +520,7 @@ mod sys {
         let (access, disposition) = match opening {
             Opening::Read => (FILE_GENERIC_READ, FILE_OPEN),
             Opening::CreateNew => (FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE, FILE_CREATE),
-            Opening::Lock => (FILE_GENERIC_READ | FILE_GENERIC_WRITE, FILE_OPEN_IF),
+            Opening::Lock | Opening::Replace => (FILE_GENERIC_READ | FILE_GENERIC_WRITE, FILE_OPEN_IF),
         };
         nt_open(dir, name, access, disposition, FILE_NON_DIRECTORY_FILE)
     }
@@ -575,6 +607,45 @@ mod sys {
         set_information(staged, plain.as_ptr() as *const c_void, length, FileRenameInformation)
     }
 
+    pub fn remove_folder(dir: &File, name: &str) -> io::Result<()> {
+        remove(dir, name)
+    }
+
+    pub fn move_entry(from: &File, name: &str, to: &File, to_name: &str) -> io::Result<()> {
+        let moving = nt_open(from, name, DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE, FILE_OPEN, 0)?;
+        if super::is_link(&moving.metadata()?) {
+            return Err(unsafe_path(name.into()));
+        }
+        let (plain, length) = rename_buffer(to, to_name, 0);
+        set_information(&moving, plain.as_ptr() as *const c_void, length, FileRenameInformation)
+    }
+
+    pub fn held_open(dir: &File, name: &str) -> io::Result<bool> {
+        match nt_open(
+            dir,
+            name,
+            FILE_GENERIC_WRITE | DELETE,
+            FILE_OPEN,
+            FILE_NON_DIRECTORY_FILE,
+        ) {
+            Ok(_) => Ok(false),
+            Err(error) if missing(&error) => Ok(false),
+            Err(error) if error.raw_os_error() == Some(ERROR_SHARING_VIOLATION) => Ok(true),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn free_space(path: &std::path::Path) -> io::Result<u64> {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let mut available = 0u64;
+        if unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut available, null_mut(), null_mut()) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(available)
+    }
+
     pub fn remove(dir: &File, name: &str) -> io::Result<()> {
         let file = nt_open(dir, name, DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE, FILE_OPEN, 0)?;
         let posix = FILE_DISPOSITION_INFORMATION_EX {
@@ -614,6 +685,14 @@ pub enum Fetched {
     NotRegular,
     HardLinked,
     TooLarge,
+}
+
+pub enum Opened {
+    File(File, Metadata),
+    Missing,
+    Link,
+    NotRegular,
+    HardLinked,
 }
 
 pub struct Staged {
@@ -706,6 +785,88 @@ impl Dir {
             return Ok(Fetched::TooLarge);
         }
         Ok(Fetched::Data(bytes))
+    }
+
+    pub fn open_source(&self, name: &str) -> io::Result<Opened> {
+        match self.entry(name)? {
+            Entry::Missing => return Ok(Opened::Missing),
+            Entry::Link => return Ok(Opened::Link),
+            Entry::File => {}
+            Entry::Directory | Entry::Other => return Ok(Opened::NotRegular),
+        }
+        let file = match sys::child_file(&self.file, name, Opening::Read) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Opened::Missing),
+            Err(error) if is_unsafe(&error) => return Ok(Opened::Link),
+            Err(error) => return Err(error),
+        };
+        let meta = file.metadata()?;
+        if is_link(&meta) {
+            return Ok(Opened::Link);
+        }
+        if !meta.is_file() {
+            return Ok(Opened::NotRegular);
+        }
+        if link_count(&file)? != 1 {
+            return Ok(Opened::HardLinked);
+        }
+        Ok(Opened::File(file, meta))
+    }
+
+    pub fn replace_file(&self, name: &str) -> io::Result<File> {
+        let name = child_name(name)?;
+        if !matches!(self.entry(name)?, Entry::Missing | Entry::File) {
+            return Err(unsafe_path(self.path.join(name)));
+        }
+        let file = sys::child_file(&self.file, name, Opening::Replace)?;
+        let meta = file.metadata()?;
+        if is_link(&meta) || !meta.is_file() || link_count(&file)? != 1 {
+            return Err(unsafe_path(self.path.join(name)));
+        }
+        file.set_len(0)?;
+        Ok(file)
+    }
+
+    pub fn remove_file(&self, name: &str) -> io::Result<()> {
+        sys::remove(&self.file, child_name(name)?)
+    }
+
+    pub fn move_to(&self, name: &str, to: &Dir, to_name: &str) -> io::Result<()> {
+        let (name, to_name) = (child_name(name)?, child_name(to_name)?);
+        if !matches!(self.entry(name)?, Entry::Directory | Entry::File) {
+            return Err(unsafe_path(self.path.join(name)));
+        }
+        if to.entry(to_name)? != Entry::Missing {
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "the destination is taken"));
+        }
+        sys::move_entry(&self.file, name, &to.file, to_name)?;
+        let _ = self.file.sync_all();
+        let _ = to.file.sync_all();
+        Ok(())
+    }
+
+    pub fn remove_tree(&self, name: &str) -> io::Result<usize> {
+        let name = child_name(name)?;
+        match self.entry(name)? {
+            Entry::Missing => return Ok(0),
+            Entry::Directory => {}
+            _ => {
+                sys::remove(&self.file, name)?;
+                return Ok(1);
+            }
+        }
+        let mut removed = 0;
+        if let Some(child) = self.child(name, false)? {
+            for inner in child.list()? {
+                removed += child.remove_tree(&inner)?;
+            }
+        }
+        sys::remove_folder(&self.file, name)?;
+        Ok(removed + 1)
+    }
+
+    pub fn held_open(&self, name: &str) -> io::Result<bool> {
+        sys::held_open(&self.file, child_name(name)?)
     }
 
     pub fn stage(&self, bytes: &[u8]) -> io::Result<Staged> {
@@ -870,6 +1031,10 @@ impl Root {
         }
         Ok(Some(current))
     }
+}
+
+pub fn free_space(path: &Path) -> io::Result<u64> {
+    sys::free_space(path)
 }
 
 fn random_hex(bytes: usize) -> String {
