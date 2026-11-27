@@ -133,14 +133,14 @@ test("a value WebKit changed goes back to Chromium with the SameSite WebKit can'
   const { tabId } = setup();
   const later = Date.now() / 1000 + 30 * 86400;
   const cookie = (name, sameSite) => ({ ...signedIn, name, value: "c1", session: false, expires: later, ...(sameSite ? { sameSite } : {}) });
-  const page = chromiumPage({ cookies: [cookie("__Secure-3PSID", "None"), cookie("lax_default"), cookie("explicit_lax", "Lax"), cookie("now_strict", "Lax"), cookie("now_lax", "None")], storage: {} });
+  const page = chromiumPage({ cookies: [cookie("__Secure-3PSID", "None"), cookie("lax_default"), cookie("explicit_lax", "Lax"), cookie("now_strict", "Lax"), cookie("now_lax", "None"), cookie("now_insecure", "None")], storage: {} });
   webviews.set(tabId, page);
   await setSharing(true, "settings");
   try {
     await carrySignIn(tabId, `${ORIGIN}/home`, "webkit", null);
-    assert.equal(webKit.cookies.length, 5);
+    assert.equal(webKit.cookies.length, 6);
     const setInWebKit = { now_strict: "Strict", now_lax: "Lax" };
-    webKit.cookies = webKit.cookies.map((c) => ({ ...asWebKitHolds(c, setInWebKit[c.name]), value: "w2" }));
+    webKit.cookies = webKit.cookies.map((c) => ({ ...asWebKitHolds(c, setInWebKit[c.name]), value: "w2", ...(c.name === "now_insecure" ? { secure: false } : {}) }));
     takeSiteDataCounts();
     await carrySite("", "app.test", "chromium", { consent: consentToken() });
     assert.deepEqual(Object.fromEntries(page.jar.cookies.map((c) => [c.name, [c.value, c.sameSite]])), {
@@ -149,11 +149,12 @@ test("a value WebKit changed goes back to Chromium with the SameSite WebKit can'
       explicit_lax: ["w2", "Lax"],
       now_strict: ["w2", "Strict"],
       now_lax: ["w2", "Lax"],
+      now_insecure: ["w2", undefined],
     });
     const counts = takeSiteDataCounts();
     assert.equal(counts.site_data_same_site_kept, 2);
-    assert.equal(counts.site_data_chromium_values_replaced, 5);
-    assert.equal(counts.site_data_chromium_writes_no_webkit_record, 5);
+    assert.equal(counts.site_data_chromium_values_replaced, 6);
+    assert.equal(counts.site_data_chromium_writes_no_webkit_record, 6);
   } finally {
     await setSharing(false, "settings");
   }

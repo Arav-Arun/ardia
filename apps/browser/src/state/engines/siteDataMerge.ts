@@ -148,6 +148,6 @@ export const removal = (c: PageCookie): CookieRemoval => ({ name: c.name, domain
 export function keepChromiumSameSite(carried: PageCookie, present: PageCookie | undefined): PageCookie {
   if (!present) return carried;
   if (present.sameSite === undefined && carried.sameSite === "Lax") return { ...carried, sameSite: undefined };
-  if (present.sameSite === "None" && carried.sameSite === undefined) return { ...carried, sameSite: "None" };
+  if (present.sameSite === "None" && carried.sameSite === undefined && carried.secure) return { ...carried, sameSite: "None" };
   return carried;
 }
