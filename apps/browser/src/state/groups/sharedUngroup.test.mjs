@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 const { useBrowser } = await import("../browser/store.ts");
 const { inPinnedContainer, pinKeyOf, viewTabIds } = await import("../browser/model.ts");
-const { ASLEEP, adoptOf, adoptedPage, hasPage, loadedPage, wakeOf, withWake } = await import("../tabs/pageSession.ts");
+const { ASLEEP, adoptOf, adoptedPage, hasOwnOrSharedPage, hasPage, loadedPage, wakeOf, withWake } = await import("../tabs/pageSession.ts");
 const { pendingRestore } = await import("../tabs/adoptIds.ts");
 const { familyKeyOf, navigationTo } = await import("../browser/model.ts");
 const { splitTabIds } = await import("../splits/splits.ts");
@@ -294,8 +294,9 @@ test("across 200 generated layouts, ungrouping a shared folder never drops a tab
       assert.ok((t && owns(t)) || sameOpen, `${at}: ${o.url} stays open`);
     }
     for (const t of Object.values(S().tabs)) if (familyOf[t.id]) assert.ok(families.get(familyOf[t.id]).has(t.url), `${at}: ${t.id} keeps an address of its own tab`);
+    for (const t of Object.values(S().tabs)) if (before.tabs[t.id] && hasOwnOrSharedPage(before.tabs[t.id])) assert.equal(t.url, before.tabs[t.id].url, `${at}: ${t.id} keeps its own address`);
     assert.ok(!Object.values(S().groups).some((g) => g.pinned && pinKeyOf(g) === key), `${at}: no folder is left`);
-    if (split) assert.ok(Object.values(S().splits).every((v) => v.windowId === from.windowId), `${at}: the split stays in one window`);
+    if (split) assert.ok(Object.values(S().splits).some((v) => v.windowId === from.windowId) && Object.values(S().splits).every((v) => v.windowId === from.windowId), `${at}: the split stays in the window it was taken from, and only there`);
     for (const v of Object.values(S().splits)) S().separateSplit(v.id);
     const tokens = new Set(Object.values(S().tabs).flatMap((t) => [pendingRestore(t), adoptOf(t)?.replace(/^restore:/, "")]));
     const pagesOpen = new Set(Object.values(S().tabs).filter(owns).map((t) => `${familyOf[t.id]} ${t.url}`));
