@@ -274,7 +274,9 @@ cross-builds. Don't spin up Boat VMs.
   fast when the thing it waits on dies: `scripts/agent/await --pid <pid> -- <test>` instead of
   `until …; do sleep; done`. Run builds with `run_in_background` and act on the notification. Wrap
   screen captures in `timeout 20` (they hang while the screen is locked). Never wait for another agent's
-  edit to appear; report the dependency instead.
+  edit to appear; report the dependency instead. A delegated agent isn't woken when its background job finishes
+  after its turn ends, so it waits on the job in the same turn (or runs it in the foreground). It never ends with
+  "I'll check when it's done".
 
 ## Shipping
 - **Two channels: nightly and stable.** One app; Settings › General picks the channel, and nightly users get
