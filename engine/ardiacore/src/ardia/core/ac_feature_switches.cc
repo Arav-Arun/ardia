@@ -17,27 +17,45 @@ void MergeFeatures(base::CommandLine* command_line, const char* list, std::strin
                                                         : current + "," + std::string(features));
 }
 
-bool CommandLineDecidesFeature(const base::CommandLine& command_line, std::string_view feature) {
-  for (const char* list : {switches::kEnableFeatures, switches::kDisableFeatures}) {
-    const std::string value = command_line.GetSwitchValueASCII(list);
-    for (std::string_view entry : base::FeatureList::SplitFeatureListString(value)) {
-      std::string name;
-      std::string study;
-      std::string group;
-      std::string params;
-      if (!base::FeatureList::ParseEnableFeatureString(entry, &name, &study, &group, &params)) {
-        return true;
-      }
-      std::string_view named = name;
-      if (named.starts_with('*')) {
-        named.remove_prefix(1);
-      }
-      if (named == feature) {
-        return true;
-      }
+namespace {
+
+bool SameFeature(std::string_view named, std::string_view feature) {
+  if (named.starts_with('*')) {
+    named.remove_prefix(1);
+  }
+  return named == feature;
+}
+
+bool EnableListDecidesFeature(std::string_view value, std::string_view feature) {
+  for (std::string_view entry : base::FeatureList::SplitFeatureListString(value)) {
+    std::string name;
+    std::string study;
+    std::string group;
+    std::string params;
+    if (!base::FeatureList::ParseEnableFeatureString(entry, &name, &study, &group, &params)) {
+      return true;
+    }
+    if (SameFeature(name, feature)) {
+      return true;
     }
   }
   return false;
+}
+
+bool DisableListNamesFeature(std::string_view value, std::string_view feature) {
+  for (std::string_view entry : base::FeatureList::SplitFeatureListString(value)) {
+    if (SameFeature(entry.substr(0, entry.find('<')), feature)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+}
+
+bool CommandLineDecidesFeature(const base::CommandLine& command_line, std::string_view feature) {
+  return EnableListDecidesFeature(command_line.GetSwitchValueASCII(switches::kEnableFeatures), feature) ||
+         DisableListNamesFeature(command_line.GetSwitchValueASCII(switches::kDisableFeatures), feature);
 }
 
 void ReportDanglingUnretainedWithoutCrashing(base::CommandLine* command_line) {

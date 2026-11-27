@@ -67,10 +67,17 @@ int main() {
     ExpectReport(enable, "", enable, std::string("an explicit enable-features entry is left as the user set it: ") + enable);
   }
 
+  ExpectReport("WebContentsDiscard", "OtherFeature<QA.Stage.Rollout", std::string("WebContentsDiscard,") + kDump,
+               "a disabled feature whose trial name has dots is not this feature");
+  ExpectReport("WebContentsDiscard", "Glic,OtherFeature<QA.Stage.Rollout,**PartitionAllocUnretainedDanglingPtr",
+               std::string("WebContentsDiscard,") + kDump,
+               "the disable list strips one default marker, as RegisterOverride does");
+
   const char* const decided_disables[] = {
       "PartitionAllocUnretainedDanglingPtr",
       "Glic,PartitionAllocUnretainedDanglingPtr<Study",
       "*PartitionAllocUnretainedDanglingPtr",
+      "OtherFeature<QA.Stage.Rollout,PartitionAllocUnretainedDanglingPtr<QA.Stage.Rollout",
   };
   for (const char* disable : decided_disables) {
     ExpectReport("WebContentsDiscard", disable, "WebContentsDiscard",

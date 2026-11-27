@@ -69,8 +69,13 @@ test("the helper takes the names from base and reads entries with Chromium's own
   assert.match(body, /"\/dump_without_crashing"/);
   assert.ok(!/kDisableFeatures/.test(body), "the feature stays on, so BackupRefPtr still quarantines the freed object");
   const decides = functionBody(switchesSource, "bool CommandLineDecidesFeature(const base::CommandLine& command_line, std::string_view feature)");
-  assert.match(decides, /base::FeatureList::SplitFeatureListString\(value\)/);
-  assert.match(decides, /base::FeatureList::ParseEnableFeatureString\(entry, &name, &study, &group, &params\)/);
+  assert.match(decides, /EnableListDecidesFeature\(command_line\.GetSwitchValueASCII\(switches::kEnableFeatures\), feature\)/);
+  assert.match(decides, /DisableListNamesFeature\(command_line\.GetSwitchValueASCII\(switches::kDisableFeatures\), feature\)/);
+  const enables = functionBody(switchesSource, "bool EnableListDecidesFeature(std::string_view value, std::string_view feature)");
+  assert.match(enables, /base::FeatureList::ParseEnableFeatureString\(entry, &name, &study, &group, &params\)/);
+  const disables = functionBody(switchesSource, "bool DisableListNamesFeature(std::string_view value, std::string_view feature)");
+  assert.match(disables, /SameFeature\(entry\.substr\(0, entry\.find\('<'\)\), feature\)/);
+  assert.ok(!/ParseEnableFeatureString/.test(disables), "Chromium reads --disable-features entries as Feature<Trial only");
   assert.match(switchesSource, /#include "base\/allocator\/partition_alloc_features\.h"/);
   assert.match(switchesSource, /#include "base\/feature_list\.h"/);
   assert.match(read("../../../engine/ardiacore/src/ardia/core/BUILD.gn"), /"ac_feature_switches\.cc",\n\s+"ac_feature_switches\.h",/);
