@@ -144,3 +144,8 @@ export function chromiumCookie(c: PageCookie): ChromiumCookieWrite {
 }
 
 export const removal = (c: PageCookie): CookieRemoval => ({ name: c.name, domain: c.domain, path: c.path || "/" });
+
+export function keepChromiumSameSite(carried: PageCookie, present: PageCookie | undefined): PageCookie {
+  if (!present || carried.sameSite === "Strict" || carried.sameSite === present.sameSite) return carried;
+  return { ...carried, sameSite: present.sameSite };
+}

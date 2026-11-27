@@ -120,6 +120,42 @@ test("WebKit's newer value goes back to Chromium, and an unchanged carry writes 
   assert.equal(webKit.writes.length + page.writes.length, before);
 });
 
+test("a value WebKit changed goes back to Chromium with Chromium's own SameSite, which WebKit can't hold, and the hourly counts say so", async () => {
+  const { takeSiteDataCounts } = await import("../telemetry/siteDataCounts.ts");
+  const { setSharing, consentToken } = await import("../telemetry/client.ts");
+  const { tabId } = setup();
+  const later = Date.now() / 1000 + 30 * 86400;
+  const crossSite = { ...signedIn, name: "__Secure-3PSID", value: "c1", session: false, expires: later, sameSite: "None" };
+  const unspecified = { ...signedIn, name: "lax_default", value: "c1", session: false, expires: later };
+  const strict = { ...signedIn, name: "strict", value: "c1", session: false, expires: later, sameSite: "Strict" };
+  const page = chromiumPage({ cookies: [crossSite, unspecified, strict], storage: {} });
+  webviews.set(tabId, page);
+  await setSharing(true, "settings");
+  try {
+    await carrySignIn(tabId, `${ORIGIN}/home`, "webkit", null);
+    assert.equal(webKit.cookies.length, 3);
+    const asWebKitHolds = { None: undefined, Strict: "Strict" };
+    webKit.cookies = webKit.cookies.map((c) => {
+      const { sameSite, ...rest } = c;
+      const held = sameSite in asWebKitHolds ? asWebKitHolds[sameSite] : "Lax";
+      return { ...rest, value: "w2", ...(held ? { sameSite: held } : {}) };
+    });
+    takeSiteDataCounts();
+    await carrySite("", "app.test", "chromium", { consent: consentToken() });
+    const byName = Object.fromEntries(page.jar.cookies.map((c) => [c.name, c]));
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(byName).map(([name, c]) => [name, [c.value, c.sameSite]])),
+      { "__Secure-3PSID": ["w2", "None"], lax_default: ["w2", undefined], strict: ["w2", "Strict"] },
+    );
+    const counts = takeSiteDataCounts();
+    assert.equal(counts.site_data_same_site_kept, 2);
+    assert.equal(counts.site_data_chromium_values_replaced, 3);
+    assert.equal(counts.site_data_unshown_chromium_writes, 3);
+  } finally {
+    await setSharing(false, "settings");
+  }
+});
+
 test("data cleared in Chromium is cleared in WebKit too, and never comes back from WebKit", async () => {
   const { tabId } = setup();
   const page = chromiumPage({ cookies: [signedIn], storage: { [ORIGIN]: [["token", "t1"]] } });
