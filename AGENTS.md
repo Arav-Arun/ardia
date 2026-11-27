@@ -16,7 +16,10 @@ For the architecture and the test tooling, read `docs/agent-brief.md`.
   time, interleaved with their control, because sharing the CPU skews them.
 - **Orchestrate.** The main session plans, hands implementation to Opus subagents, and verifies what they
   return (build, run, capture). Give each agent its own files, its own derived-data dir and its own
-  `ARDIA_DATA_DIR`.
+  `ARDIA_DATA_DIR`. When several agents edit one checkout, none of them waits for another's edit to settle: it
+  builds and tests in a scratch `rsync` copy, with others' half-done files swapped for the last good version,
+  then keeps its real edits in the shared tree. Agents left waiting were killed mid-run. Keep total build jobs
+  under about 2× the cores, and send the overflow to an idle Mac.
 - **Watch the agents.** Every ~30 minutes the main session checks any agent it hasn't heard from (last
   transcript activity, a pending tool call, `/tmp/ac-*.holder`, its processes). A stuck agent means a root
   cause to fix (a lock, a wait, a hang), not just a restart. Send new feedback to the agent that owns
@@ -26,7 +29,8 @@ For the architecture and the test tooling, read `docs/agent-brief.md`.
   instruction, so it can be fixed where it is written.
 - **Ask Codex for a second opinion** on risky logic (races, lifetimes, security, migrations, sync) and reviews,
   before and after the change. Ask a Codex subagent, not the CLI: T3's `delegate_task` with
-  `target: {providerInstanceId: "codex", model: "gpt-6.2-sol", options: {reasoningEffort: "high"}}` (the model rejects `serviceTier`),
+  `target: {providerInstanceId: "codex", model: "gpt-6.2-sol", options: {reasoningEffort: "high"}}` (the model rejects `serviceTier`; a `400 Bad Request` is usually a
+  flaky service or an oversized request, so keep the reviewer's command outputs small and retry with a new id),
   `role: "review"`, `mode: "async"`, and a new `clientRequestId` per round. Codex may run any command it needs
   (builds, tests, scripts, hidden instances, captures) in its own target and data dirs, but never writes, edits,
   formats or stages code. Give it the full brief each round (it doesn't share your context), including what you
