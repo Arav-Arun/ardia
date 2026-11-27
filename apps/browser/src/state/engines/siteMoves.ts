@@ -188,14 +188,14 @@ export function followSiteChoice(tabId: string, engine: PageEngine, url: string,
   if (moves && siteOf(url) !== siteOf(previousUrl)) moves.visit++;
   const navigation = navigationNow(tabId);
   if (singleEngine(s)) {
-    const owed = owedAfterCli(tabId, googleSignIn(url));
+    const owed = owedAfterCli(tabId, googleSignIn(url) || !(canSwitchEngine(url) || needsChromium(url)));
     const forced = modeEngineFor(s, t, url);
     const followsMode = owed || forced === "chromium" || chromiumOnly(previousUrl) || (leftForChromium(previousUrl) && !googleSignIn(url));
     if (forced && forced !== engine && followsMode && (canSwitchEngine(url) || needsChromium(url))) startMove(tabId, { from: engine, to: forced, url, navigation, previousUrl, consent });
     return;
   }
-  const owed = owedAfterCli(tabId, false);
   const site = siteOf(url);
+  const owed = owedAfterCli(tabId, !site);
   if (!site || (site === siteOf(previousUrl) && !owed)) return;
   const chosen = chosenEngine(s, url);
   if (!chosen || chosen === engine) return;

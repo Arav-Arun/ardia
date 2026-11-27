@@ -352,6 +352,32 @@ test("a same-site page after the hold ends, while the stopped move is still sett
   S().updateSettings({ websiteEngines: {} });
 });
 
+test("a page that can't move, like about:blank, doesn't use up the site check a CLI hold put off", async () => {
+  const { holdForCli, releaseFromCli } = await import("../tabs/cliHolds.ts");
+  S().hydrate({});
+  S().updateSettings({ websiteEngines: { "https://read.example": "webkit" } });
+  const w = S().createWindow({ url: "https://search.example/" });
+  const tabId = model.activeTabId(S(), w);
+  S().updateTab(tabId, { engine: "chromium", url: "https://search.example/" });
+  webviews.set(tabId, { evaluate: () => Promise.resolve(false), pageCookies: () => Promise.resolve([]) });
+  holdForCli("cli-session", [tabId]);
+  S().updateTab(tabId, { url: "https://read.example/a" });
+  followSiteChoice(tabId, "chromium", "https://read.example/a", "https://search.example/");
+  for (let i = 0; i < 6; i++) await settle();
+  assert.equal(tabEngine(S(), tabId), "chromium", "held, so it stays");
+  releaseFromCli("cli-session");
+  S().updateTab(tabId, { url: "about:blank" });
+  followSiteChoice(tabId, "chromium", "about:blank", "https://read.example/a");
+  for (let i = 0; i < 6; i++) await settle();
+  assert.equal(tabEngine(S(), tabId), "chromium");
+  S().updateTab(tabId, { url: "https://read.example/b" });
+  followSiteChoice(tabId, "chromium", "https://read.example/b", "https://read.example/a");
+  assert.ok(await waitFor(() => tabEngine(S(), tabId) === "webkit"), "the next page on the site gets the rule the hold put off");
+  dropSwap(tabId);
+  webviews.clear();
+  S().updateSettings({ websiteEngines: {} });
+});
+
 test("in WebKit only, a site check a CLI hold put off waits out a Google sign-in instead of moving it to WebKit", async () => {
   const { holdForCli, releaseFromCli } = await import("../tabs/cliHolds.ts");
   S().hydrate({});
