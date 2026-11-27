@@ -33,13 +33,14 @@ pub enum ChromiumStage {
     Scan,
     Space,
     Staging,
+    Backup,
     Swap,
     Progress,
     Report,
     Marker,
 }
 
-const STAGES: [ChromiumStage; 11] = [
+const STAGES: [ChromiumStage; 12] = [
     ChromiumStage::Layout,
     ChromiumStage::Lock,
     ChromiumStage::InUse,
@@ -47,6 +48,7 @@ const STAGES: [ChromiumStage; 11] = [
     ChromiumStage::Scan,
     ChromiumStage::Space,
     ChromiumStage::Staging,
+    ChromiumStage::Backup,
     ChromiumStage::Swap,
     ChromiumStage::Progress,
     ChromiumStage::Report,
@@ -63,6 +65,7 @@ impl ChromiumStage {
             ChromiumStage::Scan => "scan",
             ChromiumStage::Space => "space",
             ChromiumStage::Staging => "staging",
+            ChromiumStage::Backup => "backup",
             ChromiumStage::Swap => "swap",
             ChromiumStage::Progress => "progress",
             ChromiumStage::Report => "report",
@@ -79,13 +82,13 @@ impl ChromiumStage {
 pub struct ChromiumCounts {
     pub profiles: u64,
     pub profiles_replaced: u64,
+    pub webui_profiles_backed_up: u64,
     pub webui_profiles_left: u64,
     pub files: u64,
     pub files_reused: u64,
     pub megabytes: u64,
     pub skipped_links: u64,
     pub skipped_invalid: u64,
-    pub skipped_unreadable: u64,
     pub skipped_clash: u64,
     pub key_carried: u64,
     pub key_shared: u64,
@@ -94,25 +97,26 @@ pub struct ChromiumCounts {
     pub local_state_kept: u64,
     pub local_state_malformed: u64,
     pub staging_cleared: u64,
+    pub swap_rolled_back: u64,
     pub partials_swept: u64,
 }
 
 impl ChromiumCounts {
     pub fn skipped(&self) -> u64 {
-        self.skipped_links + self.skipped_invalid + self.skipped_unreadable + self.skipped_clash + self.key_unreadable
+        self.skipped_links + self.skipped_invalid + self.skipped_clash + self.key_unreadable
     }
 
-    pub fn fields(&self) -> [(&'static str, u64); 18] {
+    pub fn fields(&self) -> [(&'static str, u64); 19] {
         [
             ("profiles", self.profiles),
             ("profiles_replaced", self.profiles_replaced),
+            ("webui_profiles_backed_up", self.webui_profiles_backed_up),
             ("webui_profiles_left", self.webui_profiles_left),
             ("files", self.files),
             ("files_reused", self.files_reused),
             ("megabytes", self.megabytes),
             ("skipped_links", self.skipped_links),
             ("skipped_invalid", self.skipped_invalid),
-            ("skipped_unreadable", self.skipped_unreadable),
             ("skipped_clash", self.skipped_clash),
             ("key_carried", self.key_carried),
             ("key_shared", self.key_shared),
@@ -121,6 +125,7 @@ impl ChromiumCounts {
             ("local_state_kept", self.local_state_kept),
             ("local_state_malformed", self.local_state_malformed),
             ("staging_cleared", self.staging_cleared),
+            ("swap_rolled_back", self.swap_rolled_back),
             ("partials_swept", self.partials_swept),
         ]
     }
@@ -275,13 +280,13 @@ fn encrypted_key(local_state: &Map<String, Value>) -> Option<&str> {
 enum RnwKey {
     Missing,
     Unreadable,
-    Ready { os_crypt: Value, encrypted_key: String },
+    Ready(String),
 }
 
 impl RnwKey {
     fn encrypted_key(&self) -> Option<&str> {
         match self {
-            RnwKey::Ready { encrypted_key, .. } => Some(encrypted_key),
+            RnwKey::Ready(encrypted_key) => Some(encrypted_key),
             _ => None,
         }
     }
@@ -296,31 +301,29 @@ fn rnw_key(source: &Dir, sealer: &dyn Sealer) -> io::Result<RnwKey> {
     let Ok(Value::Object(state)) = serde_json::from_slice::<Value>(&bytes) else {
         return Ok(RnwKey::Unreadable);
     };
-    let Some(key) = encrypted_key(&state).map(str::to_string) else {
-        return Ok(RnwKey::Unreadable);
-    };
-    if !chromium_key_opens(sealer, &key) {
-        return Ok(RnwKey::Unreadable);
+    match encrypted_key(&state) {
+        Some(key) if chromium_key_opens(sealer, key) => Ok(RnwKey::Ready(key.to_string())),
+        _ => Ok(RnwKey::Unreadable),
     }
-    Ok(RnwKey::Ready {
-        os_crypt: state["os_crypt"].clone(),
-        encrypted_key: key,
-    })
 }
 
 enum WebUIState {
     Missing,
     Oversized,
-    Malformed(Vec<u8>),
-    Parsed(Vec<u8>, Map<String, Value>),
+    Malformed,
+    Parsed(Map<String, Value>),
 }
 
 impl WebUIState {
     fn encrypted_key(&self) -> Option<&str> {
         match self {
-            WebUIState::Parsed(_, state) => encrypted_key(state),
+            WebUIState::Parsed(state) => encrypted_key(state),
             _ => None,
         }
+    }
+
+    fn exists(&self) -> bool {
+        !matches!(self, WebUIState::Missing)
     }
 }
 
@@ -331,28 +334,23 @@ fn webui_state(chromium: Option<&Dir>) -> io::Result<WebUIState> {
     match chromium.read(names::LOCAL_STATE, LOCAL_STATE_LIMIT)? {
         Fetched::Missing => Ok(WebUIState::Missing),
         Fetched::Data(bytes) => match serde_json::from_slice::<Value>(&bytes) {
-            Ok(Value::Object(state)) => Ok(WebUIState::Parsed(bytes.to_vec(), state)),
-            _ => Ok(WebUIState::Malformed(bytes.to_vec())),
+            Ok(Value::Object(state)) => Ok(WebUIState::Parsed(state)),
+            _ => Ok(WebUIState::Malformed),
         },
         Fetched::TooLarge => Ok(WebUIState::Oversized),
         _ => Err(fsafe::unsafe_path(names::LOCAL_STATE.into())),
     }
 }
 
-pub fn merged_local_state(existing: Option<&Map<String, Value>>, os_crypt: &Value) -> Vec<u8> {
+pub fn merged_local_state(existing: Option<&Map<String, Value>>, encrypted_key: &str) -> Vec<u8> {
     let mut state = existing.cloned().unwrap_or_default();
-    state.insert("os_crypt".into(), os_crypt.clone());
+    let mut os_crypt = match state.remove("os_crypt") {
+        Some(Value::Object(os_crypt)) => os_crypt,
+        _ => Map::new(),
+    };
+    os_crypt.insert("encrypted_key".into(), json!(encrypted_key));
+    state.insert("os_crypt".into(), Value::Object(os_crypt));
     serde_json::to_vec(&Value::Object(state)).unwrap_or_default()
-}
-
-fn kept_folder(run: &str) -> String {
-    format!("{}-{run}", names::CHROMIUM_FOLDER)
-}
-
-fn kept_folder_name(name: &str) -> bool {
-    name.strip_prefix(names::CHROMIUM_FOLDER)
-        .and_then(|rest| rest.strip_prefix('-'))
-        .is_some_and(|run| valid_run(&json!({ "run": run })))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -373,7 +371,6 @@ impl Mode {
 #[derive(Clone, Debug)]
 struct Progress {
     mode: Mode,
-    kept: String,
     profiles: Vec<(String, String)>,
     staged: bool,
     local_state: bool,
@@ -385,7 +382,6 @@ impl Progress {
         json!({
             "version": REPORT_VERSION,
             "mode": self.mode.as_str(),
-            "kept": self.kept,
             "profiles": self.profiles.iter().map(|(from, to)| json!([from, to])).collect::<Vec<_>>(),
             "staged": self.staged,
             "local_state": self.local_state,
@@ -402,10 +398,6 @@ impl Progress {
             "restored" => Mode::Restored,
             _ => return None,
         };
-        let kept = value.get("kept")?.as_str()?;
-        if !kept_folder_name(kept) {
-            return None;
-        }
         let mut profiles = Vec::new();
         for pair in value.get("profiles")?.as_array()? {
             let pair = pair.as_array()?;
@@ -427,12 +419,15 @@ impl Progress {
             }
             installed.insert(name.to_string());
         }
+        let local_state = value.get("local_state")?.as_bool()?;
+        if !local_state && !installed.is_empty() {
+            return None;
+        }
         Some(Progress {
             mode,
-            kept: kept.to_string(),
             profiles,
             staged: value.get("staged")?.as_bool()?,
-            local_state: value.get("local_state")?.as_bool()?,
+            local_state,
             installed,
         })
     }
@@ -446,6 +441,21 @@ enum Step {
 
 type StepResult<T> = Result<T, (ChromiumStage, io::Error)>;
 
+#[derive(Debug)]
+struct Crash;
+
+impl std::fmt::Display for Crash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("stopped as if the process had been killed")
+    }
+}
+
+impl std::error::Error for Crash {}
+
+fn crashed(error: &io::Error) -> bool {
+    error.get_ref().is_some_and(|inner| inner.is::<Crash>())
+}
+
 struct Job {
     from: Arc<Dir>,
     to: Arc<Dir>,
@@ -453,25 +463,38 @@ struct Job {
     len: u64,
 }
 
+fn modified(meta: &std::fs::Metadata) -> Option<SystemTime> {
+    meta.modified().ok()
+}
+
+const READ_TRIES: u32 = 5;
+
+fn opened_source(dir: &Dir, name: &str) -> io::Result<Opened> {
+    let mut tries = 1;
+    loop {
+        match dir.open_source(name) {
+            Err(error) if tries < READ_TRIES && !fsafe::is_unsafe(&error) => {
+                std::thread::sleep(std::time::Duration::from_millis(100 * u64::from(tries)));
+                tries += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
 enum Copied {
     Bytes(u64),
     Vanished,
     Link,
     Invalid,
-    Unreadable,
-}
-
-fn modified(meta: &std::fs::Metadata) -> Option<SystemTime> {
-    meta.modified().ok()
 }
 
 fn copy_one(job: &Job, buffer: &mut [u8]) -> io::Result<Copied> {
-    let (mut source, meta) = match job.from.open_source(&job.name) {
-        Ok(Opened::File(file, meta)) => (file, meta),
-        Ok(Opened::Missing) => return Ok(Copied::Vanished),
-        Ok(Opened::Link) => return Ok(Copied::Link),
-        Ok(Opened::NotRegular | Opened::HardLinked) => return Ok(Copied::Invalid),
-        Err(_) => return Ok(Copied::Unreadable),
+    let (mut source, meta) = match opened_source(&job.from, &job.name)? {
+        Opened::File(file, meta) => (file, meta),
+        Opened::Missing => return Ok(Copied::Vanished),
+        Opened::Link => return Ok(Copied::Link),
+        Opened::NotRegular | Opened::HardLinked => return Ok(Copied::Invalid),
     };
     let mut target = job.to.replace_file(&job.name)?;
     let mut copied = 0u64;
@@ -480,10 +503,10 @@ fn copy_one(job: &Job, buffer: &mut [u8]) -> io::Result<Copied> {
             Ok(0) => break,
             Ok(read) => read,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(_) => {
+            Err(error) => {
                 drop(target);
                 let _ = job.to.remove_file(&job.name);
-                return Ok(Copied::Unreadable);
+                return Err(error);
             }
         };
         target.write_all(&buffer[..read])?;
@@ -520,19 +543,36 @@ fn out_of_space(error: &io::Error) -> bool {
         || matches!(error.raw_os_error(), Some(code) if cfg!(windows) && (code == 39 || code == 112))
 }
 
+fn has_preferences(dir: &Dir, name: &str) -> io::Result<bool> {
+    let Some(profile) = dir.child(name, false)? else {
+        return Ok(false);
+    };
+    Ok(profile.entry("Preferences")? == Entry::File)
+}
+
+enum Undo {
+    MovedAside(String),
+    LocalState { previous: bool },
+    Installed(String),
+}
+
 struct Run<'a> {
     webui: &'a Root,
     sealer: &'a dyn Sealer,
     faults: &'a Faults,
-    kept_name: String,
+    run: String,
     counts: ChromiumCounts,
     commits: usize,
     kept: Option<Dir>,
+    journal: Vec<Undo>,
 }
 
 impl Run<'_> {
     fn checkpoint(&mut self) -> io::Result<()> {
         self.commits += 1;
+        if self.faults.crash_at_commit == Some(self.commits) {
+            return Err(io::Error::other(Crash));
+        }
         if self.faults.fail_at_commit == Some(self.commits) {
             return Err(io::Error::other("stopped before a rename"));
         }
@@ -542,18 +582,31 @@ impl Run<'_> {
     fn write(&mut self, dir: &Dir, name: &str, bytes: &[u8]) -> io::Result<()> {
         let staged = dir.stage(bytes)?;
         if let Err(error) = self.checkpoint() {
-            dir.abandon(staged);
+            if crashed(&error) {
+                dir.abandon(staged);
+            } else {
+                dir.discard(staged);
+            }
             return Err(error);
         }
         dir.commit(staged, name)
     }
 
+    fn progress_bytes(progress: &Progress) -> io::Result<Vec<u8>> {
+        serde_json::to_vec_pretty(&progress.to_json()).map_err(io::Error::other)
+    }
+
     fn save_progress(&mut self, progress: &Progress) -> StepResult<()> {
-        let bytes = serde_json::to_vec_pretty(&progress.to_json())
-            .map_err(|e| (ChromiumStage::Progress, io::Error::other(e)))?;
+        let bytes = Self::progress_bytes(progress).map_err(|e| (ChromiumStage::Progress, e))?;
         let root = self.webui.dir();
         self.write(root, names::CHROMIUM_PROGRESS_NAME, &bytes)
             .map_err(|e| (ChromiumStage::Progress, e))
+    }
+
+    fn save_progress_now(&self, progress: &Progress) -> io::Result<()> {
+        self.webui
+            .dir()
+            .write(names::CHROMIUM_PROGRESS_NAME, &Self::progress_bytes(progress)?)
     }
 
     fn read_progress(&self) -> Option<Progress> {
@@ -573,10 +626,19 @@ impl Run<'_> {
 
     fn kept(&mut self) -> io::Result<&Dir> {
         if self.kept.is_none() {
-            let folder = self.kept_name.clone();
-            let kept = self
+            let folder = format!("{}-{}", names::CHROMIUM_FOLDER, self.run);
+            let root = self
                 .webui
-                .folder(&[names::KEPT_FOLDER, &folder], true)?
+                .folder(&[names::KEPT_FOLDER], true)?
+                .ok_or_else(|| fsafe::unsafe_path(names::KEPT_FOLDER.into()))?;
+            if root.entry(&folder)? != Entry::Missing {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "a backup folder is never written twice",
+                ));
+            }
+            let kept = root
+                .child(&folder, true)?
                 .ok_or_else(|| fsafe::unsafe_path(folder.into()))?;
             self.kept = Some(kept);
         }
@@ -585,6 +647,11 @@ impl Run<'_> {
 
     fn chromium(&self, create: bool) -> io::Result<Option<Dir>> {
         self.webui.folder(&[names::CHROMIUM_FOLDER], create)
+    }
+
+    fn live(&self) -> io::Result<Dir> {
+        self.chromium(true)?
+            .ok_or_else(|| fsafe::unsafe_path(names::CHROMIUM_FOLDER.into()))
     }
 
     fn staging(&self, create: bool) -> io::Result<Option<Dir>> {
@@ -636,7 +703,9 @@ impl Run<'_> {
         target: Arc<Dir>,
         parents: &mut Vec<String>,
         jobs: &mut Vec<Job>,
+        reuse: bool,
     ) -> io::Result<()> {
+        let mut wanted = BTreeSet::new();
         for name in source.list()? {
             if names::profile_transient(parents, &name) {
                 continue;
@@ -653,36 +722,36 @@ impl Run<'_> {
                     let made = target
                         .child(&name, true)?
                         .ok_or_else(|| fsafe::unsafe_path(name.clone().into()))?;
+                    wanted.insert(name.clone());
                     parents.push(name);
-                    let scanned = self.scan(Arc::new(inner), Arc::new(made), parents, jobs);
+                    let scanned = self.scan(Arc::new(inner), Arc::new(made), parents, jobs, reuse);
                     parents.pop();
                     scanned?;
                 }
                 Entry::File => {
-                    let meta = match source.open_source(&name) {
-                        Ok(Opened::File(_, meta)) => meta,
-                        Ok(Opened::Missing) => continue,
-                        Ok(Opened::Link) => {
+                    let meta = match opened_source(&source, &name)? {
+                        Opened::File(_, meta) => meta,
+                        Opened::Missing => continue,
+                        Opened::Link => {
                             self.counts.skipped_links += 1;
                             continue;
                         }
-                        Ok(Opened::NotRegular | Opened::HardLinked) => {
+                        Opened::NotRegular | Opened::HardLinked => {
                             self.counts.skipped_invalid += 1;
                             continue;
                         }
-                        Err(_) => {
-                            self.counts.skipped_unreadable += 1;
-                            continue;
-                        }
                     };
-                    if let Ok(Opened::File(_, staged)) = target.open_source(&name) {
-                        if staged.len() == meta.len()
-                            && modified(&staged).is_some()
-                            && modified(&staged) == modified(&meta)
-                        {
-                            self.counts.files += 1;
-                            self.counts.files_reused += 1;
-                            continue;
+                    wanted.insert(name.clone());
+                    if reuse {
+                        if let Ok(Opened::File(_, staged)) = target.open_source(&name) {
+                            if staged.len() == meta.len()
+                                && modified(&staged).is_some()
+                                && modified(&staged) == modified(&meta)
+                            {
+                                self.counts.files += 1;
+                                self.counts.files_reused += 1;
+                                continue;
+                            }
                         }
                     }
                     jobs.push(Job {
@@ -694,10 +763,15 @@ impl Run<'_> {
                 }
             }
         }
+        for stale in target.list()? {
+            if !wanted.contains(&stale) {
+                target.remove_tree(&stale)?;
+            }
+        }
         Ok(())
     }
 
-    fn copy(&mut self, jobs: &[Job]) -> io::Result<()> {
+    fn copy(&mut self, jobs: &[Job]) -> io::Result<u64> {
         let workers = if self.faults.fail_at_file.is_some() {
             1
         } else {
@@ -707,7 +781,7 @@ impl Run<'_> {
         let done = AtomicUsize::new(0);
         let stop = AtomicBool::new(false);
         let bytes = AtomicU64::new(0);
-        let tallies: [AtomicU64; 4] = Default::default();
+        let tallies: [AtomicU64; 3] = Default::default();
         let failure: Mutex<Option<io::Error>> = Mutex::new(None);
         let fail_at_file = self.faults.fail_at_file;
         let fail = |error: io::Error| {
@@ -739,9 +813,6 @@ impl Run<'_> {
                             Ok(Copied::Invalid) => {
                                 tallies[2].fetch_add(1, Ordering::SeqCst);
                             }
-                            Ok(Copied::Unreadable) => {
-                                tallies[3].fetch_add(1, Ordering::SeqCst);
-                            }
                             Err(error) => fail(error),
                         }
                         done.fetch_add(1, Ordering::SeqCst);
@@ -749,15 +820,30 @@ impl Run<'_> {
                 });
             }
         });
-        self.counts.files += tallies[0].load(Ordering::SeqCst);
         self.counts.skipped_links += tallies[1].load(Ordering::SeqCst);
         self.counts.skipped_invalid += tallies[2].load(Ordering::SeqCst);
-        self.counts.skipped_unreadable += tallies[3].load(Ordering::SeqCst);
-        self.counts.megabytes += bytes.load(Ordering::SeqCst).div_ceil(MEBIBYTE);
         match failure.into_inner().unwrap_or_else(|e| e.into_inner()) {
             Some(error) => Err(error),
-            None => Ok(()),
+            None => {
+                self.counts.megabytes += bytes.load(Ordering::SeqCst).div_ceil(MEBIBYTE);
+                Ok(tallies[0].load(Ordering::SeqCst))
+            }
         }
+    }
+
+    fn room_for(&self, jobs: &[Job]) -> io::Result<()> {
+        let needed: u64 = jobs.iter().map(|job| job.len).sum();
+        let free = match self.faults.free_space {
+            Some(free) => free,
+            None => fsafe::free_space(&self.webui.resolved)?,
+        };
+        if free < needed.saturating_add(SPACE_MARGIN) {
+            return Err(io::Error::new(
+                io::ErrorKind::StorageFull,
+                "not enough free space to copy the profiles",
+            ));
+        }
+        Ok(())
     }
 
     fn stage_profiles(&mut self, source: &Dir, profiles: &[(String, String)]) -> StepResult<()> {
@@ -767,104 +853,204 @@ impl Run<'_> {
                 .staging(true)
                 .and_then(|staging| staging.ok_or_else(|| fsafe::unsafe_path(names::CHROMIUM_STAGING_FOLDER.into())))
                 .map_err(|e| (ChromiumStage::Scan, e))?;
+            let targets: BTreeSet<&str> = profiles.iter().map(|(_, to)| to.as_str()).collect();
+            for stale in staging.list().map_err(|e| (ChromiumStage::Scan, e))? {
+                if !targets.contains(stale.as_str()) {
+                    staging.remove_tree(&stale).map_err(|e| (ChromiumStage::Scan, e))?;
+                }
+            }
             for (from, to) in profiles {
                 let scanned = (|| -> io::Result<()> {
                     let inner = source
                         .child(from, false)?
                         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "the profile folder went away"))?;
                     let made = staging.child(to, true)?.ok_or_else(|| fsafe::unsafe_path(to.into()))?;
-                    self.scan(Arc::new(inner), Arc::new(made), &mut Vec::new(), &mut jobs)
+                    self.scan(Arc::new(inner), Arc::new(made), &mut Vec::new(), &mut jobs, true)
                 })();
                 scanned.map_err(|e| (ChromiumStage::Scan, e))?;
             }
         }
-        let needed: u64 = jobs.iter().map(|job| job.len).sum();
-        let free = match self.faults.free_space {
-            Some(free) => free,
-            None => fsafe::free_space(&self.webui.resolved).map_err(|e| (ChromiumStage::Space, e))?,
-        };
-        if free < needed.saturating_add(SPACE_MARGIN) {
-            return Err((
-                ChromiumStage::Space,
-                io::Error::new(io::ErrorKind::StorageFull, "not enough free space to copy the profiles"),
-            ));
-        }
+        self.room_for(&jobs).map_err(|e| (ChromiumStage::Space, e))?;
         let copied = self.copy(&jobs);
         drop(jobs);
-        copied.map_err(|e| (ChromiumStage::Staging, e))
+        self.counts.files += copied.map_err(|e| (ChromiumStage::Staging, e))?;
+        Ok(())
     }
 
-    fn carry_key(&mut self, rnw: &RnwKey, webui: &WebUIState) -> StepResult<()> {
-        let RnwKey::Ready {
-            os_crypt,
-            encrypted_key,
-        } = rnw
-        else {
+    fn back_up_live(&mut self, targets: &[String], webui: &WebUIState) -> StepResult<()> {
+        let backup = |e| (ChromiumStage::Backup, e);
+        let Some(chromium) = self.chromium(false).map_err(backup)? else {
             return Ok(());
         };
-        if webui.encrypted_key() == Some(encrypted_key.as_str()) {
+        let mut left = Vec::new();
+        for name in chromium.list().map_err(backup)? {
+            let replaced = targets.iter().any(|to| to.eq_ignore_ascii_case(&name));
+            if !replaced
+                && chromium.entry(&name).map_err(backup)? == Entry::Directory
+                && has_preferences(&chromium, &name).map_err(backup)?
+            {
+                left.push(name);
+            }
+        }
+        if left.is_empty() && !webui.exists() {
             return Ok(());
         }
-        let chromium = self
-            .chromium(true)
-            .and_then(|c| c.ok_or_else(|| fsafe::unsafe_path(names::CHROMIUM_FOLDER.into())))
-            .map_err(|e| (ChromiumStage::LocalState, e))?;
-        let (existing, previous) = match webui {
-            WebUIState::Missing | WebUIState::Oversized => (None, None),
-            WebUIState::Malformed(bytes) => (None, Some(bytes.as_slice())),
-            WebUIState::Parsed(bytes, state) => (Some(state), Some(bytes.as_slice())),
+        let chromium = Arc::new(chromium);
+        let kept = Arc::new(self.kept().map_err(backup)?.try_clone().map_err(backup)?);
+        let mut jobs = Vec::new();
+        if webui.exists() {
+            jobs.push(Job {
+                from: Arc::clone(&chromium),
+                to: Arc::clone(&kept),
+                name: names::LOCAL_STATE.to_string(),
+                len: 0,
+            });
+        }
+        for name in &left {
+            let inner = chromium
+                .child(name, false)
+                .and_then(|inner| inner.ok_or_else(|| fsafe::unsafe_path(name.clone().into())))
+                .map_err(backup)?;
+            let made = kept
+                .child(name, true)
+                .and_then(|made| made.ok_or_else(|| fsafe::unsafe_path(name.clone().into())))
+                .map_err(backup)?;
+            self.scan(Arc::new(inner), Arc::new(made), &mut Vec::new(), &mut jobs, false)
+                .map_err(backup)?;
+        }
+        self.room_for(&jobs).map_err(|e| (ChromiumStage::Space, e))?;
+        let files = self.copy(&jobs);
+        drop(jobs);
+        files.map_err(backup)?;
+        self.counts.webui_profiles_backed_up += left.len() as u64;
+        if webui.exists() {
+            self.counts.local_state_kept = 1;
+        }
+        Ok(())
+    }
+
+    fn move_aside(&mut self, to: &str) -> io::Result<bool> {
+        let chromium = self.live()?;
+        if chromium.entry(to)? == Entry::Missing {
+            return Ok(false);
+        }
+        self.checkpoint()?;
+        let kept = self.kept()?;
+        moved(|| chromium.move_to(to, kept, to))?;
+        self.counts.profiles_replaced += 1;
+        Ok(true)
+    }
+
+    fn install(&mut self, to: &str) -> io::Result<()> {
+        let staging = self.staging(false)?;
+        let staged = match &staging {
+            Some(staging) => staging.entry(to)? == Entry::Directory,
+            None => false,
         };
-        if matches!(webui, WebUIState::Oversized) {
-            let kept = self.kept().map_err(|e| (ChromiumStage::LocalState, e))?;
-            moved(|| chromium.move_to(names::LOCAL_STATE, kept, names::LOCAL_STATE))
-                .map_err(|e| (ChromiumStage::LocalState, e))?;
-            self.counts.local_state_kept = 1;
+        let chromium = self.live()?;
+        let present = chromium.entry(to)?;
+        let Some(staging) = staging.filter(|_| staged) else {
+            return if present == Entry::Directory {
+                Ok(())
+            } else {
+                Err(io::Error::new(io::ErrorKind::NotFound, "a staged profile went missing"))
+            };
+        };
+        if self.move_aside(to)? {
+            self.journal.push(Undo::MovedAside(to.to_string()));
         }
-        if let Some(previous) = previous {
-            let previous = previous.to_vec();
-            let kept = self.kept().map_err(|e| (ChromiumStage::LocalState, e))?;
-            kept.write(names::LOCAL_STATE, &previous)
-                .map_err(|e| (ChromiumStage::LocalState, e))?;
-            self.counts.local_state_kept = 1;
-        }
-        let bytes = merged_local_state(existing, os_crypt);
-        self.write(&chromium, names::LOCAL_STATE, &bytes)
-            .map_err(|e| (ChromiumStage::LocalState, e))?;
+        self.checkpoint()?;
+        moved(|| staging.move_to(to, &chromium, to))?;
+        self.journal.push(Undo::Installed(to.to_string()));
+        Ok(())
+    }
+
+    fn write_key(&mut self, encrypted_key: &str, webui: &WebUIState) -> io::Result<()> {
+        let chromium = self.live()?;
+        let existing = match webui {
+            WebUIState::Parsed(state) => Some(state),
+            _ => None,
+        };
+        let bytes = merged_local_state(existing, encrypted_key);
+        self.write(&chromium, names::LOCAL_STATE, &bytes)?;
+        self.journal.push(Undo::LocalState {
+            previous: webui.exists(),
+        });
         self.counts.key_carried = 1;
         Ok(())
     }
 
-    fn install(&mut self, to: &str) -> StepResult<bool> {
+    fn swap(&mut self, progress: &mut Progress, rnw: &RnwKey, webui: &WebUIState) -> StepResult<()> {
         let swap = |e| (ChromiumStage::Swap, e);
-        let staging = self.staging(false).map_err(swap)?;
-        let staged = match &staging {
-            Some(staging) => staging.entry(to).map_err(swap)? == Entry::Directory,
-            None => false,
-        };
-        let chromium = self
-            .chromium(true)
-            .and_then(|c| c.ok_or_else(|| fsafe::unsafe_path(names::CHROMIUM_FOLDER.into())))
-            .map_err(swap)?;
-        let present = chromium.entry(to).map_err(swap)?;
-        let Some(staging) = staging.filter(|_| staged) else {
-            return if present == Entry::Directory {
-                Ok(false)
-            } else {
-                Err(swap(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "a staged profile went missing",
-                )))
-            };
-        };
-        if present != Entry::Missing {
-            self.checkpoint().map_err(swap)?;
-            let kept = self.kept().map_err(swap)?;
-            moved(|| chromium.move_to(to, kept, to)).map_err(swap)?;
-            self.counts.profiles_replaced += 1;
+        let pending: Vec<String> = progress
+            .profiles
+            .iter()
+            .map(|(_, to)| to.clone())
+            .filter(|to| !progress.installed.contains(to))
+            .collect();
+        if !progress.local_state {
+            let key = rnw
+                .encrypted_key()
+                .filter(|key| progress.mode == Mode::Replace && webui.encrypted_key() != Some(*key));
+            if let Some(key) = key {
+                self.back_up_live(&pending, webui)?;
+                for to in &pending {
+                    if self.move_aside(to).map_err(swap)? {
+                        self.journal.push(Undo::MovedAside(to.clone()));
+                    }
+                }
+                self.write_key(key, webui).map_err(|e| (ChromiumStage::LocalState, e))?;
+            }
+            progress.local_state = true;
+            self.save_progress(progress)?;
         }
-        self.checkpoint().map_err(swap)?;
-        moved(|| staging.move_to(to, &chromium, to)).map_err(swap)?;
-        Ok(true)
+        for to in &pending {
+            self.install(to).map_err(swap)?;
+            progress.installed.insert(to.clone());
+            self.save_progress(progress)?;
+        }
+        Ok(())
+    }
+
+    fn roll_back(&mut self, progress: &mut Progress) -> io::Result<()> {
+        let journal = std::mem::take(&mut self.journal);
+        for undo in journal.into_iter().rev() {
+            let chromium = self.live()?;
+            match undo {
+                Undo::Installed(name) => {
+                    let staging = self
+                        .staging(true)?
+                        .ok_or_else(|| fsafe::unsafe_path(names::CHROMIUM_STAGING_FOLDER.into()))?;
+                    moved(|| chromium.move_to(&name, &staging, &name))?;
+                    progress.installed.remove(&name);
+                    self.save_progress_now(progress)?;
+                }
+                Undo::LocalState { previous } => {
+                    if previous {
+                        let kept = self.kept()?;
+                        let mut saved = match kept.open_source(names::LOCAL_STATE)? {
+                            Opened::File(file, _) => file,
+                            _ => return Err(io::Error::other("the kept Local State is gone")),
+                        };
+                        let staged = chromium.stage_from(&mut saved)?;
+                        chromium.commit(staged, names::LOCAL_STATE)?;
+                    } else {
+                        chromium.remove_file(names::LOCAL_STATE)?;
+                    }
+                    progress.installed.clear();
+                    progress.local_state = false;
+                    self.save_progress_now(progress)?;
+                }
+                Undo::MovedAside(name) => {
+                    if chromium.entry(&name)? == Entry::Missing {
+                        let kept = self.kept()?;
+                        moved(|| kept.move_to(&name, &chromium, &name))?;
+                    }
+                }
+            }
+        }
+        self.counts.swap_rolled_back = 1;
+        Ok(())
     }
 
     fn steps(&mut self, rnw: Option<&Root>) -> StepResult<Step> {
@@ -883,25 +1069,36 @@ impl Run<'_> {
                 return Ok(Step::Busy);
             }
         }
+        let stored = self.read_progress().filter(|progress| progress.staged);
+        let planned = match &stored {
+            Some(progress) => progress.profiles.clone(),
+            None => self.plan(source).map_err(|e| (ChromiumStage::Scan, e))?,
+        };
+        if planned.is_empty() {
+            return Ok(Step::Nothing);
+        }
+        let _rnw_lock = source.hold_lockfile(names::CHROMIUM_LOCK_FILE).map_err(in_use)?;
+        let _webui_lock = self
+            .live()
+            .and_then(|live| live.hold_lockfile(names::CHROMIUM_LOCK_FILE))
+            .map_err(in_use)?;
+        let chromium = self.chromium(false).map_err(|e| (ChromiumStage::Layout, e))?;
+
         let local = |e| (ChromiumStage::LocalState, e);
         let rnw_key = rnw_key(source, self.sealer).map_err(local)?;
         let webui = webui_state(chromium.as_ref()).map_err(local)?;
         match rnw_key {
             RnwKey::Missing => self.counts.key_missing = 1,
             RnwKey::Unreadable => self.counts.key_unreadable = 1,
-            RnwKey::Ready { .. } => {}
+            RnwKey::Ready(_) => {}
         }
-        if matches!(webui, WebUIState::Malformed(_) | WebUIState::Oversized) {
+        if matches!(webui, WebUIState::Malformed | WebUIState::Oversized) {
             self.counts.local_state_malformed = 1;
         }
 
-        let mut progress = match self.read_progress().filter(|progress| progress.staged) {
+        let mut progress = match stored {
             Some(progress) => progress,
             None => {
-                let planned = self.plan(source).map_err(|e| (ChromiumStage::Scan, e))?;
-                if planned.is_empty() {
-                    return Ok(Step::Nothing);
-                }
                 let shared = rnw_key.encrypted_key().is_some() && rnw_key.encrypted_key() == webui.encrypted_key();
                 let mode = if shared { Mode::Restored } else { Mode::Replace };
                 let mut profiles = Vec::new();
@@ -917,7 +1114,6 @@ impl Run<'_> {
                 }
                 let progress = Progress {
                     mode,
-                    kept: self.kept_name.clone(),
                     profiles,
                     staged: false,
                     local_state: false,
@@ -933,28 +1129,16 @@ impl Run<'_> {
             }
         };
         self.counts.key_shared = u64::from(progress.mode == Mode::Restored);
-        if self.kept_name != progress.kept {
-            self.kept_name = progress.kept.clone();
-            self.kept = None;
-        }
 
-        if !progress.local_state {
-            if progress.mode == Mode::Replace {
-                self.carry_key(&rnw_key, &webui)?;
+        let swapped_here = !progress.local_state;
+        if let Err((stage, error)) = self.swap(&mut progress, &rnw_key, &webui) {
+            if swapped_here && !crashed(&error) {
+                let _ = self.roll_back(&mut progress);
             }
-            progress.local_state = true;
-            self.save_progress(&progress)?;
-        }
-        let targets: Vec<String> = progress.profiles.iter().map(|(_, to)| to.clone()).collect();
-        for to in &targets {
-            if progress.installed.contains(to) {
-                continue;
-            }
-            self.install(to)?;
-            progress.installed.insert(to.clone());
-            self.save_progress(&progress)?;
+            return Err((stage, error));
         }
         self.counts.profiles = progress.installed.len() as u64;
+        let targets: Vec<String> = progress.profiles.iter().map(|(_, to)| to.clone()).collect();
         if let Some(chromium) = self.chromium(false).map_err(|e| (ChromiumStage::Swap, e))? {
             for name in chromium.list().map_err(|e| (ChromiumStage::Swap, e))? {
                 if names::webui_profile_name(&name)
@@ -1076,14 +1260,22 @@ pub fn migrate_chromium(layout: &Layout, sealer: &dyn Sealer, faults: &Faults) -
         webui: &webui,
         sealer,
         faults,
-        kept_name: kept_folder(&report.run),
+        run: report.run.clone(),
         counts: ChromiumCounts::default(),
         commits: 0,
         kept: None,
+        journal: Vec::new(),
     };
     let stepped = run.steps(rnw.as_ref());
+    if let Err((_, error)) = &stepped {
+        if crashed(error) {
+            report.outcome = Outcome::Failed;
+            report.counts = run.counts.clone();
+            return finish(report);
+        }
+    }
     if let Err((ChromiumStage::Space | ChromiumStage::Staging, error)) = &stepped {
-        if out_of_space(error) {
+        if out_of_space(error) && run.counts.swap_rolled_back == 0 && run.counts.key_carried == 0 {
             run.clear_staging();
         }
     }

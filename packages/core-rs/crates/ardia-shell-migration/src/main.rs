@@ -27,6 +27,7 @@ fn test_faults() -> ardia_shell_migration::Faults {
         fail_at_commit: number("ARDIA_TEST_MIGRATION_STOP_AT_COMMIT"),
         fail_at_file: number("ARDIA_TEST_MIGRATION_STOP_AT_FILE"),
         free_space: number("ARDIA_TEST_MIGRATION_FREE_SPACE").map(|free| free as u64),
+        crash_at_commit: None,
     }
 }
 

@@ -352,3 +352,27 @@ fn a_profile_folder_moves_on_ntfs_while_its_siblings_stay() {
     assert_eq!(fs::read(kept.join("Ardia default/Deep/Er/file")).unwrap(), b"deep");
     assert!(!scratch.0.join("webui").join(names::CHROMIUM_STAGING_FOLDER).exists());
 }
+
+#[test]
+fn a_held_lockfile_keeps_chromium_from_starting_and_goes_away_with_its_holder() {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 1;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    let scratch = Scratch::new("chromium-hold");
+    let root = ardia_shell_migration::fsafe::Root::new(&scratch.0).unwrap();
+    let held = root.dir().hold_lockfile("lockfile").unwrap();
+    let chromium = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(scratch.0.join("lockfile"));
+    assert_eq!(
+        chromium.err().and_then(|e| e.raw_os_error()),
+        Some(ERROR_SHARING_VIOLATION),
+        "Chromium's own lockfile open fails while the migrator holds it"
+    );
+    assert!(root.dir().held_open("lockfile").unwrap());
+    drop(held);
+    assert!(!scratch.0.join("lockfile").exists());
+}

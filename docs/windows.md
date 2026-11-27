@@ -1048,51 +1048,75 @@ until the step's marker exists. It never changes `User Data`, which stays as a b
   `Sessions`, `Sessions_Encrypted`, `Crashpad`, `Service Worker\CacheStorage`, and every `LOCK`, `lockfile` and
   `Singleton*`. Links, junctions and files with more than one link are skipped, as above.
 - **The key.** Chromium on Windows seals each cookie and password (`v10`) with the AES key in `Local State`'s
-  `os_crypt.encrypted_key` (`DPAPI` + a `CryptProtectData` blob with no entropy). The step carries RNW's whole `os_crypt`
-  object (also `app_bound_encrypted_key` and `audit_enabled` when present) into the WebUI `Local State` and keeps every
-  other field there. It carries a key only once it unseals to 32 bytes for this user. A missing key, or one that won't
+  `os_crypt.encrypted_key` (`DPAPI` + a `CryptProtectData` blob with no entropy). The step carries only that field, into
+  the WebUI `Local State`'s existing `os_crypt`, and keeps every other field there. It carries a key only once it unseals
+  to 32 bytes for this user. `app_bound_encrypted_key` (`v20`) is left alone: Chromium uses app-bound encryption only on
+  a system install (`GetAppBoundEncryptionSupportLevel` needs `install_static::IsSystemInstall()`), and both shells
+  install per user (`PrivilegesRequired=lowest`), so neither ever wrote `v20` data. A missing key, or one that won't
   unseal, still copies the profiles (history, bookmarks and extensions don't need it) but writes no key (`key_missing`,
   `key_unreadable`).
 - **Nobody may be running.** The step waits (`busy`, `failed_stage: in_use`, exit 3) while either `Chromium\lockfile` or
-  `User Data\lockfile` is held: Chromium holds it open with `FILE_SHARE_READ` only while it runs, so the step tries to open
-  it for writing and a sharing violation means a running shell. It shares `rnw-migration.lock` with the documents step.
-- **What it decides.** The rule is "the React Native profile wins, and nothing is ever deleted":
-  - *Fresh* (0.2.47 to 0.2.50; no WebUI `Chromium` yet): every profile is copied and `Local State` is written with RNW's key.
-  - *Already on 0.2.49* (its `Local State` holds a different key): each WebUI profile that has an RNW counterpart moves
-    whole to `Ardia WebUI\rnw-migration-kept\Chromium-<run>\<folder>`, its `Local State` is copied there too, and the
-    RNW profile takes its place with RNW's key. Profiles made only on 0.2.49 stay, but their cookies and passwords were
-    sealed with 0.2.49's key and stop decrypting (that key's `Local State` is kept beside them). 0.2.49 had been out for
-    days, while the RNW profile holds the user's whole history, so the old data wins and the new copy is kept, never lost.
+  `User Data\lockfile` is held: Chromium holds it open with `GENERIC_WRITE, FILE_SHARE_READ` while it runs
+  (`process_singleton_win.cc`), so the step opens it for writing and a sharing violation means a running shell. Once it
+  has a plan, the step holds both lockfiles itself, the way Chromium does (open for writing, sharing only reads,
+  `FILE_DELETE_ON_CLOSE`), until it finishes, so
+  neither shell can start on either tree mid-copy or mid-swap. Chromium deletes the file itself on exit, so nothing is
+  left in `User Data`. It shares `rnw-migration.lock` with the documents step.
+- **What it decides.** The rule is "the React Native profile wins, and nothing is ever deleted or overwritten":
+  - *Fresh* (0.2.47 to 0.2.50; no WebUI `Chromium` yet): every profile is copied and `Local State` gets RNW's key.
+  - *Already on 0.2.49* (its `Local State` holds a different key): before the key changes, the step copies the WebUI
+    `Local State` and every live WebUI profile it won't replace (any folder with a `Preferences`, such as one made only
+    on 0.2.49) into `Ardia WebUI\rnw-migration-kept\Chromium-<run>`, then moves each WebUI profile that has an RNW
+    counterpart there whole, and only then writes RNW's key and moves the RNW profiles in. Chromium deletes cookie rows
+    it can't decrypt (`sqlite_persistent_cookie_store.cc`), so profiles made only on 0.2.49 lose their cookies and
+    passwords in the live tree, but their copy sits beside the `Local State` whose key opens it. 0.2.49 had been out for
+    days, while the RNW profile holds the user's whole history, so the old data wins and the new is kept, never lost.
   - *Restored by hand* (the WebUI `Local State` already holds RNW's key, as in #4619's workaround): nothing in place is
     replaced and the key isn't touched; only RNW profiles missing from `Chromium` are copied (`key_shared`).
   - *Nothing there* (no `User Data` at all): it answers `nothing_to_migrate` and writes nothing, not even `Ardia WebUI`,
     so a clean machine looks the same after setup. A `User Data` with no profile folder writes the marker.
-- **Crash-safe and restartable.** It checks free space first (the bytes to copy plus 256 MiB; `failed_stage: space`), then
-  copies every profile into `Ardia WebUI\rnw-chromium-staging\<folder>` with four workers, each file written in place,
-  given its source's write time and flushed. A later run reuses a staged file whose size and write time match its source,
-  so an interrupted copy resumes and a torn file is copied again. Nothing reaches `Chromium` until the copy is whole.
-  `rnw-chromium-migration-progress.json` then records the plan (mode, profiles, backup folder) and each step of the swap:
-  the backup and new `Local State` first, then for each profile the move of the WebUI copy aside and of the staged copy
-  in, both directory renames on the same volume through held handles (`NtSetInformationFile(FileRenameInformation)` with
-  the destination folder's handle, `renameat`). A run that stops at any of those points (`tests/chromium.rs` stops before
-  every one in turn) finishes on the next run with the same result and one backup folder. A copy that runs out of disk
-  removes its staging folder. `rnw-chromium-migration.json` is the marker, written after its attempt report.
+- **Crash-safe and restartable.**
+  - It checks free space first (the bytes to copy plus 256 MiB; `failed_stage: space`), then copies every profile into
+    `Ardia WebUI\rnw-chromium-staging\<folder>` with four workers, each file written in place, given its source's write
+    time and flushed. A later run reuses a staged file whose size and write time match its source and removes anything
+    in staging the source no longer has (an uninstalled extension, a stale `-wal`), so an interrupted copy resumes and a
+    torn file is copied again. A file it can't read (after five tries a few hundred milliseconds apart) fails the try
+    instead of being left out, so a profile is never published with a database missing. Nothing reaches `Chromium`
+    until the copy is whole.
+  - Backups are write-once: every try writes into its own new `Chromium-<run>` folder and refuses one that exists, and
+    `Local State` is copied there, never moved, so no later try or launch can replace the only copy of it.
+  - `rnw-chromium-migration-progress.json` records the plan (mode, profiles), whether the key is in place and each
+    profile installed. The swaps are directory renames on the same volume through held handles
+    (`NtSetInformationFile(FileRenameInformation)` with the destination folder's handle, `renameat`), retried briefly
+    while antivirus holds a folder.
+  - A try that fails while it swaps undoes its own steps in reverse (staged profiles back to staging, the kept
+    `Local State` back, the moved profiles back), so setup starts Ardia on 0.2.49's tree exactly as it was
+    (`swap_rolled_back`). A process that is killed can't undo anything, so the order alone keeps the data safe: the key
+    changes only after every live WebUI profile is backed up or moved aside, and a later try only moves forward, moving
+    aside anything Chromium made in the gap. `tests/chromium.rs` stops a try before every commit, both as a failure and
+    as a kill, starts an emulated Chromium that deletes cookies its key can't open, runs again (and stops again), and
+    checks that every cookie survives live or beside its key and that no backup file ever changes.
+  - A copy that runs out of disk removes its staging folder. `rnw-chromium-migration.json` is the marker, written after
+    its attempt report.
 - **Report and telemetry.** `rnw-chromium-migration-attempt.json` carries `step: "chromium"`, the outcome, stage
-  (`layout`, `lock`, `in_use`, `local_state`, `scan`, `space`, `staging`, `swap`, `progress`, `report`, `marker`), attempt,
-  prior stage, duration and counts (`profiles`, `profiles_replaced`, `webui_profiles_left`, `files`, `files_reused`,
-  `megabytes`, `skipped_links`, `skipped_invalid`, `skipped_unreadable`, `skipped_clash`, `key_carried`, `key_shared`,
-  `key_missing`, `key_unreadable`, `local_state_kept`, `local_state_malformed`, `staging_cleared`, `partials_swept`).
-  It also writes a report when it waits, so `in_use` shows up. The WebUI host sends it as `shell_migration` with
-  `step: "chromium"` (the documents step now says `step: "documents"`), under the same consent rule and its own
-  `rnw-chromium-migration-reported.json`. Watch `shell_migration{step=chromium}`: `failed` and `busy` near zero,
-  `key_carried` on nearly every `migrated`, and `key_unreadable` and `space` rare.
-- **Checks.** `tests/chromium.rs` covers the fresh upgrade, a second run, the 0.2.49 recovery, the hand restore, a stop
-  before every rename, a copy stopped part way and a torn staged file, every kind of bad or missing key, a malformed
-  WebUI `Local State`, a running shell, too little disk, no RNW profile, `ARDIA_DATA_DIR` layouts, overlapping folders,
-  links and hard links, and that `User Data` is unchanged byte for byte and in write time. `tests/hostile.rs` runs the
-  shared corpus as profile and file names, and `tests/windows.rs` carries a key sealed by real DPAPI, holds `lockfile` the way
-  Chromium does, and moves profile trees on NTFS. On a Windows 11 machine the release binary moved 10,005 files (212 MB)
-  in 6.4 s.
+  (`layout`, `lock`, `in_use`, `local_state`, `scan`, `space`, `staging`, `backup`, `swap`, `progress`, `report`,
+  `marker`), attempt, prior stage, duration and counts (`profiles`, `profiles_replaced`, `webui_profiles_backed_up`,
+  `webui_profiles_left`, `files`, `files_reused`, `megabytes`, `skipped_links`, `skipped_invalid`, `skipped_clash`,
+  `key_carried`, `key_shared`, `key_missing`, `key_unreadable`, `local_state_kept`, `local_state_malformed`,
+  `staging_cleared`, `swap_rolled_back`, `partials_swept`). It also writes a report when it waits, so `in_use` shows up.
+  The WebUI host sends it as `shell_migration` with `step: "chromium"` (the documents step now says
+  `step: "documents"`), under the same consent rule and its own `rnw-chromium-migration-reported.json`. Watch
+  `shell_migration{step=chromium}`: `failed` and `busy` near zero, `key_carried` on nearly every `migrated`, and
+  `key_unreadable`, `space` and `swap_rolled_back` rare.
+- **Checks.** `tests/chromium.rs` covers the fresh upgrade, a second run, the 0.2.49 recovery, the hand restore, every
+  stop-and-relaunch interleaving above, rollback, an oversized `Local State` through a crash, a copy stopped part way, a
+  torn or stale staged file, an unreadable file, both lockfiles held for the whole run, every kind of bad or missing key,
+  a malformed WebUI `Local State`, a running shell, too little disk, no RNW profile, `ARDIA_DATA_DIR` layouts,
+  overlapping folders, links and hard links, and that `User Data` is unchanged byte for byte and in write time.
+  `tests/hostile.rs` runs the shared corpus as profile and file names, and `tests/windows.rs` carries a key sealed by
+  real DPAPI, holds `lockfile` the way Chromium does, and moves profile trees on NTFS. On a Windows 11 machine the
+  release binary moved 10,005 files (212 MB) in 6.4 s, and the engine's own headless Chromium read a migrated cookie
+  back, where a profile copied without its key read none.
 
 - **Rollback.** The RNW folders and Credential Manager items are only read (the vault interface has no write), so the
   RNW build opens exactly what it left. The tests compare every file's bytes and write time and the vault before and

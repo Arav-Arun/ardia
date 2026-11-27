@@ -74,6 +74,7 @@ pub struct Faults {
     pub fail_at_commit: Option<usize>,
     pub fail_at_file: Option<usize>,
     pub free_space: Option<u64>,
+    pub crash_at_commit: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

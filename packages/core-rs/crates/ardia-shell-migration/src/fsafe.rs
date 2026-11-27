@@ -199,6 +199,7 @@ enum Opening {
     CreateNew,
     Lock,
     Replace,
+    Hold,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -268,7 +269,7 @@ mod sys {
             | match opening {
                 Opening::Read => libc::O_RDONLY | libc::O_NONBLOCK,
                 Opening::CreateNew => libc::O_RDWR | libc::O_CREAT | libc::O_EXCL,
-                Opening::Lock | Opening::Replace => libc::O_RDWR | libc::O_CREAT,
+                Opening::Lock | Opening::Replace | Opening::Hold => libc::O_RDWR | libc::O_CREAT,
             };
         let fd = unsafe { libc::openat(dir.as_raw_fd(), c.as_ptr(), flags, 0o600 as libc::c_uint) };
         if fd < 0 {
@@ -401,7 +402,7 @@ mod sys {
     use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
     use windows_sys::Wdk::Storage::FileSystem::{
         FileDispositionInformationEx, FileRenameInformation, FileRenameInformationEx, NtCreateFile,
-        NtSetInformationFile, FILE_CREATE, FILE_DIRECTORY_FILE, FILE_DISPOSITION_DELETE,
+        NtSetInformationFile, FILE_CREATE, FILE_DELETE_ON_CLOSE, FILE_DIRECTORY_FILE, FILE_DISPOSITION_DELETE,
         FILE_DISPOSITION_INFORMATION_EX, FILE_DISPOSITION_POSIX_SEMANTICS, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
         FILE_OPEN_IF, FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION, FILE_RENAME_POSIX_SEMANTICS,
         FILE_RENAME_REPLACE_IF_EXISTS, FILE_SYNCHRONOUS_IO_NONALERT,
@@ -438,6 +439,24 @@ mod sys {
     }
 
     fn nt_open(dir: &File, name: &str, access: u32, disposition: u32, options: u32) -> io::Result<File> {
+        nt_open_shared(
+            dir,
+            name,
+            access,
+            disposition,
+            options,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        )
+    }
+
+    fn nt_open_shared(
+        dir: &File,
+        name: &str,
+        access: u32,
+        disposition: u32,
+        options: u32,
+        share: u32,
+    ) -> io::Result<File> {
         let wide: Vec<u16> = name.encode_utf16().collect();
         let bytes = u16::try_from(wide.len() * 2).map_err(|_| unsafe_path(name.into()))?;
         let object_name = UNICODE_STRING {
@@ -463,7 +482,7 @@ mod sys {
                 &mut status_block,
                 null(),
                 FILE_ATTRIBUTE_NORMAL,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                share,
                 disposition,
                 options | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
                 null(),
@@ -517,12 +536,21 @@ mod sys {
     }
 
     pub fn child_file(dir: &File, name: &str, opening: Opening) -> io::Result<File> {
-        let (access, disposition) = match opening {
-            Opening::Read => (FILE_GENERIC_READ, FILE_OPEN),
-            Opening::CreateNew => (FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE, FILE_CREATE),
-            Opening::Lock | Opening::Replace => (FILE_GENERIC_READ | FILE_GENERIC_WRITE, FILE_OPEN_IF),
+        let share = match opening {
+            Opening::Hold => FILE_SHARE_READ,
+            _ => FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         };
-        nt_open(dir, name, access, disposition, FILE_NON_DIRECTORY_FILE)
+        let (access, disposition, options) = match opening {
+            Opening::Read => (FILE_GENERIC_READ, FILE_OPEN, 0),
+            Opening::CreateNew => (FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE, FILE_CREATE, 0),
+            Opening::Lock | Opening::Replace => (FILE_GENERIC_READ | FILE_GENERIC_WRITE, FILE_OPEN_IF, 0),
+            Opening::Hold => (
+                FILE_GENERIC_WRITE | FILE_READ_ATTRIBUTES | DELETE,
+                FILE_OPEN_IF,
+                FILE_DELETE_ON_CLOSE,
+            ),
+        };
+        nt_open_shared(dir, name, access, disposition, FILE_NON_DIRECTORY_FILE | options, share)
     }
 
     pub fn child_entry(dir: &File, name: &str) -> io::Result<Entry> {
@@ -700,6 +728,21 @@ pub struct Staged {
     temp: String,
 }
 
+pub struct HeldLock {
+    _file: File,
+    #[cfg(unix)]
+    dir: File,
+    #[cfg(unix)]
+    name: String,
+}
+
+#[cfg(unix)]
+impl Drop for HeldLock {
+    fn drop(&mut self) {
+        let _ = sys::remove(&self.dir, &self.name);
+    }
+}
+
 pub struct Dir {
     file: File,
     path: PathBuf,
@@ -721,6 +764,13 @@ pub fn partial_name() -> String {
 impl Dir {
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn try_clone(&self) -> io::Result<Dir> {
+        Ok(Dir {
+            file: self.file.try_clone()?,
+            path: self.path.clone(),
+        })
     }
 
     pub fn entry(&self, name: &str) -> io::Result<Entry> {
@@ -867,6 +917,36 @@ impl Dir {
 
     pub fn held_open(&self, name: &str) -> io::Result<bool> {
         sys::held_open(&self.file, child_name(name)?)
+    }
+
+    pub fn hold_lockfile(&self, name: &str) -> io::Result<HeldLock> {
+        let name = child_name(name)?;
+        if !matches!(self.entry(name)?, Entry::Missing | Entry::File) {
+            return Err(unsafe_path(self.path.join(name)));
+        }
+        let file = sys::child_file(&self.file, name, Opening::Hold)?;
+        let meta = file.metadata()?;
+        if is_link(&meta) || !meta.is_file() {
+            return Err(unsafe_path(self.path.join(name)));
+        }
+        Ok(HeldLock {
+            _file: file,
+            #[cfg(unix)]
+            dir: self.file.try_clone()?,
+            #[cfg(unix)]
+            name: name.to_string(),
+        })
+    }
+
+    pub fn stage_from(&self, source: &mut impl Read) -> io::Result<Staged> {
+        let temp = partial_name();
+        let mut file = sys::child_file(&self.file, &temp, Opening::CreateNew)?;
+        if let Err(error) = io::copy(source, &mut file).and_then(|_| file.sync_all()) {
+            drop(file);
+            let _ = sys::remove(&self.file, &temp);
+            return Err(error);
+        }
+        Ok(Staged { file, temp })
     }
 
     pub fn stage(&self, bytes: &[u8]) -> io::Result<Staged> {
