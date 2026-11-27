@@ -263,7 +263,9 @@ test("a page full-screen entry is counted once when it happens, never when a sna
   assert.ok(restored.receiver.install(snapshot(1, [event("fullscreen", { fullscreen: true })])));
   assert.equal(pageOf(restored.tab).fullscreen, true, "the claimed page shows full screen at once");
   restored.send(message(2, "fullscreen", { fullscreen: true }));
-  restored.send(control(3, "1", { action: "snapshot", reason: "snapshot", events: [event("fullscreen", { fullscreen: true })] }));
+  assert.ok(restored.send(control(3, "1", { action: "snapshot", reason: undefined, events: [event("fullscreen", { fullscreen: true })] })), "a plain snapshot is accepted");
+  assert.ok(restored.send(control(4, "1", { action: "snapshot", reason: "restore", events: [event("fullscreen", { fullscreen: true })] })), "a restore snapshot is accepted");
+  assert.equal(pageOf(restored.tab).fullscreen, true);
   assert.equal(placement.takeWindowPlacementCounts().page_full_screens_entered, 0, "a page that was already full screen when its view mounted or was restored is not a new entry");
 
   const rebound = setup();
