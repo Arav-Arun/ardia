@@ -111,7 +111,7 @@ test("a late deferred activation that names the tab just left is logged with its
   await switchAndAck(b);
   assert.equal(shownIn(w), b);
   chrome.select(a);
-  chrome.emit(null, { trigger: "activate", deferred: true, deferredCmd: 12 });
+  chrome.emit(null, { trigger: "activate", deferred: true, deferredInferred: true, deferredCmd: 12 });
   chrome.deliver();
   const counts = takeStripBounceCounts();
   assert.equal(counts.strip_bounces_back, 1);
@@ -121,7 +121,7 @@ test("a late deferred activation that names the tab just left is logged with its
   assert.equal(counts.strip_bounces_back_unknown, 0);
   const logs = await bounceLogs();
   const log = JSON.stringify(logs.at(-1));
-  for (const field of [/"trigger"[^}]*"activate"/, /"deferred"[^}]*true/, /"deferredFor"[^}]*"older"/, /"inflight"[^}]*"none"/, /"siblings"[^}]*false/, /"pendingActive"[^}]*false/])
+  for (const field of [/"trigger"[^}]*"activate"/, /"deferred"[^}]*true/, /"deferredInferred"[^}]*true/, /"deferredFor"[^}]*"older"/, /"inflight"[^}]*"none"/, /"siblings"[^}]*false/, /"pendingActive"[^}]*false/])
     assert.match(log, field);
   assert.match(log, /"sinceAckMs","value":\{"intValue":"\d+"/);
   assert.doesNotMatch(log, new RegExp(`${a}|${b}|a\\.com|b\\.com`), "no tab keys or addresses");
@@ -152,5 +152,32 @@ test("a report from an older native build without a trigger still counts, as unk
   assert.equal(counts.strip_bounces_back, 1);
   assert.equal(counts.strip_bounces_back_unknown, 1);
   assert.match(JSON.stringify((await bounceLogs()).at(-1)), /"trigger"[^}]*"unknown"/);
+  await settle();
+});
+
+test("an answer Chromium gave while sharing was off never reaches a warning sent after sharing is turned on", async () => {
+  assert.equal(shownIn(w), a);
+  await client.setSharing(false, "settings");
+  S().activate(b);
+  await tick();
+  const asked = chrome.commands.shift();
+  assert.equal(asked.command.key, b);
+  chrome.emit(asked.id, { deferred: true });
+  chrome.deliver();
+  await tick();
+  assert.equal(chrome.commands.length, 0, "the postponed switch is not sent again");
+  await client.setSharing(true, "settings");
+  takeStripBounceCounts();
+  S().activate(a);
+  await tick();
+  assert.equal(chrome.commands.length, 0, "Chromium already shows the tab, so nothing is sent");
+  chrome.select(b);
+  chrome.emit(null, { trigger: "activate", deferred: true, deferredCmd: asked.id });
+  chrome.deliver();
+  assert.equal(takeStripBounceCounts().strip_bounces_back, 1);
+  const log = JSON.stringify((await bounceLogs()).at(-1));
+  assert.match(log, /"sinceAckMs","value":\{"intValue":"-1"/);
+  assert.doesNotMatch(log, /"deferredFor"[^}]*"lastAck"/);
+  assert.match(log, /"deferredFor"[^}]*"older"/);
   await settle();
 });

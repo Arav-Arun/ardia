@@ -7,6 +7,16 @@
 #import "ArdiaEngineBridge.h"
 #import "ArdiaServices.h"
 
+@interface ArdiaStripDeferral : NSObject
+@property(nonatomic) NSInteger command;
+@property(nonatomic) CFTimeInterval at;
+@property(nonatomic) BOOL inferred;
+@property(nonatomic, weak) ArdiaWindowController *window;
+@end
+
+@implementation ArdiaStripDeferral
+@end
+
 namespace {
 
 int64_t gRev = 0;
@@ -62,16 +72,24 @@ NSMapTable<ArdiaCoreProfile *, ArdiaCoreTab *> *ActiveTabs(ArdiaWindowController
   return active;
 }
 
-NSMapTable<ArdiaCoreTab *, NSDictionary *> *DeferredActivations() {
+NSMapTable<ArdiaCoreTab *, ArdiaStripDeferral *> *DeferredActivations() {
   static NSMapTable *deferred = [NSMapTable weakToStrongObjectsMapTable];
   return deferred;
 }
 
 constexpr CFTimeInterval kDeferredActivationWindow = 1.0;
 
-bool Landed(ArdiaCoreTab *tab, ArdiaWindowController *controller, ArdiaCoreProfile *profile) {
-  ArdiaCoreTab *active = [ActiveTabs(controller) objectForKey:profile];
-  return active ? active == tab : [controller.coreWindow tabsForProfile:profile].firstObject == tab;
+void NoteActivationAsked(ArdiaCoreTab *tab, ArdiaCoreTab *before, ArdiaCoreTab *after, NSInteger commandId,
+                         ArdiaWindowController *controller, NSMutableDictionary *tx) {
+  if (before == tab || after == tab) return (void)[DeferredActivations() removeObjectForKey:tab];
+  ArdiaStripDeferral *deferral = [ArdiaStripDeferral new];
+  deferral.command = commandId;
+  deferral.at = CACurrentMediaTime();
+  deferral.inferred = !before && !after;
+  deferral.window = controller;
+  [DeferredActivations() setObject:deferral forKey:tab];
+  tx[@"deferred"] = @YES;
+  if (deferral.inferred) tx[@"deferredInferred"] = @YES;
 }
 
 NSString *AppWindowOf(ArdiaWindowController *controller) {
@@ -159,7 +177,7 @@ NSArray<ArdiaCoreProfile *> *ProfilesWithTabs(ArdiaWindowController *controller)
                               [ArdiaTabStrip changedInWindow:c
                                                      profile:p
                                                        cause:c.hostChanges > 0 ? @(-1) : NSNull.null
-                                                        note:@{@"trigger" : @"groups"}];
+                                                        note:@{@"trigger" : @"observer"}];
                       }];
   [ArdiaServices call:@"ac_tabs_watch" profile:@"" args:nil completion:^(NSDictionary *) {}];
 }
@@ -198,12 +216,13 @@ NSArray<ArdiaCoreProfile *> *ProfilesWithTabs(ArdiaWindowController *controller)
 + (NSDictionary *)activated:(ArdiaCoreTab *)tab inWindow:(ArdiaWindowController *)controller {
   ArdiaCoreProfile *profile = tab.profile;
   if (profile) [ActiveTabs(controller) setObject:tab forKey:profile];
-  NSDictionary *deferral = [DeferredActivations() objectForKey:tab];
+  ArdiaStripDeferral *deferral = [DeferredActivations() objectForKey:tab];
   if (!deferral) return @{@"trigger" : @"activate"};
   [DeferredActivations() removeObjectForKey:tab];
-  if (CACurrentMediaTime() - [deferral[@"at"] doubleValue] > kDeferredActivationWindow || [deferral[@"window"] nonretainedObjectValue] != controller)
-    return @{@"trigger" : @"activate"};
-  return @{@"trigger" : @"activate", @"deferred" : @YES, @"deferredCmd" : deferral[@"cmd"]};
+  if (CACurrentMediaTime() - deferral.at > kDeferredActivationWindow || deferral.window != controller) return @{@"trigger" : @"activate"};
+  NSMutableDictionary *note = [@{@"trigger" : @"activate", @"deferred" : @YES, @"deferredCmd" : @(deferral.command)} mutableCopy];
+  if (deferral.inferred) note[@"deferredInferred"] = @YES;
+  return note;
 }
 
 + (ArdiaCoreTab *)activeTabInWindow:(ArdiaWindowController *)controller profile:(ArdiaCoreProfile *)profile {
@@ -211,6 +230,7 @@ NSArray<ArdiaCoreProfile *> *ProfilesWithTabs(ArdiaWindowController *controller)
 }
 
 + (void)removed:(ArdiaCoreTab *)tab fromWindow:(ArdiaWindowController *)controller {
+  [DeferredActivations() removeObjectForKey:tab];
   ArdiaCoreProfile *profile = tab.profile;
   if (profile && [ActiveTabs(controller) objectForKey:profile] == tab) [ActiveTabs(controller) removeObjectForKey:profile];
 }
@@ -242,17 +262,16 @@ NSArray<ArdiaCoreProfile *> *ProfilesWithTabs(ArdiaWindowController *controller)
     if (key.length) byKey[key] = tab;
   }
   BOOL rejected = !found;
-  BOOL deferred = NO;
+  NSMutableDictionary *activation = [NSMutableDictionary dictionary];
   gCommand = @(commandId);
   gCommandWindow = found;
   gCommandProfile = profile;
   if (found && [op isEqualToString:@"activate"]) {
     ArdiaCoreTab *tab = byKey[command[@"key"]];
     if (tab) {
+      ArdiaCoreTab *before = [ActiveTabs(found) objectForKey:profile];
       [found.coreWindow activateTab:tab];
-      deferred = !Landed(tab, found, profile);
-      if (deferred) [DeferredActivations() setObject:@{@"cmd" : @(commandId), @"at" : @(CACurrentMediaTime()), @"window" : [NSValue valueWithNonretainedObject:found]} forKey:tab];
-      else [DeferredActivations() removeObjectForKey:tab];
+      NoteActivationAsked(tab, before, [ActiveTabs(found) objectForKey:profile], commandId, found, activation);
     } else {
       rejected = YES;
     }
@@ -297,7 +316,7 @@ NSArray<ArdiaCoreProfile *> *ProfilesWithTabs(ArdiaWindowController *controller)
   gCommand = nil;
   NSMutableDictionary *tx = [@{@"rev" : @(++gRev), @"cmd" : @(commandId), @"strips" : found ? @[ Strip(found, profile) ] : @[]} mutableCopy];
   if (rejected) tx[@"rejected"] = @YES;
-  if (deferred) tx[@"deferred"] = @YES;
+  [tx addEntriesFromDictionary:activation];
   if ([ArdiaEvents listens:@"tabs"]) Send(tx);
 }
 

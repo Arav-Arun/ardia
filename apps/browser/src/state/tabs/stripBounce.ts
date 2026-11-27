@@ -1,27 +1,28 @@
-import type { StripTrigger } from "../../platform/tabs";
+import type { StripTrigger, TabStripCommand } from "../../platform/tabs";
 import type { BrowserState } from "../browser/store";
 import { useMedia } from "../media/media";
 import { consentToken, counted, queueLog, type ConsentToken } from "../telemetry/client";
 import { switchingPress } from "./tabReveal";
 
 const BOUNCE_WINDOW_MS = 2000;
-const TRIGGERS = ["activate", "insert", "remove", "attach", "groups", "closed", "unknown"] as const;
+const TRIGGERS = ["activate", "insert", "remove", "attach", "observer", "closed", "unknown"] as const satisfies readonly (StripTrigger | "unknown")[];
 
 type Switch = { from: string; to: string; at: number; nativePress: boolean; consent: ConsentToken | null };
 
 export type StripNote = {
   trigger: StripTrigger | "unknown";
   deferred: boolean;
+  deferredInferred: boolean;
   deferredFor: "lastAck" | "inflight" | "older" | "none";
   activeFallback: boolean;
   sinceAckMs: number;
-  inflight: "arrange" | "activate" | "group" | "none";
+  inflight: TabStripCommand["op"] | "none";
   pendingActive: boolean;
   siblings: boolean;
 };
 
 const UNKNOWN_NOTE: StripNote = {
-  trigger: "unknown", deferred: false, deferredFor: "none", activeFallback: false, sinceAckMs: -1, inflight: "none", pendingActive: false, siblings: false,
+  trigger: "unknown", deferred: false, deferredInferred: false, deferredFor: "none", activeFallback: false, sinceAckMs: -1, inflight: "none", pendingActive: false, siblings: false,
 };
 
 const lastSwitch = new Map<string, Switch>();
