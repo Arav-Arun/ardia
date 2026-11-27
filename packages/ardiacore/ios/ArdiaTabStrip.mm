@@ -1,5 +1,7 @@
 #import "ArdiaTabStrip.h"
 
+#import <QuartzCore/QuartzCore.h>
+
 #import "ArdiaInternal.h"
 #import "ArdiaWebView.h"
 #import "ArdiaEngineBridge.h"
@@ -60,6 +62,18 @@ NSMapTable<ArdiaCoreProfile *, ArdiaCoreTab *> *ActiveTabs(ArdiaWindowController
   return active;
 }
 
+NSMapTable<ArdiaCoreTab *, NSDictionary *> *DeferredActivations() {
+  static NSMapTable *deferred = [NSMapTable weakToStrongObjectsMapTable];
+  return deferred;
+}
+
+constexpr CFTimeInterval kDeferredActivationWindow = 1.0;
+
+bool Landed(ArdiaCoreTab *tab, ArdiaWindowController *controller, ArdiaCoreProfile *profile) {
+  ArdiaCoreTab *active = [ActiveTabs(controller) objectForKey:profile];
+  return active ? active == tab : [controller.coreWindow tabsForProfile:profile].firstObject == tab;
+}
+
 NSString *AppWindowOf(ArdiaWindowController *controller) {
   NSMutableArray<NSView *> *views = [NSMutableArray array];
   if (controller.root) [views addObject:controller.root];
@@ -75,11 +89,12 @@ NSString *AppWindowOf(ArdiaWindowController *controller) {
   return nil;
 }
 
-NSDictionary *Strip(ArdiaWindowController *controller, ArdiaCoreProfile *profile) {
+NSDictionary *Strip(ArdiaWindowController *controller, ArdiaCoreProfile *profile, BOOL *activeFallback = nullptr) {
   ArdiaCoreWindow *window = controller.coreWindow;
   NSMutableArray *tabs = [NSMutableArray array];
   NSArray<ArdiaCoreTab *> *live = [window tabsForProfile:profile];
   ArdiaCoreTab *active = [ActiveTabs(controller) objectForKey:profile];
+  if (activeFallback) *activeFallback = !active && live.count > 0;
   for (NSUInteger i = 0; i < live.count; i++) {
     ArdiaCoreTab *tab = live[i];
     NSString *key = [ArdiaTabRegistry viewForTab:tab].transferKey;
@@ -141,22 +156,32 @@ NSArray<ArdiaCoreProfile *> *ProfilesWithTabs(ArdiaWindowController *controller)
                         for (ArdiaWindowController *c in ArdiaWindowController.all)
                           for (ArdiaCoreProfile *p in ardia_host::LoadedProfiles())
                             if ([c.coreWindow chromeWindowIdForProfile:p] == window.intValue)
-                              [ArdiaTabStrip changedInWindow:c profile:p cause:c.hostChanges > 0 ? @(-1) : NSNull.null];
+                              [ArdiaTabStrip changedInWindow:c
+                                                     profile:p
+                                                       cause:c.hostChanges > 0 ? @(-1) : NSNull.null
+                                                        note:@{@"trigger" : @"groups"}];
                       }];
   [ArdiaServices call:@"ac_tabs_watch" profile:@"" args:nil completion:^(NSDictionary *) {}];
 }
 
-+ (void)changedInWindow:(ArdiaWindowController *)controller profile:(ArdiaCoreProfile *)profile {
-  [self changedInWindow:controller profile:profile cause:nil];
++ (void)changedInWindow:(ArdiaWindowController *)controller profile:(ArdiaCoreProfile *)profile trigger:(NSString *)trigger {
+  [self changedInWindow:controller profile:profile cause:nil note:@{@"trigger" : trigger}];
 }
 
-+ (void)changedInWindow:(ArdiaWindowController *)controller profile:(ArdiaCoreProfile *)profile cause:(id)cause {
++ (void)changedInWindow:(ArdiaWindowController *)controller profile:(ArdiaCoreProfile *)profile cause:(id)cause note:(NSDictionary *)note {
   if (![ArdiaEvents listens:@"tabs"] || !controller || !profile || controller.standalone) return;
   if (gCommand && controller == gCommandWindow && profile == gCommandProfile) return;
   cause = cause ?: (gCommand ?: (controller.hostChanges > 0 ? @(-1) : NSNull.null));
-  NSDictionary *strip = Strip(controller, profile);
-  if ((cause == NSNull.null || [cause isEqual:@(-1)]) && [Sent()[strip[@"strip"]] isEqualToDictionary:strip]) return;
-  Send(@{@"rev" : @(++gRev), @"cmd" : cause, @"strips" : @[ strip ]});
+  BOOL activeFallback = NO;
+  NSDictionary *strip = Strip(controller, profile, &activeFallback);
+  const BOOL unattributed = cause == NSNull.null || [cause isEqual:@(-1)];
+  if (unattributed && [Sent()[strip[@"strip"]] isEqualToDictionary:strip]) return;
+  NSMutableDictionary *tx = [@{@"rev" : @(++gRev), @"cmd" : cause, @"strips" : @[ strip ]} mutableCopy];
+  if (unattributed) {
+    [tx addEntriesFromDictionary:note];
+    if (activeFallback) tx[@"activeFallback"] = @YES;
+  }
+  Send(tx);
 }
 
 + (void)windowClosed:(ArdiaWindowController *)controller {
@@ -167,12 +192,18 @@ NSArray<ArdiaCoreProfile *> *ProfilesWithTabs(ArdiaWindowController *controller)
   const NSInteger window = controller.coreWindow.window.windowNumber;
   for (NSNumber *strip in strips)
     [closed addObject:@{@"strip" : strip, @"window" : @(window), @"profile" : strips[strip], @"tabs" : @[], @"closed" : @YES}];
-  Send(@{@"rev" : @(++gRev), @"cmd" : NSNull.null, @"strips" : closed});
+  Send(@{@"rev" : @(++gRev), @"cmd" : NSNull.null, @"trigger" : @"closed", @"strips" : closed});
 }
 
-+ (void)activated:(ArdiaCoreTab *)tab inWindow:(ArdiaWindowController *)controller {
++ (NSDictionary *)activated:(ArdiaCoreTab *)tab inWindow:(ArdiaWindowController *)controller {
   ArdiaCoreProfile *profile = tab.profile;
   if (profile) [ActiveTabs(controller) setObject:tab forKey:profile];
+  NSDictionary *deferral = [DeferredActivations() objectForKey:tab];
+  if (!deferral) return @{@"trigger" : @"activate"};
+  [DeferredActivations() removeObjectForKey:tab];
+  if (CACurrentMediaTime() - [deferral[@"at"] doubleValue] > kDeferredActivationWindow || [deferral[@"window"] nonretainedObjectValue] != controller)
+    return @{@"trigger" : @"activate"};
+  return @{@"trigger" : @"activate", @"deferred" : @YES, @"deferredCmd" : deferral[@"cmd"]};
 }
 
 + (ArdiaCoreTab *)activeTabInWindow:(ArdiaWindowController *)controller profile:(ArdiaCoreProfile *)profile {
@@ -211,6 +242,7 @@ NSArray<ArdiaCoreProfile *> *ProfilesWithTabs(ArdiaWindowController *controller)
     if (key.length) byKey[key] = tab;
   }
   BOOL rejected = !found;
+  BOOL deferred = NO;
   gCommand = @(commandId);
   gCommandWindow = found;
   gCommandProfile = profile;
@@ -218,6 +250,9 @@ NSArray<ArdiaCoreProfile *> *ProfilesWithTabs(ArdiaWindowController *controller)
     ArdiaCoreTab *tab = byKey[command[@"key"]];
     if (tab) {
       [found.coreWindow activateTab:tab];
+      deferred = !Landed(tab, found, profile);
+      if (deferred) [DeferredActivations() setObject:@{@"cmd" : @(commandId), @"at" : @(CACurrentMediaTime()), @"window" : [NSValue valueWithNonretainedObject:found]} forKey:tab];
+      else [DeferredActivations() removeObjectForKey:tab];
     } else {
       rejected = YES;
     }
@@ -262,6 +297,7 @@ NSArray<ArdiaCoreProfile *> *ProfilesWithTabs(ArdiaWindowController *controller)
   gCommand = nil;
   NSMutableDictionary *tx = [@{@"rev" : @(++gRev), @"cmd" : @(commandId), @"strips" : found ? @[ Strip(found, profile) ] : @[]} mutableCopy];
   if (rejected) tx[@"rejected"] = @YES;
+  if (deferred) tx[@"deferred"] = @YES;
   if ([ArdiaEvents listens:@"tabs"]) Send(tx);
 }
 
