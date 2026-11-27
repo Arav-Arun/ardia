@@ -345,7 +345,8 @@ function ownersKept(owners, familyOf, at) {
     const token = wakeOf(o) ?? adoptOf(o);
     const holder = t && S().tabs[holderOfPage(t)];
     const sharesPage = !!holder && holder.id !== t.id && familyOf[holder.id] === familyKeyOf(o) && holder.url === t.url && owns(holder);
-    assert.ok((t && (owns(t) || sharesPage)) || (token && held.has(token)), `${at}, ${o.id} keeps its own page or restore`);
+    const kept = token ? held.has(token) : !!t && (hasPage(t) || sharesPage);
+    assert.ok(kept, `${at}, ${o.id} keeps ${token ? `its own restore ${token}` : "its own page"}`);
   }
 }
 
