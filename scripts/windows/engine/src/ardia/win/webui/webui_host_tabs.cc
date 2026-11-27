@@ -477,6 +477,15 @@ void ShellHostView::TabCommand(const base::DictValue& args, Done done) {
     }
     return std::move(done).Run(true, base::Value(std::move(entries)));
   }
+  if (command == "executeExtensionAction") {
+    const std::string shown = ExecuteExtensionAction(contents, values);
+    if (shown.empty()) {
+      return std::move(done).Run(
+          false, Failure("ERR_PAGE_ARGUMENT",
+                         "executeExtensionAction requires an extension id"));
+    }
+    return std::move(done).Run(true, base::Value(shown));
+  }
   if (command == "find") {
     if (!values || values->size() != 3 || !(*values)[0].is_string() ||
         !(*values)[1].is_bool() || !(*values)[2].is_bool()) {

@@ -17,6 +17,7 @@
 #include "ardia/desktop/ac_desktop_webui_process_policy.h"
 #include "ardia/desktop/ac_desktop_window_state.h"
 #include "ardia/desktop/generated/ac_desktop_routes.h"
+#include "ardia/linux/ac_linux_extension_views.h"
 #include "ardia/linux/ac_linux_find.h"
 #include "ardia/win/hooks.h"
 #include "ardia/win/main.h"
@@ -689,6 +690,7 @@ void ShellHostView::DetachBrowser() {
     return;
   }
   closing_ = true;
+  DropExtensionSurfaces();
   RetireRenderer();
   telemetry_.CancelAll();
   file_picker_.reset();
@@ -837,6 +839,9 @@ BrowserWindowInterface* ShellHostView::EnsureMember(Profile* profile) {
 }
 
 void ShellHostView::CompanionClosed(BrowserWindowInterface* companion) {
+  if (extension_surfaces_member_ == companion) {
+    DropExtensionSurfaces();
+  }
   if (views::FocusManager* focus = CompanionFocusManager(companion)) {
     focus->UnregisterAccelerators(this);
   }
@@ -895,6 +900,7 @@ void ShellHostView::UnregisterShortcutsEverywhere() {
 }
 
 void ShellHostView::CloseCompanions() {
+  DropExtensionSurfaces();
   UnregisterShortcutsEverywhere();
   std::vector<base::WeakPtr<BrowserWindowInterface>> companions =
       std::move(companions_);
@@ -1057,6 +1063,9 @@ void ShellHostView::LayoutOverlay() {
   if (views::WebView* chrome_view = browser_view_->GetActiveContentsWebView()) {
     chrome_view->SetVisible(false);
   }
+  if (extension_surfaces_) {
+    extension_surfaces_->Relayout();
+  }
   Restack();
   ApplyShellInput();
 }
@@ -1067,6 +1076,9 @@ void ShellHostView::Restack() {
   }
   browser_view_->ReorderChildView(this, browser_view_->children().size());
   ReorderChildView(shell_, children().size());
+  if (extension_surfaces_) {
+    extension_surfaces_->RaisePopups();
+  }
 }
 
 void ShellHostView::ReattachViewports() {
@@ -1201,6 +1213,7 @@ void ShellHostView::RetireRenderer() {
   handler_ = nullptr;
   renderer_document_ = content::WeakDocumentPtr();
   ++renderer_generation_;
+  RetireExtensionViews(renderer_generation_);
   if (!had_document) {
     return;
   }

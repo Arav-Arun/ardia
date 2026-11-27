@@ -13,6 +13,7 @@
 #include "ardia/desktop/ac_desktop_window_state.h"
 #include "ardia/desktop/generated/ac_desktop_routes.h"
 #include "ardia/linux/ac_linux_document_service.h"
+#include "ardia/linux/ac_linux_extension_views.h"
 #include "ardia/linux/ac_linux_documents.h"
 #include "ardia/win/ac_calls.h"
 #include "ardia/win/launch_guard.h"
@@ -96,6 +97,11 @@ constexpr std::string_view kBrowserWindowCapabilities[] = {
     "documents.unwatch",
     "documents.commit",
     "documents.flush",
+    "extensionView.create",
+    "extensionView.viewport",
+    "extensionView.place",
+    "extensionView.command",
+    "extensionView.release",
     ardia::desktop_window_state::kWindowButtonLayoutCall,
     ardia::desktop_window_state::kWindowStateCall,
 };
@@ -166,6 +172,9 @@ void ShellHostView::Invoke(const std::string& method,
   }
   if (method == "shell.inputRegions") {
     return SetInputRegions(args, std::move(done));
+  }
+  if (ardia::LinuxExtensionSurfaces::Handles(method)) {
+    return InvokeExtensionView(method, args, std::move(done));
   }
   if (method == "ArdiaTabs.unclaimedTabs") {
     return ListUnclaimedTabs(std::move(done));
@@ -818,6 +827,9 @@ void ShellHostView::EngineCall(const std::string& name,
                               base::Value(base::WriteJson(state).value_or("{}")));
         },
         std::move(done)));
+  }
+  if (name == "extensions.actionStates") {
+    return ExtensionActionStates(profile, args, std::move(done));
   }
   if (const std::optional<webui_window::DocumentVerb> verb =
           webui_window::ParseDocumentVerb(name)) {
