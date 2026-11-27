@@ -192,8 +192,10 @@ type Snapshot = BTreeMap<String, (Vec<u8>, Option<SystemTime>)>;
 fn snapshot(root: &Path) -> Snapshot {
     let mut found = Snapshot::new();
     fn walk(root: &Path, dir: &Path, found: &mut Snapshot) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if dir == root && error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => panic!("{dir:?}: {error}"),
         };
         for entry in entries {
             let path = entry.unwrap().path();
@@ -203,7 +205,7 @@ fn snapshot(root: &Path) -> Snapshot {
                 found.insert(format!("{relative}/"), (Vec::new(), None));
                 walk(root, &path, found);
             } else {
-                found.insert(relative, (fs::read(&path).unwrap_or_default(), meta.modified().ok()));
+                found.insert(relative, (fs::read(&path).unwrap(), meta.modified().ok()));
             }
         }
     }
@@ -497,11 +499,17 @@ fn a_profile_restored_by_hand_is_left_alone_and_only_missing_profiles_are_copied
 enum Stop {
     Fail(usize),
     Crash(usize),
+    FailThenCrashRollingBack(usize, usize),
 }
 
 fn faults(stop: Option<Stop>) -> Faults {
     match stop {
         None => Faults::default(),
+        Some(Stop::FailThenCrashRollingBack(at, step)) => Faults {
+            fail_at_commit: Some(at),
+            crash_in_rollback_at: Some(step),
+            ..Faults::default()
+        },
         Some(Stop::Fail(at)) => Faults {
             fail_at_commit: Some(at),
             ..Faults::default()
@@ -527,14 +535,21 @@ fn live_files_without_lock(layout: &Layout) -> BTreeMap<String, Vec<u8>> {
 fn every_stop_and_relaunch_between_tries_loses_nothing_and_never_rewrites_a_backup() {
     let mut scenarios = 0;
     for first_at in 1..=12 {
-        for stop in [Stop::Fail(first_at), Stop::Crash(first_at)] {
-            for second in [
-                None,
-                Some(Stop::Crash(1)),
-                Some(Stop::Crash(2)),
-                Some(Stop::Crash(3)),
-                Some(Stop::Fail(2)),
-            ] {
+        let mut stops = vec![Stop::Fail(first_at), Stop::Crash(first_at)];
+        stops.extend((1..=7).map(|step| Stop::FailThenCrashRollingBack(first_at, step)));
+        for stop in stops {
+            let seconds = if matches!(stop, Stop::FailThenCrashRollingBack(..)) {
+                vec![None]
+            } else {
+                vec![
+                    None,
+                    Some(Stop::Crash(1)),
+                    Some(Stop::Crash(2)),
+                    Some(Stop::Crash(3)),
+                    Some(Stop::Fail(2)),
+                ]
+            };
+            for second in seconds {
                 let label = format!("{stop:?} then {second:?}");
                 let scratch = Scratch::new("chromium-interleave");
                 let sealer = FakeDpapi::new();
@@ -669,7 +684,7 @@ fn an_oversized_webui_local_state_is_copied_aside_whole_and_survives_a_crash_and
 }
 
 #[test]
-fn a_copy_stopped_part_way_reuses_the_finished_files() {
+fn a_copy_stopped_part_way_copies_every_file_again() {
     let scratch = Scratch::new("chromium-partway");
     let sealer = FakeDpapi::new();
     let layout = layout(&scratch.0);
@@ -688,7 +703,6 @@ fn a_copy_stopped_part_way_reuses_the_finished_files() {
     assert!(!webui_chromium(&layout).join(names::LOCAL_STATE).exists());
     let second = run(&layout, &sealer);
     assert_eq!(second.outcome, Outcome::Migrated);
-    assert_eq!(counts(&second)["files_reused"], 4);
     assert_eq!(counts(&second)["files"], 12);
     assert_eq!(
         fs::read(webui_chromium(&layout).join("Ardia default/History")).unwrap(),
@@ -705,6 +719,17 @@ fn a_torn_or_stale_staged_file_never_reaches_the_live_profile() {
     let staging = layout.webui_data.join(names::CHROMIUM_STAGING_FOLDER);
     write(&staging.join("Ardia default/History"), b"rnw hist");
     write(&staging.join("Ardia default/Login Data"), b"v10 rnw XXXXXX");
+    let long_ago = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+    fs::File::options()
+        .write(true)
+        .open(staging.join("Ardia default/Login Data"))
+        .unwrap()
+        .set_modified(long_ago)
+        .unwrap();
+    write(
+        &staging.join("Ardia default/.ardia-mig-1-0-dead.rnw-migration.partial"),
+        b"a copy that never finished",
+    );
     write(&staging.join("Ardia default/Login Data-wal"), b"stale sidecar");
     write(
         &staging.join("Ardia default/Extensions/removed/1.0/manifest.json"),
@@ -1203,4 +1228,154 @@ fn a_profile_restored_by_hand_between_tries_is_still_left_alone() {
         b"restored by hand between tries"
     );
     assert!(kept_folders(&layout).is_empty());
+}
+
+#[test]
+fn a_staged_entry_whose_kind_changed_is_replaced() {
+    let scratch = Scratch::new("chromium-kind-changed");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    seed_rnw(&layout, &sealer);
+    let staged = layout
+        .webui_data
+        .join(names::CHROMIUM_STAGING_FOLDER)
+        .join("Ardia default");
+    write(&staged.join("Extensions"), b"a file where RNW now has a folder");
+    write(&staged.join("History/inner"), b"a folder where RNW now has a file");
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    let live = webui_chromium(&layout).join("Ardia default");
+    assert_eq!(fs::read(live.join("History")).unwrap(), b"rnw history");
+    assert!(live.join("Extensions/abcdef/1.0_0/manifest.json").is_file());
+}
+
+fn progress(layout: &Layout) -> Option<Value> {
+    serde_json::from_slice(&fs::read(layout.webui_data.join(names::CHROMIUM_PROGRESS_NAME)).ok()?).ok()
+}
+
+fn crash_until(layout: &Layout, sealer: &FakeDpapi, wanted: impl Fn(&Value) -> bool) -> usize {
+    for at in 1..=20 {
+        let scratch = Scratch::new("chromium-probe");
+        let probe = self::layout(&scratch.0);
+        let _ = seed_both(&probe, sealer);
+        let report = migrate_chromium(&probe, sealer, &faults(Some(Stop::Crash(at))));
+        if report.outcome == Outcome::Failed && progress(&probe).is_some_and(|p| wanted(&p)) {
+            let real = migrate_chromium(layout, sealer, &faults(Some(Stop::Crash(at))));
+            assert_eq!(real.outcome, Outcome::Failed);
+            return at;
+        }
+    }
+    panic!("no crash point reached the wanted progress");
+}
+
+#[test]
+fn a_progress_file_that_says_the_key_is_in_place_is_checked_against_the_live_key() {
+    let scratch = Scratch::new("chromium-progress-lies-key");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    let seeded = seed_both(&layout, &sealer);
+    let chromium = webui_chromium(&layout);
+    let original = fs::read(chromium.join(names::LOCAL_STATE)).unwrap();
+    crash_until(&layout, &sealer, |p| {
+        p["local_state"] == json!(true) && p["installed"] == json!([])
+    });
+    assert_eq!(progress(&layout).unwrap()["local_state"], json!(true));
+    fs::write(chromium.join(names::LOCAL_STATE), &original).unwrap();
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    let mut fresh = 0;
+    launch_chromium(&layout, &mut fresh);
+    assert_eq!(live_key(&chromium).as_deref(), Some(seeded.rnw_key.as_str()));
+    assert!(has_line(
+        &chromium.join("Ardia default/Network/Cookies"),
+        &format!("{}|rnw-cookie", seeded.rnw_key)
+    ));
+}
+
+#[test]
+fn a_profile_the_record_calls_installed_but_that_is_back_in_staging_is_installed_again() {
+    let scratch = Scratch::new("chromium-progress-lies-installed");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    let seeded = seed_both(&layout, &sealer);
+    crash_until(&layout, &sealer, |p| {
+        p["installed"]
+            .as_array()
+            .is_some_and(|i| i.iter().any(|n| n == "Ardia default"))
+    });
+    let staging = layout.webui_data.join(names::CHROMIUM_STAGING_FOLDER);
+    fs::create_dir_all(&staging).unwrap();
+    fs::rename(
+        webui_chromium(&layout).join("Ardia default"),
+        staging.join("Ardia default"),
+    )
+    .unwrap();
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    let mut fresh = 0;
+    launch_chromium(&layout, &mut fresh);
+    assert_nothing_lost(&layout, &seeded, "installed again");
+}
+
+#[test]
+fn a_regular_file_where_a_restored_profile_should_be_is_moved_aside() {
+    let scratch = Scratch::new("chromium-restored-file");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    let rnw_key = seed_rnw(&layout, &sealer);
+    let chromium = webui_chromium(&layout);
+    write(&chromium.join(names::LOCAL_STATE), &webui_state_with(&rnw_key));
+    write(&chromium.join("Ardia default"), b"not a profile");
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    assert_eq!(
+        fs::read(chromium.join("Ardia default/History")).unwrap(),
+        b"rnw history"
+    );
+    assert_eq!(
+        fs::read(kept_folders(&layout)[0].join("Ardia default")).unwrap(),
+        b"not a profile"
+    );
+}
+
+#[test]
+fn everything_restored_by_hand_finishes_without_needing_disk_space() {
+    let scratch = Scratch::new("chromium-restored-all");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    let rnw_key = seed_rnw(&layout, &sealer);
+    let chromium = webui_chromium(&layout);
+    write(&chromium.join(names::LOCAL_STATE), &webui_state_with(&rnw_key));
+    write(&chromium.join("Ardia default/Preferences"), b"{}");
+    write(&chromium.join("Ardia p-work/Preferences"), b"{}");
+    let tight = Faults {
+        free_space: Some(1024),
+        ..Faults::default()
+    };
+    let report = migrate_chromium(&layout, &sealer, &tight);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    assert_eq!(counts(&report)["key_shared"], 1);
+}
+
+#[test]
+fn a_profile_removed_from_rnw_after_its_key_changed_is_dropped_from_the_plan() {
+    let scratch = Scratch::new("chromium-key-and-profile-change");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    seed_rnw(&layout, &sealer);
+    assert_eq!(
+        migrate_chromium(&layout, &sealer, &faults(Some(Stop::Fail(2)))).outcome,
+        Outcome::Failed
+    );
+    let newer = chromium_key(&sealer, &[5; 32]);
+    let state = json!({ "os_crypt": { "encrypted_key": newer } });
+    fs::write(
+        layout.rnw_chromium.join(names::LOCAL_STATE),
+        serde_json::to_vec(&state).unwrap(),
+    )
+    .unwrap();
+    fs::remove_dir_all(layout.rnw_chromium.join("Ardia p-work")).unwrap();
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    assert_eq!(profiles(&webui_chromium(&layout)), ["Ardia default"]);
 }

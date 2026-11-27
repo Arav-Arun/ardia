@@ -48,7 +48,6 @@ export const CHROMIUM_STEP: ShellMigrationStep = {
     "webui_profiles_backed_up",
     "webui_profiles_left",
     "files",
-    "files_reused",
     "megabytes",
     "skipped_links",
     "skipped_invalid",

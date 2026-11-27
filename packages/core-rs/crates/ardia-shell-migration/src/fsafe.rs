@@ -198,7 +198,6 @@ enum Opening {
     Read,
     CreateNew,
     Lock,
-    Replace,
     Hold,
 }
 
@@ -269,7 +268,7 @@ mod sys {
             | match opening {
                 Opening::Read => libc::O_RDONLY | libc::O_NONBLOCK,
                 Opening::CreateNew => libc::O_RDWR | libc::O_CREAT | libc::O_EXCL,
-                Opening::Lock | Opening::Replace | Opening::Hold => libc::O_RDWR | libc::O_CREAT,
+                Opening::Lock | Opening::Hold => libc::O_RDWR | libc::O_CREAT,
             };
         let fd = unsafe { libc::openat(dir.as_raw_fd(), c.as_ptr(), flags, 0o600 as libc::c_uint) };
         if fd < 0 {
@@ -573,7 +572,7 @@ mod sys {
         let (access, disposition, options) = match opening {
             Opening::Read => (FILE_GENERIC_READ, FILE_OPEN, 0),
             Opening::CreateNew => (FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE, FILE_CREATE, 0),
-            Opening::Lock | Opening::Replace => (FILE_GENERIC_READ | FILE_GENERIC_WRITE, FILE_OPEN_IF, 0),
+            Opening::Lock => (FILE_GENERIC_READ | FILE_GENERIC_WRITE, FILE_OPEN_IF, 0),
             Opening::Hold => (
                 FILE_GENERIC_WRITE | FILE_READ_ATTRIBUTES | DELETE,
                 FILE_OPEN_IF,
@@ -893,20 +892,6 @@ impl Dir {
         Ok(Opened::File(file, meta))
     }
 
-    pub fn replace_file(&self, name: &str) -> io::Result<File> {
-        let name = child_name(name)?;
-        if !matches!(self.entry(name)?, Entry::Missing | Entry::File) {
-            return Err(unsafe_path(self.path.join(name)));
-        }
-        let file = sys::child_file(&self.file, name, Opening::Replace)?;
-        let meta = file.metadata()?;
-        if is_link(&meta) || !meta.is_file() || link_count(&file)? != 1 {
-            return Err(unsafe_path(self.path.join(name)));
-        }
-        file.set_len(0)?;
-        Ok(file)
-    }
-
     pub fn remove_file(&self, name: &str) -> io::Result<()> {
         sys::remove(&self.file, child_name(name)?)
     }
@@ -966,6 +951,39 @@ impl Dir {
             #[cfg(unix)]
             name: name.to_string(),
         })
+    }
+
+    pub fn stage_copy(
+        &self,
+        source: &mut File,
+        buffer: &mut [u8],
+        modified: Option<std::time::SystemTime>,
+    ) -> io::Result<(Staged, u64)> {
+        let temp = partial_name();
+        let mut file = sys::child_file(&self.file, &temp, Opening::CreateNew)?;
+        let mut copied = 0u64;
+        let written = (|| -> io::Result<()> {
+            loop {
+                let read = match source.read(buffer) {
+                    Ok(0) => break,
+                    Ok(read) => read,
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(error) => return Err(error),
+                };
+                file.write_all(&buffer[..read])?;
+                copied += read as u64;
+            }
+            if let Some(time) = modified {
+                file.set_modified(time)?;
+            }
+            file.sync_all()
+        })();
+        if let Err(error) = written {
+            drop(file);
+            let _ = sys::remove(&self.file, &temp);
+            return Err(error);
+        }
+        Ok((Staged { file, temp }, copied))
     }
 
     pub fn stage_from(&self, source: &mut impl Read) -> io::Result<Staged> {

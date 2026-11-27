@@ -1078,9 +1078,9 @@ until the step's marker exists. It never changes `User Data`, which stays as a b
 - **Crash-safe and restartable.**
   - It checks free space first (the bytes to copy plus 256 MiB; `failed_stage: space`), then copies every profile into
     `Ardia WebUI\rnw-chromium-staging\<folder>` with four workers, each file written in place, given its source's write
-    time and flushed. A later run reuses a staged file whose size and write time match its source and removes anything
-    in staging the source no longer has (an uninstalled extension, a stale `-wal`), so an interrupted copy resumes and a
-    torn file is copied again. A file it can't read (after five tries a few hundred milliseconds apart) fails the try
+    time and flushed under a `.partial` name, then renamed into place. Every try copies every file again rather than
+    trusting what an earlier try staged, and removes anything in staging the source no longer has (an uninstalled
+    extension, a stale `-wal`, a file where the source now has a folder), so nothing stale or torn is published. A file it can't read (after five tries a few hundred milliseconds apart) fails the try
     instead of being left out, so a profile is never published with a database missing. Nothing reaches `Chromium`
     until the copy is whole.
   - Backups are write-once: every try writes into its own new `Chromium-<run>` folder and refuses one that exists, and
@@ -1089,7 +1089,10 @@ until the step's marker exists. It never changes `User Data`, which stays as a b
     profile installed. The swaps are directory renames on the same volume through held handles
     (`NtSetInformationFile(FileRenameInformation)` with the destination folder's handle, `renameat`), retried briefly
     while antivirus holds a folder.
-  - A try that fails while it swaps undoes its own steps in reverse (staged profiles back to staging, the kept
+  - On a resume, the record is checked against the disk before it is trusted: a profile it lists as installed that is
+    back in staging is installed again, and a key it lists as written that isn't the live key is written again.
+  - A try that fails while it swaps undoes its own steps in reverse, saving each undo in the record before it makes it,
+    so a try killed while it undoes still resumes correctly (staged profiles back to staging, the kept
     `Local State` back, the moved profiles back), so setup starts Ardia on 0.2.49's tree exactly as it was
     (`swap_rolled_back`). A process that is killed can't undo anything, so the order alone keeps the data safe: the key
     changes only after every live WebUI profile is backed up or moved aside, and a later try only moves forward, moving
@@ -1101,7 +1104,7 @@ until the step's marker exists. It never changes `User Data`, which stays as a b
 - **Report and telemetry.** `rnw-chromium-migration-attempt.json` carries `step: "chromium"`, the outcome, stage
   (`layout`, `lock`, `in_use`, `local_state`, `scan`, `space`, `staging`, `backup`, `swap`, `progress`, `report`,
   `marker`), attempt, prior stage, duration and counts (`profiles`, `profiles_replaced`, `webui_profiles_backed_up`,
-  `webui_profiles_left`, `files`, `files_reused`, `megabytes`, `skipped_links`, `skipped_invalid`, `skipped_clash`,
+  `webui_profiles_left`, `files`, `megabytes`, `skipped_links`, `skipped_invalid`, `skipped_clash`,
   `key_carried`, `key_shared`, `key_missing`, `key_unreadable`, `local_state_kept`, `local_state_malformed`,
   `staging_cleared`, `swap_rolled_back`, `partials_swept`). It also writes a report when it waits, so `in_use` shows up.
   The WebUI host sends it as `shell_migration` with `step: "chromium"` (the documents step now says
