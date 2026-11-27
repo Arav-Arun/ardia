@@ -14,8 +14,8 @@ import { newTabHome } from "../tabs/newTabHome";
 import { groupingOnto } from "../pins/placing";
 import type { CloseOptions } from "../tabs/tabs";
 import { isRegularWindow } from "../windows/small";
-import { noteSharedGroupUngroup } from "../telemetry/sharedGroupCounts";
-import { keepUngroupedTabs } from "./sharedUngroupSplits";
+import { noteSharedGroupUngroup, noteSharedGroupUnpin } from "../telemetry/sharedGroupCounts";
+import { keepUngroupedTabs, unpinsMirrors, withMirrorsUnpinned } from "./sharedUngroupSplits";
 
 export { ancestorIds, canNest, commonGroup, depthOf, depthsIn, descendantIds, groupPath, innermostGroupOf, nestGroups, reparent, rootOf, rootsIn, withParent } from "./groupNesting";
 
@@ -169,6 +169,7 @@ export const createGroupsSlice: StateCreator<BrowserState, [], [], GroupsSlice> 
   },
 
   updateGroup(id, patch) {
+    let mirrored = false;
     set((s) => {
       const g = s.groups[id];
       if (!g) return {};
@@ -178,20 +179,13 @@ export const createGroupsSlice: StateCreator<BrowserState, [], [], GroupsSlice> 
       const groups = withoutShownTabs({ ...s.groups, [id]: { ...g, ...patch } }, reset);
       const w = s.windows[g.windowId];
       if (patch.pinned === undefined || patch.pinned === g.pinned || !w) return { groups };
-      const shared = !patch.pinned && s.settings.shareTabsAcrossWindows && isRegularWindow(w);
-      const mirrors = shared ? Object.values(s.groups).filter((x) => x.id !== id && x.pinned && x.profileId === g.profileId && pinKeyOf(x) === pinKeyOf(g) && isRegularWindow(s.windows[x.windowId])) : [];
-      for (const m of mirrors) groups[m.id] = { ...groups[m.id]!, pinned: false };
-      let next = groups;
-      const windows = { ...s.windows };
-      for (const windowId of new Set([g.windowId, ...mirrors.map((m) => m.windowId)])) {
-        const win = s.windows[windowId];
-        if (!win) continue;
-        windows[windowId] = { ...win, tabIds: orderSections(win.tabIds, s.tabs, next) };
-        next = syncGroupOrder(next, windows[windowId]!);
-      }
-      if (!mirrors.length) return { groups: next, windows };
-      return keepUngroupedTabs({ ...s, groups: next, windows }, g.windowId, new Set([g, ...mirrors].flatMap((x) => x.tabIds)));
+      const nested = nestGroups(groups);
+      const window = { ...w, tabIds: orderSections(w.tabIds, s.tabs, nested) };
+      const local = { ...s, groups: syncGroupOrder(nested, window), windows: { ...s.windows, [w.id]: window } };
+      mirrored = unpinsMirrors(s, local, id);
+      return withMirrorsUnpinned(s, local, id);
     });
+    if (mirrored) noteSharedGroupUnpin();
   },
 
   addTabsToGroup(groupId, tabIds) {
@@ -311,7 +305,13 @@ export const createGroupsSlice: StateCreator<BrowserState, [], [], GroupsSlice> 
   },
 
   moveGroup(groupId, p) {
-    set((s) => movingGroup(s, groupId, p));
+    let mirrored = false;
+    set((s) => {
+      const moved = movingGroup(s, groupId, p);
+      mirrored = unpinsMirrors(s, { ...s, ...moved }, groupId);
+      return moved;
+    });
+    if (mirrored) noteSharedGroupUnpin();
   },
 
   duplicateGroup(groupId) {

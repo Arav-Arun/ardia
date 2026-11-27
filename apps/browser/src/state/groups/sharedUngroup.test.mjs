@@ -368,7 +368,7 @@ for (const action of ["ungrouping", "unpinning"]) test(`across 200 generated lay
     for (const t of Object.values(S().tabs)) if (before.tabs[t.id] && (hasOwnOrSharedPage(before.tabs[t.id]) || wakeOf(before.tabs[t.id]))) assert.equal(t.url, before.tabs[t.id].url, `${at}: ${t.id} keeps its own address`);
     assert.ok(!Object.values(S().groups).some((g) => g.pinned && pinKeyOf(g) === key), `${at}: no folder is left`);
     if (split) {
-      assert.ok(Object.values(S().splits).some((v) => v.windowId === from.windowId), `${at}: the split stays in the window it was ungrouped from`);
+      assert.ok(Object.values(S().splits).some((v) => v.windowId === from.windowId), `${at}: the split stays in the window it was ${action === "ungrouping" ? "ungrouped" : "unpinned"} from`);
       assert.ok(Object.values(S().splits).every((v) => v.windowId === from.windowId), `${at}: the split stays in one window`);
     }
     for (const v of Object.values(S().splits)) S().separateSplit(v.id);
