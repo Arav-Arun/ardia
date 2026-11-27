@@ -131,10 +131,7 @@ for (const home of ["original window", "mirror window"]) {
     assert.equal(kept[0].windowId, to, "the window it was ungrouped from");
     assert.equal(kept[0].orientation, split.orientation);
     assert.deepEqual(splitTabIds(kept[0]).map((id) => pinKeyOf(S().tabs[id])), [one, two]);
-    for (const w of all) {
-      if (w === to) continue;
-      for (const id of [one, two]) assert.equal(rows(w).filter((t) => pinKeyOf(t) === id).length, 1, "the other windows list each tab once, as a regular tab");
-    }
+    for (const w of all) for (const id of [one, two]) assert.equal(rows(w).filter((t) => pinKeyOf(t) === id).length, w === to ? 1 : 0, "the split's tabs live in its window only, once");
     for (const id of [one, two]) {
       assert.ok(S().tabs[id], "the tab survives");
       assert.deepEqual(S().tabs[id].page.nav, before[id], "with its page, without a reload");
@@ -165,8 +162,8 @@ test("ungrouping a split folder keeps open a window that held only its mirrored 
   S().ungroup(folderOf(b, group).id);
   assert.ok(S().windows[a], "the other window stays open");
   assert.ok(S().windowOrder.includes(a));
-  assert.deepEqual(rows(a).map((t) => t.url).sort(), [site("one"), site("two")], "keeping the folder's tabs as regular tabs");
   assert.equal(splitsIn(a).length, 0, "without a second split");
+  assert.ok(rows(a).length >= 1 && rows(a).every((t) => t.url !== site("one") && t.url !== site("two")), "showing a new tab instead of copies of the split's tabs");
   assert.equal(splitsIn(b).length, 1, "the split stays where it was ungrouped");
 });
 
@@ -195,6 +192,71 @@ test("ungrouping a split folder keeps another page that a pane in the other wind
 const pageAs = (id, page) => useBrowser.setState((st) => ({ tabs: { ...st.tabs, [id]: { ...st.tabs[id], page } } }));
 const owns = (t) => hasPage(t) || !!wakeOf(t);
 
+function oncePerWindowAndOnePage(windowIds) {
+  for (const w of windowIds) {
+    const keys = S().windows[w].tabIds.map((id) => S().tabs[id]).filter((t) => t.profileId === "default").map(pinKeyOf);
+    assert.equal(new Set(keys).size, keys.length, "each tab is listed once in each window, split panes included");
+  }
+  const live = Object.values(S().tabs).filter(hasPage).map(pinKeyOf);
+  assert.equal(new Set(live).size, live.length, "one live page per tab");
+}
+
+test("ungrouping a split folder mirrored across two windows leaves no regular copy of a pane, and no second live page", () => {
+  const { a, b, group } = splitOnlyFolder();
+  S().ungroup(folderOf(b, group).id);
+  oncePerWindowAndOnePage([a, b]);
+  const panes = splitTabIds(splitsIn(b)[0]).map((id) => S().tabs[id]);
+  assert.ok(panes.every(hasPage), "the split keeps both live pages");
+  for (const t of rows(a)) {
+    S().setFocusedWindow(a);
+    S().activate(t.id);
+    oncePerWindowAndOnePage([a, b]);
+  }
+  S().separateSplit(splitsIn(b)[0].id);
+  oncePerWindowAndOnePage([a, b]);
+  for (const t of panes) for (const w of [a, b]) assert.equal(rows(w).filter((x) => pinKeyOf(x) === pinKeyOf(t)).length, 1, "a separated pane is shared again, once per window");
+  for (const id of S().windows[a].tabIds) {
+    S().setFocusedWindow(a);
+    S().activate(id);
+    oncePerWindowAndOnePage([a, b]);
+  }
+});
+
+test("separating a kept split keeps a sleeping pane's restore and the live copy of its address from the other window", () => {
+  const { a, b, group } = splitOnlyFolder();
+  const home = splitTabIds(splitsIn(b)[0]).find((id) => S().tabs[id].url === site("one"));
+  const away = splitTabIds(splitsIn(a)[0]).find((id) => S().tabs[id].url === site("one"));
+  pageAs(home, withWake(ASLEEP, "restore:old-home"));
+  pageAs(away, loadedPage(navigationTo(site("one"))));
+  const closed = S().closedTabs.length;
+  S().ungroup(folderOf(b, group).id);
+  S().setFocusedWindow(a);
+  S().activate(away);
+  S().separateSplit(splitsIn(b)[0].id);
+  const tokens = Object.values(S().tabs).flatMap((t) => [wakeOf(t), adoptOf(t)]);
+  assert.ok(tokens.includes("restore:old-home"), "the pane's own restore is still there");
+  assert.ok(S().tabs[away] && hasPage(S().tabs[away]), "the other window's live page is still open");
+  assert.notEqual(pinKeyOf(S().tabs[away]), pinKeyOf(S().tabs[home]), "as tabs of their own");
+  assert.equal(S().closedTabs.length, closed, "nothing goes to Recently Closed");
+  oncePerWindowAndOnePage([a, b]);
+});
+
+test("across three windows, ungrouping keeps each pending restore at its own address", () => {
+  const { a, b, all, one, group } = windows(true, 3);
+  const c = all.find((w) => w !== a && w !== b);
+  const key = pinKeyOf(S().groups[group]);
+  const copyIn = (w) => groupIn(w, key).tabIds.find((id) => pinKeyOf(S().tabs[id]) === one);
+  const [inA, inC] = [copyIn(a), copyIn(c)];
+  S().updateTab(inA, { url: site("elsewhere") });
+  pageAs(inA, withWake(ASLEEP, "restore:old-a"));
+  pageAs(inC, withWake(ASLEEP, "restore:old-c"));
+  S().ungroup(groupIn(b, key).id);
+  const holding = (token) => Object.values(S().tabs).find((t) => wakeOf(t) === token || adoptOf(t) === token);
+  assert.equal(holding("restore:old-a")?.url, site("elsewhere"), "the restore that moved keeps its address");
+  assert.equal(holding("restore:old-c")?.url, site("one"), "the other restore keeps its own");
+  assert.notEqual(pinKeyOf(holding("restore:old-a")), pinKeyOf(holding("restore:old-c")), "two addresses with their own restores are two tabs");
+});
+
 test("after a restart, ungrouping keeps a pane in another window that moved to another page, with its restore", () => {
   const { a, b, group } = splitOnlyFolder();
   const away = splitTabIds(splitsIn(a)[0]).find((id) => S().tabs[id].url === site("one"));
@@ -204,7 +266,7 @@ test("after a restart, ungrouping keeps a pane in another window that moved to a
   S().ungroup(folderOf(b, group).id);
   assert.ok(S().tabs[away], "the pane survives");
   assert.equal(S().tabs[away].url, moved, "at the page it moved to");
-  assert.equal(pendingRestore(S().tabs[away]), "old-a", "still able to restore its page");
+  assert.ok(pendingRestore(S().tabs[away]) === "old-a" || adoptOf(S().tabs[away]) === "restore:old-a", "still able to restore its page");
 });
 
 test("ungrouping keeps a regular tab that shares a folder tab's family and waits on a restore", () => {
@@ -301,7 +363,7 @@ test("across 200 generated layouts, ungrouping a shared folder never drops a tab
     assert.equal(S().closedTabs.length, closed, `${at}: nothing goes to Recently Closed`);
     ownersKept(owners, familyOf, `${at}: after ungroup`);
     for (const t of Object.values(S().tabs)) if (familyOf[t.id]) assert.ok(families.get(familyOf[t.id]).has(t.url), `${at}: ${t.id} keeps an address of its own tab`);
-    for (const t of Object.values(S().tabs)) if (before.tabs[t.id] && hasOwnOrSharedPage(before.tabs[t.id])) assert.equal(t.url, before.tabs[t.id].url, `${at}: ${t.id} keeps its own address`);
+    for (const t of Object.values(S().tabs)) if (before.tabs[t.id] && (hasOwnOrSharedPage(before.tabs[t.id]) || wakeOf(before.tabs[t.id]))) assert.equal(t.url, before.tabs[t.id].url, `${at}: ${t.id} keeps its own address`);
     assert.ok(!Object.values(S().groups).some((g) => g.pinned && pinKeyOf(g) === key), `${at}: no folder is left`);
     if (split) {
       assert.ok(Object.values(S().splits).some((v) => v.windowId === from.windowId), `${at}: the split stays in the window it was ungrouped from`);

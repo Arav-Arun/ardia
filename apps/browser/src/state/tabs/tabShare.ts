@@ -52,7 +52,7 @@ type Leaving = "close" | "keepPages";
 
 const swapIn = (ids: string[], a: string, b: string) => (ids.includes(a) || ids.includes(b) ? ids.map((x) => (x === a ? b : x === b ? a : x)) : ids);
 
-function swapPlaces(s: BrowserState, a: string, b: string): BrowserState {
+export function swapPlaces(s: BrowserState, a: string, b: string): BrowserState {
   const ta = s.tabs[a]!;
   const tb = s.tabs[b]!;
   const key = pinKeyOf(ta);
@@ -219,7 +219,7 @@ function conformList(input: BrowserState, windowId: string, profileId: string, s
   return removeTabs(keepShownProfile(next, windowId, gone), gone, false);
 }
 
-function keepShownProfile(s: BrowserState, windowId: string, gone: readonly string[]): BrowserState {
+export function keepShownProfile(s: BrowserState, windowId: string, gone: readonly string[]): BrowserState {
   const w = s.windows[windowId];
   if (!w || !w.tabIds.some((id) => gone.includes(id))) return s;
   const shownHere = w.tabIds.filter((id) => s.tabs[id]?.profileId === w.profileId && !gone.includes(id));

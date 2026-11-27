@@ -3,51 +3,101 @@ import type { Tab } from "../browser/types";
 import { inPinnedContainer, newId, pinKeyOf } from "../browser/model";
 import { hasPage, holderOfPage, wakeOf } from "../tabs/pageSession";
 import { splitTabIds } from "../splits/splits";
+import { isRegularWindow } from "../windows/small";
+import { keepShownProfile, swapPlaces } from "../tabs/tabShare";
+import { removeTabs } from "../tabs/tabs";
 
-export const keepUngroupedTabs = (s: BrowserState, homeId: string, members: Set<string>): BrowserState => keepSameTabRows(keepSplitsHome(s, homeId, members), members);
+export const keepUngroupedTabs = (s: BrowserState, homeId: string, members: Set<string>): BrowserState =>
+  keepSameTabRows(keepOwnAddresses(keepSplitsHome(s, homeId, members), homeId, members), members);
 
 const ownsPage = (t: Tab) => hasPage(t) || !!wakeOf(t);
 
-function keepSameTabRows(s: BrowserState, members: Set<string>): BrowserState {
-  const holders = new Set(Object.values(s.tabs).map(holderOfPage).filter(Boolean));
+const rankFor = (homeId: string) => (t: Tab) => (hasPage(t) ? 2 : 0) + (t.windowId === homeId ? 1 : 0);
+
+const sharedRow = (s: BrowserState, t: Tab, paired: Set<string>) => !t.pin && !paired.has(t.id) && !inPinnedContainer(s, t.id) && isRegularWindow(s.windows[t.windowId]);
+
+const pairedIds = (s: BrowserState) => new Set(Object.values(s.splits ?? {}).flatMap((v) => splitTabIds(v)));
+
+function withOwnKeys(s: BrowserState, ids: Iterable<string>): BrowserState {
   let tabs: Record<string, Tab> | null = null;
-  const rekey = (t: Tab) => ((tabs ??= { ...s.tabs })[t.id] = { ...t, pinKey: newId("tab") });
-  for (const id of members) {
-    const m = s.tabs[id];
-    if (!m || !ownsPage(m) || inPinnedContainer(s, id)) continue;
-    for (const rowId of s.windows[m.windowId]?.tabIds ?? []) {
-      const t = (tabs ?? s.tabs)[rowId];
-      if (!t || members.has(rowId) || t.pin || t.profileId !== m.profileId || pinKeyOf(t) !== pinKeyOf(m) || !ownsPage(t) || inPinnedContainer(s, rowId)) continue;
-      if (holders.has(t.id) && !holders.has(m.id)) {
-        rekey(m);
-        break;
-      }
-      rekey(t);
-    }
+  for (const id of ids) {
+    const t = (tabs ?? s.tabs)[id];
+    if (!t) continue;
+    const was = pinKeyOf(t);
+    const key = newId("tab");
+    tabs ??= { ...s.tabs };
+    tabs[id] = { ...t, pinKey: key };
+    for (const f of Object.values(tabs)) if (f.id !== id && holderOfPage(f) === id && pinKeyOf(f) === was) tabs[f.id] = { ...f, pinKey: key };
   }
   return tabs ? { ...s, tabs } : s;
+}
+
+function keepOwnAddresses(s: BrowserState, homeId: string, members: Set<string>): BrowserState {
+  const paired = pairedIds(s);
+  const keys = new Set([...members].map((id) => s.tabs[id]).filter((t): t is Tab => !!t).map(pinKeyOf));
+  const families = new Map<string, Tab[]>();
+  for (const t of Object.values(s.tabs)) {
+    if (!keys.has(pinKeyOf(t)) || !sharedRow(s, t, paired)) continue;
+    const family = `${t.profileId} ${pinKeyOf(t)}`;
+    families.get(family)?.push(t) ?? families.set(family, [t]);
+  }
+  const rank = rankFor(homeId);
+  const apart: string[] = [];
+  let tabs: Record<string, Tab> | null = null;
+  for (const family of families.values()) {
+    const primary = [...family].sort((x, y) => rank(y) - rank(x) || y.lastActiveAt - x.lastActiveAt)[0]!;
+    for (const t of family) {
+      if (t.id === primary.id || t.url === primary.url) continue;
+      if (ownsPage(t)) apart.push(t.id);
+      else if (!holderOfPage(t)) (tabs ??= { ...s.tabs })[t.id] = { ...t, url: primary.url, title: primary.title, favicon: primary.favicon };
+    }
+  }
+  return withOwnKeys(tabs ? { ...s, tabs } : s, apart);
+}
+
+function keepSameTabRows(s: BrowserState, members: Set<string>): BrowserState {
+  const holders = new Set(Object.values(s.tabs).map(holderOfPage).filter(Boolean));
+  const apart = new Set<string>();
+  for (const id of members) {
+    const m = s.tabs[id];
+    if (!m || apart.has(id) || !ownsPage(m) || inPinnedContainer(s, id)) continue;
+    for (const rowId of s.windows[m.windowId]?.tabIds ?? []) {
+      const t = s.tabs[rowId];
+      if (!t || apart.has(rowId) || members.has(rowId) || t.pin || t.profileId !== m.profileId || pinKeyOf(t) !== pinKeyOf(m) || !ownsPage(t) || inPinnedContainer(s, rowId)) continue;
+      if (holders.has(t.id) && !holders.has(m.id)) {
+        apart.add(m.id);
+        break;
+      }
+      apart.add(t.id);
+    }
+  }
+  return withOwnKeys(s, apart);
 }
 
 function keepSplitsHome(s: BrowserState, homeId: string, members: Set<string>): BrowserState {
   if (!Object.keys(s.splits ?? {}).length) return s;
   const leaving = (v: BrowserState["splits"][string]) => splitTabIds(v).every((id) => members.has(id) && s.tabs[id] && !inPinnedContainer(s, id));
-  const homeSplits = Object.values(s.splits).filter((v) => v.windowId === homeId && leaving(v));
-  const home = new Set(homeSplits.flatMap((v) => splitTabIds(v)).map((id) => pinKeyOf(s.tabs[id]!)));
-  const away = Object.values(s.splits).filter((v) => v.windowId !== homeId && leaving(v) && splitTabIds(v).every((id) => home.has(pinKeyOf(s.tabs[id]!))));
-  const panes = new Set([...homeSplits, ...away].flatMap((v) => splitTabIds(v)));
-  const shown = new Set<string>();
-  for (const t of Object.values(s.tabs)) {
-    if (!panes.has(t.id) && hasPage(t) && home.has(pinKeyOf(t)) && !inPinnedContainer(s, t.id)) shown.add(pinKeyOf(t));
-  }
-  const live = [...panes].map((id) => s.tabs[id]!).filter(hasPage);
-  live.sort((a, b) => Number(b.windowId === homeId) - Number(a.windowId === homeId) || b.lastActiveAt - a.lastActiveAt);
-  let tabs: Record<string, Tab> | null = null;
-  for (const t of live) {
-    if (!shown.has(pinKeyOf(t))) shown.add(pinKeyOf(t));
-    else (tabs ??= { ...s.tabs })[t.id] = { ...t, pinKey: newId("tab") };
-  }
-  if (!away.length && !tabs) return s;
+  const homePanes = Object.values(s.splits).filter((v) => v.windowId === homeId && leaving(v)).flatMap((v) => splitTabIds(v));
+  if (!homePanes.length) return s;
+  const profileOf = new Map(homePanes.map((id) => [pinKeyOf(s.tabs[id]!), s.tabs[id]!.profileId]));
+  const away = Object.values(s.splits).filter((v) => v.windowId !== homeId && leaving(v) && splitTabIds(v).every((id) => profileOf.has(pinKeyOf(s.tabs[id]!))));
   const splits = { ...s.splits };
   for (const v of away) delete splits[v.id];
-  return { ...s, splits, ...(tabs ? { tabs } : {}) };
+  let next: BrowserState = { ...s, splits };
+  const rank = rankFor(homeId);
+  for (const id of homePanes) {
+    const pane = next.tabs[id]!;
+    if (ownsPage(pane)) continue;
+    const paired = pairedIds(next);
+    const owners = Object.values(next.tabs).filter((t) => ownsPage(t) && pinKeyOf(t) === pinKeyOf(pane) && t.profileId === pane.profileId && sharedRow(next, t, paired));
+    const heir = owners.find((t) => t.id === holderOfPage(pane)) ?? owners.sort((x, y) => rank(y) - rank(x) || y.lastActiveAt - x.lastActiveAt)[0];
+    if (heir) next = swapPlaces(next, heir.id, id);
+  }
+  const paired = pairedIds(next);
+  const copies = Object.values(next.tabs).filter((t) => profileOf.get(pinKeyOf(t)) === t.profileId && sharedRow(next, t, paired));
+  next = withOwnKeys(next, copies.filter(ownsPage).map((t) => t.id));
+  const gone = copies.filter((t) => !ownsPage(t) && pinKeyOf(next.tabs[t.id]!) === pinKeyOf(t)).map((t) => t.id);
+  if (!gone.length) return next;
+  for (const windowId of new Set(gone.map((id) => next.tabs[id]!.windowId))) next = keepShownProfile(next, windowId, gone);
+  return removeTabs(next, gone, false);
 }
