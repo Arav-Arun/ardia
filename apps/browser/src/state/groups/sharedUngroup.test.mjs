@@ -495,3 +495,31 @@ test("across three windows with no live page, the copy waiting on a restore give
   for (const w of [a, b, c]) assert.ok(rows(w).some((t) => t.url === site("moved")), "at the address its restore holds");
   assert.equal(Object.values(S().tabs).find((t) => wakeOf(t) === "restore:old-c" || adoptOf(t) === "restore:old-c")?.url, site("moved"), "the restore keeps its address");
 });
+
+test("ungrouping a shared folder from another window keeps a split with a Top App where it is, with one copy of its tab", () => {
+  S().hydrate({});
+  const a = S().createWindow({ url: site("one") });
+  S().newTab(a, { url: site("two"), background: true });
+  S().newTab(a, { url: site("app"), background: true });
+  S().updateSettings({ shareTabsAcrossWindows: true });
+  const b = S().createWindow({ url: site("b") });
+  const pick = (w, name) => rows(w).find((t) => t.url === site(name)).id;
+  S().pinTabs([pick(b, "app")], true);
+  const group = S().groupTabs([pick(b, "one"), pick(b, "two")], { pinned: true });
+  S().setFocusedWindow(b);
+  S().createSplit([pick(b, "app"), pick(b, "one")]);
+  assert.equal(splitsIn(a).length, 0, "the split is only in the window that made it");
+  const closed = S().closedTabs.length;
+  S().setFocusedWindow(a);
+  S().ungroup(folderOf(a, group).id);
+  for (const w of [a, b]) {
+    const keys = S().windows[w].tabIds.map((id) => S().tabs[id]).filter((t) => t.profileId === "default").map(pinKeyOf);
+    assert.equal(new Set(keys).size, keys.length, "no tab is listed twice in a window, split panes included");
+  }
+  const live = Object.values(S().tabs).filter(hasPage).map(pinKeyOf);
+  assert.equal(new Set(live).size, live.length, "one live page per tab");
+  const split = splitsIn(b)[0];
+  assert.ok(split && splitTabIds(split).some((id) => S().tabs[id].url === site("one") && hasPage(S().tabs[id])), "the split stays in its window with the tab's live page");
+  assert.equal(splitsIn(a).length, 0);
+  assert.equal(S().closedTabs.length, closed);
+});

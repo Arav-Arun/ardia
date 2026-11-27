@@ -78,12 +78,21 @@ function keepSplitsHome(s: BrowserState, homeId: string, members: Set<string>): 
   if (!Object.keys(s.splits ?? {}).length) return s;
   const released = (id: string) => members.has(id) && !!s.tabs[id] && !inPinnedContainer(s, id);
   const releasing = (v: BrowserState["splits"][string]) => splitTabIds(v).some(released) && splitTabIds(v).every((id) => !!s.tabs[id]);
-  const homeSplits = Object.values(s.splits).filter((v) => v.windowId === homeId && releasing(v));
+  const affected = Object.values(s.splits).filter(releasing);
+  if (!affected.length) return s;
+  const focusRank = (windowId: string) => {
+    const at = s.ui?.focusOrder?.indexOf(windowId) ?? -1;
+    return windowId === homeId ? -1 : at < 0 ? Number.MAX_SAFE_INTEGER : at;
+  };
+  const sameTabs = new Map<string, BrowserState["splits"][string][]>();
+  for (const v of affected) {
+    const key = splitTabIds(v).map((id) => pinKeyOf(s.tabs[id]!)).sort().join(" ");
+    sameTabs.get(key)?.push(v) ?? sameTabs.set(key, [v]);
+  }
+  const homeSplits = [...sameTabs.values()].map((copies) => copies.reduce((x, y) => (focusRank(y.windowId) < focusRank(x.windowId) ? y : x)));
   const homePanes = homeSplits.flatMap((v) => splitTabIds(v)).filter(released);
-  if (!homePanes.length) return s;
-  const homeKeys = new Set(homeSplits.flatMap((v) => splitTabIds(v)).map((id) => pinKeyOf(s.tabs[id]!)));
   const profileOf = new Map(homePanes.map((id) => [pinKeyOf(s.tabs[id]!), s.tabs[id]!.profileId]));
-  const away = Object.values(s.splits).filter((v) => v.windowId !== homeId && releasing(v) && splitTabIds(v).every((id) => homeKeys.has(pinKeyOf(s.tabs[id]!))));
+  const away = affected.filter((v) => !homeSplits.includes(v));
   const splits = { ...s.splits };
   for (const v of away) delete splits[v.id];
   let next: BrowserState = { ...s, splits };
