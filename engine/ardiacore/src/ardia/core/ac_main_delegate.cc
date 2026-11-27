@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "ardia/core/ac_fatal_note.h"
-#include "base/allocator/partition_alloc_features.h"
+#include "ardia/core/ac_feature_switches.h"
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/environment.h"
@@ -316,39 +316,6 @@ void KeepMemoryReducer(base::CommandLine* command_line) {
   if (!kept.empty()) {
     command_line->AppendSwitchASCII(blink::switches::kJavaScriptFlags, base::JoinString(kept, " "));
   }
-}
-
-void MergeFeatures(base::CommandLine* command_line, const char* list, std::string_view features) {
-  const std::string current = command_line->GetSwitchValueASCII(list);
-  command_line->RemoveSwitch(list);
-  command_line->AppendSwitchASCII(list, current.empty() ? std::string(features)
-                                                        : current + "," + std::string(features));
-}
-
-bool NamesFeature(const base::CommandLine& command_line, std::string_view feature) {
-  for (const char* list : {switches::kEnableFeatures, switches::kDisableFeatures}) {
-    const std::string value = command_line.GetSwitchValueASCII(list);
-    for (std::string_view entry :
-         base::SplitStringPiece(value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
-      if (entry.starts_with('*')) {
-        entry.remove_prefix(1);
-      }
-      if (entry.substr(0, entry.find_first_of("<:")) == feature) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-void ReportDanglingUnretainedWithoutCrashing(base::CommandLine* command_line) {
-  const std::string_view feature = base::features::kPartitionAllocUnretainedDanglingPtr.name;
-  if (NamesFeature(*command_line, feature)) {
-    return;
-  }
-  MergeFeatures(command_line, switches::kEnableFeatures,
-                std::string(feature) + ":" + base::features::kUnretainedDanglingPtrModeParam.name +
-                    "/dump_without_crashing");
 }
 
 constexpr int kDiskSpaceCheckSeconds = 60;

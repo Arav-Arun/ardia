@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const delegate = read("../../../engine/ardiacore/src/ardia/core/ac_main_delegate.cc");
+const switchesSource = read("../../../engine/ardiacore/src/ardia/core/ac_feature_switches.cc");
+const clang = ["clang++"].find((name) => spawnSync(name, ["--version"]).status === 0);
 const softNavigationPatchName = "chromium-mac-soft-navigation-time-origin.patch";
 const softNavigationPatch = read(`../../../engine/patches/${softNavigationPatchName}`);
 const parseSteps = (text) =>
@@ -20,8 +26,8 @@ const seriesWin = parseSteps(read("../../../scripts/windows/engine/series-win"))
 
 const functionBody = (source, signature) => {
   const start = source.indexOf(signature);
-  assert.ok(start >= 0, `ac_main_delegate.cc has no ${signature}`);
-  const open = source.indexOf("{", start);
+  assert.ok(start >= 0, `no ${signature}`);
+  const open = source.indexOf("{", start + signature.length - 1);
   let depth = 0;
   for (let at = open; at < source.length; at += 1) {
     if (source[at] === "{") depth += 1;
@@ -31,32 +37,53 @@ const functionBody = (source, signature) => {
   assert.fail(`${signature} never closes`);
 };
 
-test("the browser asks PartitionAlloc to dump, not crash, on a dangling Unretained pointer, as Chrome's Finch config does", () => {
-  const body = functionBody(delegate, "void ReportDanglingUnretainedWithoutCrashing(base::CommandLine* command_line)");
+test("the dump mode and the user's own overrides hold when the real helper runs", { skip: !clang && "clang++ is required" }, () => {
+  const scratch = mkdtempSync(join(tmpdir(), "ardia-feature-switches-"));
+  try {
+    const binary = join(scratch, "feature-switches");
+    const compiled = spawnSync(
+      clang,
+      [
+        "-std=c++20", "-Wall", "-Wextra", "-Werror", "-fsanitize=undefined,address", "-g",
+        "-I", fileURLToPath(new URL("./fixtures/feature-switches", import.meta.url)),
+        "-I", fileURLToPath(new URL("../../../engine/ardiacore/src", import.meta.url)),
+        fileURLToPath(new URL("../../../engine/ardiacore/src/ardia/core/ac_feature_switches.cc", import.meta.url)),
+        fileURLToPath(new URL("./feature-switches.test.cc", import.meta.url)),
+        "-o", binary,
+      ],
+      { encoding: "utf8", timeout: 180_000 },
+    );
+    assert.equal(compiled.status, 0, compiled.stderr);
+    const ran = spawnSync(binary, [], { encoding: "utf8", timeout: 60_000 });
+    assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+    assert.match(ran.stdout, /feature switch scenarios passed/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test("the helper takes the names from base and reads entries with Chromium's own parser", () => {
+  const body = functionBody(switchesSource, "void ReportDanglingUnretainedWithoutCrashing(base::CommandLine* command_line)");
   assert.match(body, /base::features::kPartitionAllocUnretainedDanglingPtr\.name/);
   assert.match(body, /base::features::kUnretainedDanglingPtrModeParam\.name/);
   assert.match(body, /"\/dump_without_crashing"/);
-  assert.match(body, /MergeFeatures\(command_line, switches::kEnableFeatures,/);
   assert.ok(!/kDisableFeatures/.test(body), "the feature stays on, so BackupRefPtr still quarantines the freed object");
-  assert.match(delegate, /#include "base\/allocator\/partition_alloc_features\.h"/);
-});
-
-test("a feature the command line already names in either list is left as the user set it", () => {
-  const body = functionBody(delegate, "void ReportDanglingUnretainedWithoutCrashing(base::CommandLine* command_line)");
-  assert.ok(body.indexOf("NamesFeature(*command_line, feature)") < body.indexOf("MergeFeatures("));
-  const names = functionBody(delegate, "bool NamesFeature(const base::CommandLine& command_line, std::string_view feature)");
-  assert.match(names, /switches::kEnableFeatures, switches::kDisableFeatures/);
-  assert.match(names, /entry\.starts_with\('\*'\)/);
-  assert.match(names, /entry\.substr\(0, entry\.find_first_of\("<:"\)\) == feature/);
+  const decides = functionBody(switchesSource, "bool CommandLineDecidesFeature(const base::CommandLine& command_line, std::string_view feature)");
+  assert.match(decides, /base::FeatureList::SplitFeatureListString\(value\)/);
+  assert.match(decides, /base::FeatureList::ParseEnableFeatureString\(entry, &name, &study, &group, &params\)/);
+  assert.match(switchesSource, /#include "base\/allocator\/partition_alloc_features\.h"/);
+  assert.match(switchesSource, /#include "base\/feature_list\.h"/);
+  assert.match(read("../../../engine/ardiacore/src/ardia/core/BUILD.gn"), /"ac_feature_switches\.cc",\n\s+"ac_feature_switches\.h",/);
 });
 
 test("only the browser process adds the mode, before Chrome initializes its feature list; helpers inherit the browser's", () => {
   const startup = functionBody(delegate, "std::optional<int> ACMainDelegate::BasicStartupComplete()");
-  const browserOnly = startup.indexOf("if (!command_line->HasSwitch(switches::kProcessType)) {");
-  const call = startup.indexOf("ReportDanglingUnretainedWithoutCrashing(command_line);");
-  const chrome = startup.indexOf("return ChromeMainDelegate::BasicStartupComplete();");
-  assert.ok(browserOnly >= 0 && call > browserOnly && call < chrome);
+  const browserOnly = functionBody(startup, "if (!command_line->HasSwitch(switches::kProcessType)) {");
+  assert.equal(browserOnly.split("ReportDanglingUnretainedWithoutCrashing(command_line);").length, 2);
   assert.equal(startup.split("ReportDanglingUnretainedWithoutCrashing(").length, 2);
+  assert.ok(startup.indexOf(browserOnly) < startup.indexOf("return ChromeMainDelegate::BasicStartupComplete();"));
+  assert.match(delegate, /#include "ardia\/core\/ac_feature_switches\.h"/);
+  assert.ok(!/void MergeFeatures\(/.test(delegate), "one MergeFeatures, the tested one");
 });
 
 test("the soft navigation patch takes Chromium's Fuchsia early return on the Mac and changes nothing else", () => {
