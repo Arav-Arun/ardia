@@ -233,6 +233,8 @@ cross-builds. Don't spin up Boat VMs.
 
   Where a skill and this file disagree, this file wins: the motion-frequency rule above and Dia parity come first.
   These skills are written for the web and React. Apply the principles, and take values from our own tokens.
+  `ask-emil`, `review-animations`, `learn-taste`, `pick-ui-library` and `prototype` are slash-command only. When
+  you need one of them, read its `~/.claude/skills/<name>/SKILL.md` and follow it.
 - **Owner recordings and screenshots.** Copy a recording out of its temp folder at once (it vanishes, and
   the name has a narrow no-break space: use a glob). Extract 30 fps frames with ffmpeg, find events by
   frame difference, and measure positions and timings from the pixels. A position or size in the owner's
