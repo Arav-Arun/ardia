@@ -1,6 +1,6 @@
 import type { BrowserState } from "../browser/store";
 import type { Tab } from "../browser/types";
-import { inPinnedContainer, isPinnedRow, newId, pinKeyOf } from "../browser/model";
+import { inPinnedContainer, newId, pinKeyOf } from "../browser/model";
 import { adoptOf, hasPage, holderOfPage, wakeOf } from "../tabs/pageSession";
 import { splitTabIds } from "../splits/splits";
 import { isRegularWindow } from "../windows/small";
@@ -84,7 +84,7 @@ function keepSplitsHome(s: BrowserState, homeId: string, members: Set<string>): 
     const at = s.ui?.focusOrder?.indexOf(windowId) ?? -1;
     return windowId === homeId ? -1 : at < 0 ? Number.MAX_SAFE_INTEGER : at;
   };
-  const mirrored = (v: BrowserState["splits"][string]) => splitTabIds(v).every((id) => released(id) || isPinnedRow(s.tabs[id]));
+  const mirrored = (v: BrowserState["splits"][string]) => splitTabIds(v).every((id) => released(id) || (inPinnedContainer(s, id) && s.tabs[id]?.pin?.as !== "tile"));
   const sameTabs = new Map<string, BrowserState["splits"][string][]>();
   const homeSplits: BrowserState["splits"][string][] = [];
   for (const v of affected) {

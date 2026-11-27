@@ -560,3 +560,36 @@ test("ungrouping a shared folder keeps two splits made separately in two other w
   assert.equal(new Set(live).size, live.length, "one live page per tab");
   assert.equal(S().closedTabs.length, closed);
 });
+
+test("ungrouping one of two shared pinned folders that a mirrored split spans keeps one split, in the invoking window", () => {
+  S().hydrate({});
+  const a = S().createWindow({ url: site("one") });
+  for (const name of ["two", "three", "four"]) S().newTab(a, { url: site(name), background: true });
+  S().updateSettings({ shareTabsAcrossWindows: true });
+  const b = S().createWindow({ url: site("b") });
+  const pick = (w, name) => rows(w).find((t) => t.url === site(name)).id;
+  const first = S().groupTabs([pick(b, "one"), pick(b, "two")], { pinned: true, name: "First" });
+  const second = S().groupTabs([pick(b, "three"), pick(b, "four")], { pinned: true, name: "Second" });
+  const secondKey = pinKeyOf(S().groups[second]);
+  S().setFocusedWindow(b);
+  S().createSplit([pick(b, "one"), pick(b, "three")]);
+  assert.equal(splitsIn(a).length, 1, "the split across two pinned folders is mirrored");
+  const paneOf = (w) => splitTabIds(splitsIn(w)[0]).find((id) => S().tabs[id].url === site("one"));
+  pageAs(paneOf(a), ASLEEP);
+  pageAs(paneOf(b), loadedPage(navigationTo(site("one"))));
+  const closed = S().closedTabs.length;
+  S().setFocusedWindow(a);
+  S().ungroup(folderOf(a, first).id);
+  assert.equal(Object.values(S().splits).length, 1, "one split is left");
+  assert.equal(splitsIn(a).length, 1, "in the window it was ungrouped from");
+  assert.ok(hasPage(S().tabs[splitTabIds(splitsIn(a)[0]).find((id) => S().tabs[id].url === site("one"))]), "holding the live page from the other window's copy");
+  for (const w of [a, b]) {
+    const keys = S().windows[w].tabIds.map((id) => S().tabs[id]).filter((t) => t.profileId === "default").map(pinKeyOf);
+    assert.equal(new Set(keys).size, keys.length, "no tab is listed twice in a window, split panes included");
+    const kept = Object.values(S().groups).find((g) => g.windowId === w && pinKeyOf(g) === secondKey);
+    assert.ok(kept?.pinned, "the other folder stays pinned in every window");
+  }
+  const live = Object.values(S().tabs).filter(hasPage).map(pinKeyOf);
+  assert.equal(new Set(live).size, live.length, "one live page per tab");
+  assert.equal(S().closedTabs.length, closed);
+});
