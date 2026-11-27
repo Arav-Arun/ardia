@@ -13,7 +13,7 @@ import { settleThemeAdoption, themeChosenHere } from "./syncThemes";
 import { editClock, startEditClock } from "./editClock";
 import { addLinkedProfile, appScopeOf, linkedProfileId, linkProfiles, readyToPair, remoteProfileRecord, sharedDataChain } from "./profileLinks";
 import { summarize } from "./syncSummary";
-import { noteSnapshot, timedCycle } from "./cycleWork";
+import { noteChainStatus, noteCycle, timedCycle } from "./cycleWork";
 import { exposeDevSync } from "./devSync";
 import { folderScopes, moveChain, noteFolderMove, noteTurnOn, type FolderMoveResult, type TurnOnFolder } from "./folderMove";
 import { freezeRemovals, markDeviceRemoved, markRemoved, settleRemovals } from "./profileRemoval";
@@ -44,7 +44,7 @@ let cycle: Promise<void> | null = null;
 let again = false;
 let forcePasswordsNext = false;
 let timer: ReturnType<typeof setTimeout> | undefined;
-const { read, loadState, persistJournal, watchScope, save, startOver, checkpoint } = syncFiles(() => doc);
+const { read, loadState, persistJournal, persistApplying, watchScope, save, startOver, checkpoint } = syncFiles(() => doc);
 
 function load() {
   const loaded = read();
@@ -114,6 +114,8 @@ async function runCycle({ retiring = false, forcePasswords = false }: CycleOptio
   }
 }
 
+const CHAIN_MISSING_TEXT = `This device is out of sync. Sync may have been reset from another device, or the sync folder hasn’t finished syncing. Everything on this ${PLATFORM_TERMS.computer} is kept, and sync carries on once its data is back. To set sync up again, choose Stop Syncing.`;
+
 async function cycleOnce(native: NonNullable<typeof SyncNative>, folder: string, device: string, { retiring, forcePasswords }: Required<CycleOptions>) {
   const consent = consentToken();
   clearTimeout(timer);
@@ -122,7 +124,7 @@ async function cycleOnce(native: NonNullable<typeof SyncNative>, folder: string,
     watchExtensions();
     const status = await native.chainStatus(folder);
     if (status === "unavailable") return publishUi({ status: "offline", error: null });
-    if (status === "missing") return await resetFromElsewhere();
+    if (noteChainStatus(consent, device, status) === "missing") return publishUi({ status: "stalled", error: CHAIN_MISSING_TEXT });
     const transport = folderTransport(native, folder);
     if (editClock().device !== device) startEditClock(device, doc.clock);
     const clock = editClock();
@@ -130,14 +132,14 @@ async function cycleOnce(native: NonNullable<typeof SyncNative>, folder: string,
     if (freezeRemovals(doc)) save();
     const appSettled = watchScope(APP_SCOPE, app, clock);
     try {
-      noteSnapshot(await syncScope({
+      noteCycle(consent, await syncScope({
         scope: APP_SCOPE,
         state: app,
         transport,
         adapters: appAdapters(doc, retiring),
         clock,
         device,
-        options: { persist: persistJournal(APP_SCOPE), holdApply: isQuitting },
+        options: { persist: persistJournal(APP_SCOPE), persistApplying: persistApplying(APP_SCOPE), holdApply: isQuitting },
       }));
     } finally {
       await appSettled();
@@ -155,14 +157,14 @@ async function cycleOnce(native: NonNullable<typeof SyncNative>, folder: string,
       const state = (doc.scopes[scope] ??= emptyScope());
       const settled = watchScope(scope, state, clock);
       try {
-        noteSnapshot(await syncScope({
+        noteCycle(consent, await syncScope({
           scope,
           state,
           transport,
           adapters: profileAdapters(doc, profileId, retire, forcePasswords),
           clock,
           device,
-          options: { expired: historyExpired, persist: persistJournal(scope), holdApply: isQuitting },
+          options: { expired: historyExpired, persist: persistJournal(scope), persistApplying: persistApplying(scope), holdApply: isQuitting },
         }));
       } finally {
         await settled();
@@ -182,7 +184,11 @@ async function cycleOnce(native: NonNullable<typeof SyncNative>, folder: string,
     doc.lastSyncedAt = Date.now();
     publishUi({ status: "updated", error: null, pending });
   } catch (error) {
-    if ((error as { code?: unknown } | null)?.code === "ERR_SYNC_FOLDER_UNREADABLE") {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (code === "ERR_SYNC_CHAIN_MISSING") {
+      noteChainStatus(consent, device, "missing");
+      publishUi({ status: "stalled", error: CHAIN_MISSING_TEXT });
+    } else if (code === "ERR_SYNC_FOLDER_UNREADABLE") {
       publishUi({ status: "offline", error: "The sync folder can’t be read. Check that it’s still there and that Ardia can open it." });
     } else if (useSync.getState().status !== "locked") {
       warnFor(consent, "[sync] cycle failed", error);
@@ -210,13 +216,6 @@ async function loadSavedState() {
   startEditClock(doc.deviceId ?? "", doc.clock);
   settleSettingsFromSavedSync(doc.scopes[APP_SCOPE], installed && doc === loading && doc.enabled && !stopping && typeSyncedFor(doc.types, "settings", true));
   settleThemeAdoption(doc.profiles, doc.scopes[APP_SCOPE], false);
-}
-
-async function resetFromElsewhere() {
-  await SyncNative?.forget(doc.deviceId!);
-  doc = { ...emptyDoc(), folder: doc.folder, types: doc.types };
-  startOver();
-  publishUi({ status: "reset", error: "This device is out of sync. Sync may have been reset from another device." });
 }
 
 export const folderInfo = async (path?: string | null): Promise<FolderInfo | null> => (await SyncNative?.folderInfo(path ?? doc.folder ?? null)) ?? null;

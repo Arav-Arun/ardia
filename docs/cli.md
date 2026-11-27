@@ -40,7 +40,7 @@ Plugins, "On your PATH. It can control Ardia.", or why it isn't on PATH, with Tr
 the signed digest), and runs its after-update actions once per version (`ardia skills install --auto`,
 `ardia skills refresh`, `ardia computer refresh`). **Installed means control is on**: installing turns `cliControl` on
 (the sheet says so), unless you turned control off yourself. An Off you chose, with the control pill's Stop or the switch
-in Settings, stays off across launches. When the engine's control server stops itself (it couldn't
+in Settings, stays off across launches; the pill's close button hides the pill without stopping control, and Settings › Advanced › Command line and automation › Show the control pill turns the pill off persistently. When the engine's control server stops itself (it couldn't
 start or listen, or its folder or file check failed), the setting turns off with it and Settings › Advanced shows why, but
 that Off isn't your choice: the next launch with an approved plugin that asks for control (one try per launch, so a start that keeps failing doesn't loop) or enabling or approving Command Line again asks for control again, and the socket is back unless the engine's start fails again. Both are counted, never the message:
 `usage_counts.cli_control_self_stop_<cause>` (`policy`, `listen`, `deadline`, `stopped`, `other`) and `cli_control_restored`.
