@@ -701,6 +701,18 @@ constexpr bool KeepsWindowWithoutTabs(bool hosted, bool companion, bool closing)
   return (hosted || companion) && !closing;
 }
 
+constexpr bool ShortcutReservedFromPages(std::string_view command) {
+  return command == "newTab" || command == "newWindow" ||
+         command == "newIncognitoWindow" || command == "reopenClosedTab" ||
+         command == "closeTab" || command == "closeWindow" ||
+         command == "nextTab" || command == "previousTab" ||
+         command == "tabSwitcher" || command == "quit";
+}
+
+constexpr bool ShortcutRegisters(bool suppressed) {
+  return !suppressed;
+}
+
 }
 
 #endif
