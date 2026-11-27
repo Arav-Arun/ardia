@@ -168,7 +168,8 @@ test("the diagnostics wiring sends a committed record at launch, drops a held on
   assert.match(watch, /void sendCommittedQuitEpisode\(\);\s*onHoverLost\(trackHoverLost\);/);
   assert.doesNotMatch(watch.slice(0, watch.indexOf("\n}\n")), /onAppEvent/);
   const usage = readFileSync(new URL("./usage.ts", import.meta.url), "utf8");
-  assert.match(usage, /else if \(e\.type === "quitCancelled"\) \{\s*startContextSamples\(\);\s*dropHeldQuitEpisode\(\);\s*\}/);
+  assert.match(usage, /else if \(e\.type === "quitCancelled"\) resumeAfterCancelledQuit\(\);/);
+  assert.match(source, /export function resumeAfterCancelledQuit\(\) \{\s*startContextSamples\(\);\s*dropHeldQuitEpisode\(\);\s*\}/);
   assert.match(watch, /onConsentPeriodChange\(dropQuitEpisodes\);/);
   const quitFlow = readFileSync(new URL("../../../../../packages/shell/ios/QuitFlow.swift", import.meta.url), "utf8");
   assert.match(quitFlow, new RegExp(`static let heldHoverLoss = "${HELD}"`));

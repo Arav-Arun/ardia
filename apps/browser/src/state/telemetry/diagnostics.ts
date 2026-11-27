@@ -9,7 +9,7 @@ import { useBrowser } from "../browser/store";
 import { capture, consentNow, consentToken, counted, isSharing, saveContext, stillValid, onConsentPeriodChange, type ConsentToken } from "./client";
 import { nativeConsent } from "./nativeConsent";
 import { hoverLostProperties, oneOf } from "./hoverLost";
-import { dropQuitEpisodes, holdQuitEpisode, retireHeldQuitEpisode, sendCommittedQuitEpisode } from "./hoverLostAtQuit";
+import { dropHeldQuitEpisode, dropQuitEpisodes, holdQuitEpisode, retireHeldQuitEpisode, sendCommittedQuitEpisode } from "./hoverLostAtQuit";
 import { formatRecentPages, readRecentPages, type RecentPage, type SavedContext } from "./savedContext";
 import { noteDragsEnded } from "./stuckDrags";
 import { noteEngineCliTotals } from "./cliCounts";
@@ -213,6 +213,11 @@ export function startContextSamples() {
   firstSample = setTimeout(() => void recordContext(), FIRST_CONTEXT_MS);
   everySample = setInterval(() => void recordContext(), CONTEXT_EVERY_MS);
   watchWebuiPage();
+}
+
+export function resumeAfterCancelledQuit() {
+  startContextSamples();
+  dropHeldQuitEpisode();
 }
 
 export function stopContextSamples() {

@@ -3,6 +3,7 @@ import type { PageEngine, ProtectedMediaRequest } from "../../platform/tabs";
 import { confirm } from "../../platform/dialogs";
 import { create } from "zustand";
 import { storeTransaction, useBrowser } from "../browser/store";
+import { forgetCommittedDocumentIfGone, notePageCommit, notePageEnded, pageDocumentOf } from "./pageDocuments";
 import { pageOf, patchPage } from "../tabs/pageState";
 import {
   builtInEngine,
@@ -48,52 +49,9 @@ const store = () => useBrowser.getState();
 const declinedSites = new Set<string>();
 const toldInChromiumMode = new Set<string>();
 const webKitSites = new Map<string, string>();
-const committedDocuments = new Map<string, { id: number; at: number }>();
-let nextDocument = 0;
 const hostLabel = (site: string) => new URL(site).hostname.replace(/^www\./, "");
 
-export function notePageCommit(tabId: string, committedAt: number | undefined) {
-  if (typeof committedAt !== "number" || !(committedAt > 0) || !store().tabs[tabId]) return;
-  viewlessDocuments.delete(tabId);
-  const last = committedDocuments.get(tabId);
-  if (last && committedAt === last.at) return;
-  committedDocuments.set(tabId, { id: ++nextDocument, at: committedAt });
-}
-
-export function notePageEnded(tabId: string) {
-  if (!store().tabs[tabId]) return void committedDocuments.delete(tabId);
-  const last = committedDocuments.get(tabId);
-  committedDocuments.set(tabId, { id: ++nextDocument, at: last?.at ?? 0 });
-}
-
-const viewlessDocuments = new Set<string>();
-let unwatchViewless: (() => void) | null = null;
-
-function forgetViewlessDocumentsOfClosedTabs() {
-  unwatchViewless ??= useBrowser.subscribeTo(["tabs"], (s) => {
-    for (const id of viewlessDocuments) {
-      if (s.tabs[id]) continue;
-      viewlessDocuments.delete(id);
-      committedDocuments.delete(id);
-    }
-    if (viewlessDocuments.size || !unwatchViewless) return;
-    unwatchViewless();
-    unwatchViewless = null;
-  });
-}
-
-export function forgetCommittedDocumentIfGone(tabId: string) {
-  if (!store().tabs[tabId]) {
-    viewlessDocuments.delete(tabId);
-    committedDocuments.delete(tabId);
-    return;
-  }
-  if (!committedDocuments.has(tabId)) return;
-  viewlessDocuments.add(tabId);
-  forgetViewlessDocumentsOfClosedTabs();
-}
-
-export const pageDocumentOf = (tabId: string) => committedDocuments.get(tabId)?.id ?? 0;
+export { forgetCommittedDocumentIfGone, notePageCommit, notePageEnded, pageDocumentOf };
 
 export const useEngineModeSwitch = create<{ pending: EngineMode | null }>()(() => ({ pending: null }));
 
