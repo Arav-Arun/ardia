@@ -521,6 +521,37 @@ test("a move after a link to a streaming site still lands when the page moves on
   webviews.clear();
 });
 
+test("a tab the ardia command holds stays in Chromium when it lands on a site routed to WebKit, so its session isn't detached", async () => {
+  const { holdForCli, releaseFromCli } = await import("../tabs/cliHolds.ts");
+  S().hydrate({});
+  S().updateSettings({ protectedVideoInWebKit: true, websiteEngines: { "https://read.example": "webkit" } });
+  setConsentPeriod(true, "test-epoch");
+  const w = S().createWindow({ url: "https://search.example/?q=film" });
+  const tabId = model.activeTabId(S(), w);
+  S().updateTab(tabId, { engine: "chromium", url: "https://search.example/?q=film" });
+  webviews.set(tabId, { evaluate: () => Promise.resolve(false), pageCookies: () => Promise.resolve([]) });
+  assert.deepEqual(holdForCli("cli-session", [tabId]).started, [tabId]);
+  takeEngineSwitchCounts();
+  S().updateTab(tabId, { url: "https://www.netflix.com/" });
+  followSiteChoice(tabId, "chromium", "https://www.netflix.com/", "https://search.example/?q=film");
+  S().updateTab(tabId, { url: "https://read.example/a" });
+  followSiteChoice(tabId, "chromium", "https://read.example/a", "https://www.netflix.com/");
+  for (let i = 0; i < 10; i++) await settle();
+  assert.equal(tabEngine(S(), tabId), "chromium", "a protected-video site and a WebKit rule both leave a held tab where the command attached");
+  let counts = takeEngineSwitchCounts();
+  assert.deepEqual([counts.engine_site_moves_kept_for_cli, counts.engine_site_moves], [2, 0]);
+  releaseFromCli("cli-session");
+  S().updateTab(tabId, { url: "https://www.netflix.com/title/1" });
+  followSiteChoice(tabId, "chromium", "https://www.netflix.com/title/1", "https://read.example/a");
+  assert.ok(await waitFor(() => tabEngine(S(), tabId) === "webkit"), "once the command lets go, the site's engine applies again");
+  counts = takeEngineSwitchCounts();
+  assert.deepEqual([counts.engine_site_moves_kept_for_cli, counts.engine_site_moves], [0, 1]);
+  dropSwap(tabId);
+  webviews.clear();
+  setConsentPeriod(false, null);
+  S().updateSettings({ websiteEngines: {} });
+});
+
 function streamingWindow(source = "https://blog.example/", settings = {}) {
   S().hydrate({});
   S().updateSettings({ protectedVideoInWebKit: true, websiteEngines: {}, engineMode: "automatic", ...settings });

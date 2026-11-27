@@ -6,6 +6,7 @@ import { navigationOf } from "../tabs/pageSession";
 import { declineSite, modeStillHolds, openPageIn, pageUrl, showEngineOffer, siteDeclined, tellChromiumModeBlocks } from "./actions";
 import { openedByPage, openerState } from "./openedPages";
 import { noteSiteMove } from "../telemetry/engineSwitchCounts";
+import { heldByCli } from "../tabs/cliHolds";
 import { consentToken, type ConsentToken } from "../telemetry/client";
 
 const store = () => useBrowser.getState();
@@ -82,6 +83,7 @@ export const routedTo = (tabId: string, engine: PageEngine) => (url: string) => 
 function startMove(tabId: string, move: Move) {
   const moves = movesOf(tabId);
   if (declinedVideo(move)) return;
+  if (heldByCli(tabId)) return noteSiteMove("keptForCli", openedByPage(tabId), move.consent);
   if (moves.moving || moves.cooling) return queue(moves, move);
   const wait = SITE_MOVE_SPACING_MS - (Date.now() - moves.lastMovedAt);
   if (!move.forVideo && wait > 0) {
