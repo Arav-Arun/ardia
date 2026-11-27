@@ -214,6 +214,9 @@ cross-builds. Don't spin up Boat VMs.
   remembers (positions, sizes), its animations and their timing in frames, and what keeps running.
   Obvious UX holds everywhere: dismissing something never pauses playback or drags you to another tab;
   going back to the source ends a temporary view (the mini player); nothing reopens right after you close it.
+  Never close an interaction bug as "works" or "the reference does the same" from reading code or from synthetic
+  input alone. Drive the same gesture with real input in both apps (the `cua-driver` skill on an unlocked Mac) and
+  compare what each one does. A pin-drag bug the owner reported was once dismissed that way, and it was real.
 - **Motion follows how often a thing is used.** What people touch all day (tab rows, pinned tiles, folders and
   groups, toolbar buttons, menus, the command bar, switching tabs) is tactile, fast and snappy: it answers on the
   press, with no bounce, squish, overshoot or other flourish, and nothing that delays or moves the thing being
