@@ -4,7 +4,7 @@ import { notePlugin, notePluginTimes, programLinkCause } from "../telemetry/plug
 import { consentToken, type ConsentToken } from "../telemetry/consentPeriod";
 import { onConsentPeriodChange } from "../telemetry/choice";
 import { warnFor } from "../telemetry/consoleConsent";
-import { controlOnByApproval, controlStoppedItself, setProgramControl } from "../app/programControlSetting";
+import { controlStoppedItself, restoreControlAtLaunch } from "../app/programControlSetting";
 import { programsBlocked, refreshLegacyInstalls, REGISTRY_UNREADABLE } from "./programRegistry";
 import { activeManifest, currentPlugins, usePlugins, type ProgramsState } from "./store";
 
@@ -99,11 +99,11 @@ async function countAfterUpdateQuitStops(consent: ConsentToken | null) {
 }
 
 function retryControlAtLaunch(consent: ConsentToken | null) {
+  if (controlRetried || !controlStoppedItself()) return;
   const s = currentPlugins();
-  if (controlRetried || !s.loaded || !s.order.length) return;
+  if (!s.loaded || !s.order.some((name) => activeManifest(s, name)?.permissions.control)) return;
   controlRetried = true;
-  if (!controlStoppedItself() || !s.order.some((name) => activeManifest(s, name)?.permissions.control)) return;
-  if (controlOnByApproval(consent)) setProgramControl(true);
+  restoreControlAtLaunch(consent);
 }
 
 export function reconcilePrograms(consent?: ConsentToken | null) {

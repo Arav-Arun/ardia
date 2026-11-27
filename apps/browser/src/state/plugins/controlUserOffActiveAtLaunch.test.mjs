@@ -31,6 +31,6 @@ test("a launch with an approved Command Line that asks for control leaves the Of
   await settle();
   assert.ok(activeManifest(usePlugins.getState(), "cli"), "the plugin is approved and asks for control, so the launch reached the check");
   assert.equal(S().settings.cliControl, false);
-  assert.equal(takeCliCounts().cli_control_restored, 0);
+  assert.equal(takeCliCounts().cli_control_restore_tries_launch, 0);
   host.linkResult = null;
 });

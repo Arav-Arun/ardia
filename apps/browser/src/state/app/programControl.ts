@@ -7,18 +7,12 @@ import { isTabReady, pageOf, usePages } from "../tabs/pageState";
 import { isInternalTab } from "../pages/urls";
 import { errorText } from "../../lib/errors";
 import { focusedWindowOf } from "../windows/ui";
-import { noteCliPillDismissed, noteCliPillShown, noteControlSelfStop } from "../telemetry/cliCounts";
+import { noteCliPillDismissed, noteCliPillShown, noteControlRestored, noteControlSelfStop } from "../telemetry/cliCounts";
 import { noteDragsEnded } from "../telemetry/stuckDrags";
 import { consentToken, type ConsentToken } from "../telemetry/client";
 import type { ControlCaller } from "./controlCaller";
 import { noteCliConnections } from "../automation/offscreen";
-import {
-  compactControlPill,
-  programControlOn,
-  setProgramControl,
-  setProgramControlInferredOff,
-  showControlPill,
-} from "./programControlSetting";
+import { compactControlPill, programControlOn, setControlByApp, setControlByUser, showControlPill, takeControlRestore } from "./programControlSetting";
 import { startCommandInstall } from "./linuxCommandInstall";
 
 const INDICATOR_HOLD_MS = 3000;
@@ -156,7 +150,7 @@ export function noteTabReady(tabId: string) {
   pushActiveTab();
 }
 
-export const stopProgramControl = () => setProgramControl(false);
+export const stopProgramControl = () => setControlByUser(false);
 
 let started = false;
 
@@ -173,8 +167,11 @@ export function startProgramControl() {
     newest = generation;
     useControlServer.setState({ server });
     const stoppedItself = server.state === "off" ? server.reason : undefined;
+    const restore = server.state === "on" ? takeControlRestore() : null;
+    if (restore) noteControlRestored(restore.consent);
     if (mayReconcile && stoppedItself && programControlOn(useBrowser.getState())) {
-      setProgramControlInferredOff();
+      takeControlRestore();
+      setControlByApp(false);
       noteControlSelfStop(stoppedItself, consent);
     }
   };

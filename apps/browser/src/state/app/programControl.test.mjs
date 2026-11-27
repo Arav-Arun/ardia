@@ -158,3 +158,38 @@ test("a page parked behind New Tab or an Ardia page is not what the user is look
   emit({ state: "off", generation: 4 });
   await settle();
 });
+
+test("a restore after the engine stopped control itself is counted as restored only when the engine says the server is on", async () => {
+  const { restoreControlAtLaunch, controlStoppedItself } = await import("./programControlSetting.ts");
+  const { consentToken } = await import("../telemetry/consentPeriod.ts");
+  setConsentPeriod(true, "test-epoch");
+  while (replies.length) replies.shift()({ state: "off", generation: 5 });
+  await settle();
+  setOn(true);
+  replies.shift()({ state: "on", generation: 5, connections: 0 });
+  await settle();
+  emit({ state: "off", generation: 5, reason: "The control server didn't start." });
+  await settle();
+  assert.equal(controlStoppedItself(), true);
+  replies.shift()({ state: "off", generation: 5, reason: "The control server didn't start." });
+  await settle();
+  takeCliCounts();
+  restoreControlAtLaunch(consentToken());
+  assert.equal(useBrowser.getState().settings.cliControl, true);
+  replies.shift()({ state: "off", generation: 6, reason: "Couldn't listen on 127.0.0.1." });
+  await settle();
+  let counts = takeCliCounts();
+  assert.deepEqual([counts.cli_control_restore_tries_launch, counts.cli_control_restored, counts.cli_control_self_stop_listen], [1, 0, 1], "a restore the engine refused again is a self-stop, not a recovery");
+  assert.equal(controlStoppedItself(), true);
+  replies.shift()({ state: "off", generation: 6, reason: "Couldn't listen on 127.0.0.1." });
+  await settle();
+  restoreControlAtLaunch(consentToken());
+  replies.shift()({ state: "on", generation: 7, connections: 0 });
+  await settle();
+  emit({ state: "on", generation: 7, connections: 1 });
+  await settle();
+  counts = takeCliCounts();
+  assert.deepEqual([counts.cli_control_restore_tries_launch, counts.cli_control_restored], [1, 1], "the server coming back is counted once");
+  assert.equal(replies.length, 0);
+  setConsentPeriod(false, null);
+});

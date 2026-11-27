@@ -7,7 +7,7 @@ const client = await import("./client.ts");
 client.loadChoice();
 client.setSharing(true, "settings");
 after(() => client.setSharing(false, "settings"));
-const { controlStopKind, noteControlRestored, noteControlSelfStop, notePageSignals, noteTokenCommands, noteWindowlessPages, takeCliCounts } = await import("./cliCounts.ts");
+const { controlStopKind, noteControlRestored, noteControlRestoreTry, noteControlSelfStop, notePageSignals, noteTokenCommands, noteWindowlessPages, takeCliCounts } = await import("./cliCounts.ts");
 
 const windowless = (counts) => [counts.windowless_pages_given_geometry, counts.windowless_pages_missing_geometry];
 
@@ -90,15 +90,19 @@ test("what stopped the control server is counted by cause, and never carries the
     noteControlSelfStop(reason);
   }
   noteControlSelfStop("a message this build has never heard of");
+  noteControlRestoreTry("launch");
+  noteControlRestoreTry("approval");
+  noteControlRestoreTry("approval");
   noteControlRestored();
   const counts = takeCliCounts();
   assert.deepEqual(
     Object.keys(reasons).map((kind) => counts[`cli_control_self_stop_${kind}`]),
     [1, 1, 1, 1, 2],
   );
-  assert.equal(counts.cli_control_restored, 1);
+  assert.deepEqual([counts.cli_control_restore_tries_launch, counts.cli_control_restore_tries_approval, counts.cli_control_restored], [1, 2, 1]);
   noteControlSelfStop(reasons.deadline, null);
+  noteControlRestoreTry("launch", null);
   noteControlRestored(null);
   const none = takeCliCounts();
-  assert.deepEqual([none.cli_control_self_stop_deadline, none.cli_control_restored], [0, 0], "an earlier or missing consent period counts nothing");
+  assert.deepEqual([none.cli_control_self_stop_deadline, none.cli_control_restore_tries_launch, none.cli_control_restored], [0, 0, 0], "an earlier or missing consent period counts nothing");
 });

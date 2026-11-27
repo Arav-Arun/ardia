@@ -8,7 +8,7 @@ const lifecycle = await import("./lifecycle.ts");
 const { setConsentPeriod } = await import("../telemetry/consentPeriod.ts");
 const { consentNow } = await import("../telemetry/choice.ts");
 const { installOfficialPlugin } = await import("./official.ts");
-const { setProgramControlInferredOff, userTurnedControlOff } = await import("../app/programControlSetting.ts");
+const { setControlByApp, userTurnedControlOff } = await import("../app/programControlSetting.ts");
 const { takeCliCounts } = await import("../telemetry/cliCounts.ts");
 const { officialPinnedFromPin } = await import("../../test-native/shell.ts");
 
@@ -33,7 +33,7 @@ await settle();
 
 test("approving Command Line turns control on after the engine stopped control itself", async () => {
   S().updateSettings({ cliControl: true });
-  setProgramControlInferredOff();
+  setControlByApp(false);
   assert.equal(S().settings.cliControl, false);
   assert.equal(userTurnedControlOff(), false);
   takeCliCounts();
@@ -41,7 +41,8 @@ test("approving Command Line turns control on after the engine stopped control i
   assert.ok(lifecycle.enablePlugin("cli", P().consent.hash));
   assert.deepEqual(await done, { ok: true });
   assert.equal(S().settings.cliControl, true);
-  assert.equal(takeCliCounts().cli_control_restored, 1, "the re-approval that brought control back is counted");
+  assert.equal(S().settingsMeta.inferred.includes("cliControl"), false, "approving the plugin is the person's own On");
+  assert.equal(takeCliCounts().cli_control_restore_tries_approval, 1, "the re-approval that asked for control again is counted");
 });
 
 test("approving Command Line again leaves an Off the user chose alone, and counts nothing", async () => {
@@ -53,6 +54,6 @@ test("approving Command Line again leaves an Off the user chose alone, and count
   assert.ok(lifecycle.enablePlugin("cli", P().consent.hash));
   assert.deepEqual(await done, { ok: true });
   assert.equal(S().settings.cliControl, false);
-  assert.equal(takeCliCounts().cli_control_restored, 0);
+  assert.equal(takeCliCounts().cli_control_restore_tries_approval, 0);
   host.linkResult = null;
 });

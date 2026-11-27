@@ -31,7 +31,9 @@ test("a launch after the engine stopped control itself turns control on again fo
   startPlugins();
   await settle();
   assert.equal(S().settings.cliControl, true, "the relaunch must ask the engine for control again");
-  assert.equal(takeCliCounts().cli_control_restored, 1);
+  assert.equal(S().settingsMeta.inferred.includes("cliControl"), true, "the app turned it back on, the person didn't");
+  const counts = takeCliCounts();
+  assert.deepEqual([counts.cli_control_restore_tries_launch, counts.cli_control_restore_tries_approval, counts.cli_control_restored], [1, 0, 0], "a try, and no claim yet that the engine came back");
 });
 
 test("later reconciles in the same session don't turn control on again after it stops itself once more", async () => {
