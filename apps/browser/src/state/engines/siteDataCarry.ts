@@ -206,7 +206,7 @@ async function commitCarry(profile: string, site: string, to: PageEngine, { entr
     const changed = [...cookieMap(webkit.cookies, now)].filter(([key, c]) => cookieBase[key] !== cookieFingerprint(c)).map(([key]) => key);
     const urls = origins.map((o) => `${o}/`).concat(domains.map((d) => `https://${d}/`));
     const cookies = changed.length && stillCurrent() ? await exportWebKitCookies(profile, urls, changed).catch(() => 0) : 0;
-    if (cookies && !entry.at.webkit) noteSiteDataChromiumWrites({ sameSiteKept: 0, replaced: 0, noWebKitLoad: cookies }, consent);
+    if (cookies && !entry.at.webkit) noteSiteDataChromiumWrites({ sameSiteKept: 0, replaced: 0, noWebKitRecord: cookies }, consent);
     const stored = stillCurrent() ? await storageWithoutChromiumPage(profile, site, entry, origins, webkit.storage, cleared, stillCurrent, consent) : NO_ENGINE_STORAGE;
     if (!stored.available) noteSiteDataSkip("cookieOnlyFallback", consent);
     if (stored.failed) noteSiteDataSkip("failure", consent);
@@ -248,7 +248,7 @@ async function commitCarry(profile: string, site: string, to: PageEngine, { entr
     noteSiteDataSkip("failure", consent);
     return NOTHING;
   }
-  if (to === "chromium") noteSiteDataChromiumWrites({ sameSiteKept: written.sameSiteKept ?? 0, replaced: written.replaced ?? 0, noWebKitLoad: entry.at.webkit ? 0 : written.cookies + written.removed }, consent);
+  if (to === "chromium") noteSiteDataChromiumWrites({ sameSiteKept: written.sameSiteKept ?? 0, replaced: written.replaced ?? 0, noWebKitRecord: entry.at.webkit ? 0 : written.cookies + written.removed }, consent);
   if (writing) noteCommit(profile, domains, origins);
   if (clearCount(profile) !== cleared) return NOTHING;
   noteSiteDataOverQuota(written.overQuota ?? 0, consent);

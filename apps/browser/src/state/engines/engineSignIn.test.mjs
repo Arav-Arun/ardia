@@ -153,7 +153,7 @@ test("a value WebKit changed goes back to Chromium with the SameSite WebKit can'
     const counts = takeSiteDataCounts();
     assert.equal(counts.site_data_same_site_kept, 2);
     assert.equal(counts.site_data_chromium_values_replaced, 5);
-    assert.equal(counts.site_data_chromium_writes_no_webkit_load, 5);
+    assert.equal(counts.site_data_chromium_writes_no_webkit_record, 5);
   } finally {
     await setSharing(false, "settings");
   }
@@ -176,7 +176,7 @@ test("the hourly counts take only the cookies Chromium accepted, not the ones a 
     const counts = takeSiteDataCounts();
     assert.equal(counts.site_data_same_site_kept, 0);
     assert.equal(counts.site_data_chromium_values_replaced, 0);
-    assert.equal(counts.site_data_chromium_writes_no_webkit_load, 0);
+    assert.equal(counts.site_data_chromium_writes_no_webkit_record, 0);
   } finally {
     await setSharing(false, "settings");
   }

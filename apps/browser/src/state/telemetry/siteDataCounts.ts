@@ -30,7 +30,7 @@ const none = () => ({
   site_data_cookie_jar_ms_max: 0,
   site_data_same_site_kept: 0,
   site_data_chromium_values_replaced: 0,
-  site_data_chromium_writes_no_webkit_load: 0,
+  site_data_chromium_writes_no_webkit_record: 0,
 });
 
 let tally = none();
@@ -52,14 +52,14 @@ function addCarry(to: PageEngine, carry: SiteDataCarry) {
   tally.site_data_conflicts += carry.conflicts;
 }
 
-export type SiteDataChromiumWrites = { sameSiteKept: number; replaced: number; noWebKitLoad: number };
+export type SiteDataChromiumWrites = { sameSiteKept: number; replaced: number; noWebKitRecord: number };
 
 export function noteSiteDataChromiumWrites(writes: SiteDataChromiumWrites, consent: ConsentToken | null) {
-  if (writes.sameSiteKept + writes.replaced + writes.noWebKitLoad === 0) return;
+  if (writes.sameSiteKept + writes.replaced + writes.noWebKitRecord === 0) return;
   counted(consent, () => {
     tally.site_data_same_site_kept += writes.sameSiteKept;
     tally.site_data_chromium_values_replaced += writes.replaced;
-    tally.site_data_chromium_writes_no_webkit_load += writes.noWebKitLoad;
+    tally.site_data_chromium_writes_no_webkit_record += writes.noWebKitRecord;
   });
 }
 
