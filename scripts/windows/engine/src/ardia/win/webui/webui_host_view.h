@@ -282,6 +282,10 @@ class ShellHostView : public views::View,
 
   BrowserWindowInterface* EnsureMember(Profile* profile);
   void ObserveMember(BrowserWindowInterface* member);
+  views::FocusManager* CompanionFocusManager(
+      BrowserWindowInterface* companion) const;
+  void RegisterShortcuts(views::FocusManager* focus);
+  void UnregisterShortcutsEverywhere();
   void CloseCompanions();
   void SelectProfile(Profile* profile);
 

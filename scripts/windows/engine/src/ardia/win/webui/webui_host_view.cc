@@ -786,6 +786,7 @@ BrowserWindowInterface* ShellHostView::EnsureMember(Profile* profile) {
   WindowRegistry::Get().RegisterCompanion(created, this);
   companions_.push_back(created->GetWeakPtr());
   ObserveMember(created);
+  RegisterShortcuts(CompanionFocusManager(created));
   Note("companion window for another profile joined window " +
        config_.window_id);
   return created;
@@ -801,7 +802,37 @@ void ShellHostView::CompanionClosed(BrowserWindowInterface* companion) {
   }
 }
 
+views::FocusManager* ShellHostView::CompanionFocusManager(
+    BrowserWindowInterface* companion) const {
+  BrowserView* view =
+      companion ? BrowserView::GetBrowserViewForBrowser(companion) : nullptr;
+  views::FocusManager* focus = view ? view->GetFocusManager() : nullptr;
+  return focus == focus_manager_ ? nullptr : focus;
+}
+
+void ShellHostView::RegisterShortcuts(views::FocusManager* focus) {
+  if (!focus) {
+    return;
+  }
+  for (const auto& [accelerator, binding] : shortcuts_) {
+    focus->RegisterAccelerator(accelerator,
+                               ui::AcceleratorManager::kNormalPriority, this);
+  }
+}
+
+void ShellHostView::UnregisterShortcutsEverywhere() {
+  if (focus_manager_) {
+    focus_manager_->UnregisterAccelerators(this);
+  }
+  for (const auto& companion : companions_) {
+    if (views::FocusManager* focus = CompanionFocusManager(companion.get())) {
+      focus->UnregisterAccelerators(this);
+    }
+  }
+}
+
 void ShellHostView::CloseCompanions() {
+  UnregisterShortcutsEverywhere();
   std::vector<base::WeakPtr<BrowserWindowInterface>> companions =
       std::move(companions_);
   companions_.clear();
@@ -1130,9 +1161,7 @@ void ShellHostView::RetireRenderer() {
   unclaimed_listener_.reset();
   open_urls_listener_.reset();
   utility_ready_ = false;
-  if (focus_manager_) {
-    focus_manager_->UnregisterAccelerators(this);
-  }
+  UnregisterShortcutsEverywhere();
   shortcuts_.clear();
   Note("shell document retired in window " + config_.window_id +
        "; generation is now " + base::NumberToString(renderer_generation_));

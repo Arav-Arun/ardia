@@ -606,11 +606,11 @@ void ShellHostView::SetKeyboardShortcuts(const base::ListValue* values,
     shortcuts.emplace(ui::Accelerator(static_cast<ui::KeyboardCode>(key), flags),
                       binding.Clone());
   }
-  focus_manager_->UnregisterAccelerators(this);
+  UnregisterShortcutsEverywhere();
   shortcuts_ = std::move(shortcuts);
-  for (const auto& [accelerator, binding] : shortcuts_) {
-    focus_manager_->RegisterAccelerator(
-        accelerator, ui::AcceleratorManager::kNormalPriority, this);
+  RegisterShortcuts(focus_manager_);
+  for (const auto& companion : companions_) {
+    RegisterShortcuts(CompanionFocusManager(companion.get()));
   }
   std::move(done).Run(true, base::Value());
 }
