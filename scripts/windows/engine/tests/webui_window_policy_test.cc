@@ -256,10 +256,10 @@ void TestFullScreenReports() {
   assert(!ReportsWindowFullScreen(false, false));
   assert(!ReportsWindowFullScreen(false, true));
 
-  assert(ReleasesCompanionFullScreen(false, true));
-  assert(!ReleasesCompanionFullScreen(true, true));
-  assert(!ReleasesCompanionFullScreen(false, false));
-  assert(!ReleasesCompanionFullScreen(true, false));
+  assert(ReleasesPageFullScreen(false, true));
+  assert(!ReleasesPageFullScreen(true, true));
+  assert(!ReleasesPageFullScreen(false, false));
+  assert(!ReleasesPageFullScreen(true, false));
 }
 
 void TestDocumentVerbs() {

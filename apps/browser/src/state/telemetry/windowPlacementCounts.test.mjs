@@ -208,18 +208,16 @@ test("tabs the engine opened by itself are counted as shown or left hidden, with
   client.setSharing(false, "settings");
 });
 
-test("a page going full screen is counted once per entry, with the consent of its event", async () => {
+test("page full-screen entries are counted with the consent of their event", async () => {
   client.loadChoice();
   client.setSharing(true, "onboarding");
-  assert.equal(placement.notePageFullScreen(false, true, client.consentToken()), true);
-  assert.equal(placement.notePageFullScreen(true, true, client.consentToken()), true);
-  assert.equal(placement.notePageFullScreen(true, false, client.consentToken()), false);
-  assert.equal(placement.notePageFullScreen(undefined, true, client.consentToken()), true);
+  placement.notePageFullScreenEntered(client.consentToken());
+  placement.notePageFullScreenEntered(client.consentToken());
   assert.equal(placement.takeWindowPlacementCounts().page_full_screens_entered, 2);
   client.setSharing(false, "settings");
   const off = client.consentToken();
   client.setSharing(true, "settings");
-  placement.notePageFullScreen(false, true, off);
+  placement.notePageFullScreenEntered(off);
   assert.equal(placement.takeWindowPlacementCounts().page_full_screens_entered, 0);
   client.setSharing(false, "settings");
 });

@@ -653,7 +653,8 @@ void ShellHostView::SetActiveProfile(const base::ListValue* values, Done done) {
             host->SelectProfile(profile);
             std::move(done).Run(true, base::Value(true));
           },
-          GetWeakPtr(), renderer_generation_, sequence, std::move(done)));
+          GetWeakPtr(), renderer_generation_, sequence, std::move(done)),
+      kAppProfileName);
 }
 
 void ShellHostView::CopyText(const base::ListValue* values, Done done) {
@@ -918,7 +919,8 @@ void ShellHostView::EngineCall(const std::string& name,
                 },
                 pending);
           },
-          call, std::move(json), std::string(route->field), std::move(done)));
+          call, std::move(json), std::string(route->field), std::move(done)),
+      kAppProfileName);
 }
 
 }

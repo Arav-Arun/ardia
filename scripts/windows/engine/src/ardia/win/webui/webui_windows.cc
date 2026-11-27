@@ -411,7 +411,8 @@ void WindowRegistry::OpenRequested(ShellHostView* requester,
                                       weak_factory_.GetWeakPtr(),
                                       requester->GetWeakPtr(),
                                       requester->renderer_generation(),
-                                      std::move(config), frame, std::move(done)));
+                                      std::move(config), frame, std::move(done)),
+              kAppProfileName);
 }
 
 void WindowRegistry::OpenInProfile(base::WeakPtr<ShellHostView> requester,

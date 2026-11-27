@@ -562,9 +562,9 @@ constexpr bool ReportsWindowFullScreen(bool widget_full_screen,
   return widget_full_screen && !page_holds_full_screen;
 }
 
-constexpr bool ReleasesCompanionFullScreen(bool owner_full_screen,
-                                           bool companion_tab_full_screen) {
-  return !owner_full_screen && companion_tab_full_screen;
+constexpr bool ReleasesPageFullScreen(bool window_full_screen,
+                                      bool tab_full_screen_or_pending) {
+  return !window_full_screen && tab_full_screen_or_pending;
 }
 
 constexpr size_t Utf8SequenceLength(unsigned char lead) {

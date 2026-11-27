@@ -243,3 +243,27 @@ test("snapshot reasons are validated", () => {
   assert.equal(h.send(control(2, "1", { action: "snapshot", reason: "restore", events: [] })), true);
   assert.equal(h.send(control(3, "1", { action: "snapshot", reason: "document", events: [] })), true);
 });
+
+test("a page full-screen entry is counted once when it happens, never when a snapshot restores it", async () => {
+  const client = await import("../../browser/src/state/telemetry/client.ts");
+  const placement = await import("../../browser/src/state/telemetry/windowPlacementCounts.ts");
+  client.loadChoice();
+  client.setSharing(true, "onboarding");
+  placement.takeWindowPlacementCounts();
+
+  const live = setup();
+  assert.ok(live.receiver.install(snapshot()));
+  live.send(message(2, "fullscreen", { fullscreen: true }));
+  live.send(message(3, "fullscreen", { fullscreen: true }));
+  live.send(message(4, "fullscreen", { fullscreen: false }));
+  live.send(message(5, "fullscreen", { fullscreen: true }));
+  assert.equal(placement.takeWindowPlacementCounts().page_full_screens_entered, 2);
+
+  const restored = setup();
+  assert.ok(restored.receiver.install(snapshot(1, [event("fullscreen", { fullscreen: true })])));
+  assert.equal(pageOf(restored.tab).fullscreen, true, "the claimed page shows full screen at once");
+  restored.send(message(2, "fullscreen", { fullscreen: true }));
+  restored.send(control(3, "1", { action: "snapshot", reason: "snapshot", events: [event("fullscreen", { fullscreen: true })] }));
+  assert.equal(placement.takeWindowPlacementCounts().page_full_screens_entered, 0, "a page that was already full screen when its view mounted or was restored is not a new entry");
+  client.setSharing(false, "settings");
+});

@@ -504,15 +504,18 @@ void PageBinding::ReportNavigation() {
                base::Value(std::move(delivery)));
 }
 
+base::DictValue PageBinding::FullscreenEvent(bool fullscreen) const {
+  return base::DictValue()
+      .Set("name", "fullscreen")
+      .Set("data", base::DictValue().Set("fullscreen", fullscreen));
+}
+
 void PageBinding::ReportFullscreen(bool fullscreen) {
   if (!CanReport()) {
     return;
   }
   base::DictValue delivery = Envelope("pageEvent");
-  delivery.Set("event",
-               base::DictValue()
-                   .Set("name", "fullscreen")
-                   .Set("data", base::DictValue().Set("fullscreen", fullscreen)));
+  delivery.Set("event", FullscreenEvent(fullscreen));
   owner_->Emit("ArdiaWebView", base::NumberToString(id_),
                base::Value(std::move(delivery)));
 }
@@ -1308,19 +1311,27 @@ bool ShellHostView::PageHoldsFullScreen() const {
   return false;
 }
 
-void ShellHostView::ReleaseCompanionFullScreen() {
-  views::Widget* frame = widget();
-  const bool owner_full_screen = frame && frame->IsFullscreen();
+void ShellHostView::ReleasePageFullScreen() {
+  std::vector<base::WeakPtr<BrowserWindowInterface>> members;
   for (BrowserWindowInterface* member : Members()) {
-    if (member == browser_.get()) {
+    members.push_back(member->GetWeakPtr());
+  }
+  const base::WeakPtr<ShellHostView> self = GetWeakPtr();
+  for (const base::WeakPtr<BrowserWindowInterface>& member : members) {
+    if (!self) {
+      return;
+    }
+    if (!member) {
       continue;
     }
-    ExclusiveAccessManager* access = ExclusiveAccessManager::From(member);
+    views::Widget* frame = widget();
+    ExclusiveAccessManager* access = ExclusiveAccessManager::From(member.get());
     FullscreenController* controller =
         access ? access->fullscreen_controller() : nullptr;
     if (controller &&
-        webui_window::ReleasesCompanionFullScreen(
-            owner_full_screen, controller->IsWindowFullscreenForTabOrPending())) {
+        webui_window::ReleasesPageFullScreen(
+            frame && frame->IsFullscreen(),
+            controller->IsWindowFullscreenForTabOrPending())) {
       controller->WindowFullscreenStateChanged();
     }
   }
@@ -1344,7 +1355,7 @@ void ShellHostView::ReportWindowState() {
   }
   if (!frame->IsFullscreen()) {
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE, base::BindOnce(&ShellHostView::ReleaseCompanionFullScreen,
+        FROM_HERE, base::BindOnce(&ShellHostView::ReleasePageFullScreen,
                                   GetWeakPtr()));
   }
   const bool full_screen = webui_window::ReportsWindowFullScreen(

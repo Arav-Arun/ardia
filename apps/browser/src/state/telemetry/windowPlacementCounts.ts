@@ -73,10 +73,7 @@ export function noteLinuxWindowDecorations(decoratedBy: unknown, answer: unknown
 
 export const noteLinuxPageViewportRejected = (consent: ConsentToken | null) => counted(consent, () => void linuxCounts.linux_page_viewports_rejected++);
 
-export function notePageFullScreen(was: boolean | undefined, fullscreen: boolean, consent: ConsentToken | null) {
-  if (fullscreen && !was) counted(consent, () => void pageFullScreensEntered++);
-  return fullscreen;
-}
+export const notePageFullScreenEntered = (consent: ConsentToken | null) => counted(consent, () => void pageFullScreensEntered++);
 
 export const noteUnclaimedTab = (outcome: "adopted" | "dropped", consent: ConsentToken | null) =>
   counted(consent, () => void (outcome === "adopted" ? unclaimedTabsAdopted++ : unclaimedTabsDropped++));

@@ -100,7 +100,12 @@ base::DictValue ShellHostView::Identity(PageBinding* binding) const {
   lease.Set("documentEpoch", "1");
   base::DictValue snapshot;
   snapshot.Set("watermark", static_cast<double>(binding->sequence));
-  snapshot.Set("events", base::ListValue().Append(binding->NavigationEvent()));
+  base::ListValue events;
+  events.Append(binding->NavigationEvent());
+  if (binding->contents() && binding->contents()->IsFullscreen()) {
+    events.Append(binding->FullscreenEvent(true));
+  }
+  snapshot.Set("events", std::move(events));
   return base::DictValue()
       .Set("browserId", binding->id())
       .Set("chromeTabId", binding->id())
@@ -154,7 +159,8 @@ void ShellHostView::StartTab(base::DictValue args,
   WithProfile(profile,
               base::BindOnce(&ShellHostView::CreateTabIn, GetWeakPtr(),
                              std::move(args), std::move(done), std::move(origin),
-                             generation));
+                             generation),
+              kAppProfileName);
 }
 
 void ShellHostView::CreateTabIn(base::DictValue args,
@@ -203,7 +209,7 @@ void ShellHostView::CreateTabIn(base::DictValue args,
       existing->SetClaim(claim);
       existing->renderer_generation = renderer_generation_;
       ReattachViewports();
-      return ReplyClaimed(std::move(done), existing->id());
+      return std::move(done).Run(true, base::Value(Identity(existing)));
     }
     content::WebContents* retired = existing->contents();
     BrowserWindowInterface* retired_owner = OwnerOf(retired);
@@ -266,7 +272,7 @@ void ShellHostView::CreateTabIn(base::DictValue args,
     ReattachViewports();
     Note("tab moved from window " + source->window_id() + " to " +
          config_.window_id);
-    return ReplyClaimed(std::move(done), binding->id());
+    return std::move(done).Run(true, base::Value(Identity(binding)));
   }
   content::WebContents* contents = nullptr;
   if (const std::optional<int> adopt =
@@ -309,21 +315,7 @@ void ShellHostView::CreateTabIn(base::DictValue args,
   announced_.erase(id);
   bindings_[id] = std::move(binding);
   ReattachViewports();
-  ReplyClaimed(std::move(done), created->id());
-}
-
-void ShellHostView::ReplyClaimed(Done done, int id) {
-  const auto claimed = bindings_.find(id);
-  if (claimed == bindings_.end() || !claimed->second->contents()) {
-    return std::move(done).Run(
-        false, base::Value("The tab closed while it was claimed"));
-  }
-  const bool fullscreen = claimed->second->contents()->IsFullscreen();
-  std::move(done).Run(true, base::Value(Identity(claimed->second.get())));
-  if (const auto bound = bindings_.find(id);
-      fullscreen && bound != bindings_.end()) {
-    bound->second->ReportFullscreen(true);
-  }
+  std::move(done).Run(true, base::Value(Identity(created)));
 }
 
 void ShellHostView::SetViewport(const base::DictValue& args, Done done) {

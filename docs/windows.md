@@ -963,7 +963,7 @@ in `webui_frame.cc`: top-edge resize, `HTMAXBUTTON` over the shell's maximize bu
 - Page full screen: each claimed page sends the `fullscreen` page event (`PageBinding::DidToggleFullscreenModeForTab`,
   and its current state when a tab is claimed), the window's own `fullScreen` report leaves out full screen a page
   caused, as Linux's does (`ReportsWindowFullScreen`), and a companion's page full screen moves the owning window
-  (`chromium-win-companion-fullscreen.patch`; `ReleaseCompanionFullScreen` when the window leaves full screen another way).
+  (`chromium-win-companion-fullscreen.patch`; `ReleasePageFullScreen` when the window leaves full screen another way, F11 included, for its own tabs too).
 - Host calls served there: `tab.create` (with `adoptId`, `previousClaim` and transfers between windows after
   `ArdiaTabs.prepareTransfer`), `tab.viewport`, `tab.presentations`, `tab.command` (`loadUrl`, `goBack`,
   `goForward`, `goToOffset`, `reload`, `forceReload`, `stopLoading`, `focus`, `blur`, `zoomStep`, `setMuted`,

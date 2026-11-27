@@ -26,7 +26,7 @@
 +        owner->GetWindow() ? views::Widget::GetWidgetForNativeWindow(
 +                                 owner->GetWindow()->GetNativeWindow())
 +                           : nullptr;
-+    if (owner_widget && owner_widget->IsFullscreen() != fullscreen) {
++    if (owner_widget) {
 +      owner_widget->SetFullscreen(fullscreen, display_id);
 +    }
 +    if (weak_this) {

@@ -2,7 +2,8 @@ import { toAppUrl } from "@ardia/core";
 import { deliverPageEvent, type PageEvent } from "../../../packages/ardiacore/src/pageEvents";
 import type { NavigationState, WebViewProps } from "../../../packages/ardiacore/src/pageTypes";
 import type { PageResetReason } from "./hostPageLifecycle";
-import { consentEpoch } from "../../browser/src/state/telemetry/client";
+import { consentEpoch, consentToken, type ConsentToken } from "../../browser/src/state/telemetry/client";
+import { notePageFullScreenEntered } from "../../browser/src/state/telemetry/windowPlacementCounts";
 
 type PageLeaseMetadata = {
   claim: string;
@@ -10,7 +11,7 @@ type PageLeaseMetadata = {
   bindingGeneration: string;
   documentEpoch: string;
 };
-type PageDelivery = PageLeaseMetadata & { type: "pageEvent"; sequence: number; event: PageEvent };
+type PageDelivery = PageLeaseMetadata & { type: "pageEvent"; sequence: number; event: PageEvent; consent?: ConsentToken | null };
 type PageCreationState = { lease: PageLeaseMetadata; snapshot: { watermark: number; events: PageEvent[] } };
 type PageRebinding = PageCreationState & { browserId: number; chromeTabId: number };
 type PageLifecycle = PageLeaseMetadata & { type: "pageLifecycle"; sequence: number } & (
@@ -51,6 +52,7 @@ const SCROLL_STATES = new Set(["down", "up", "top"]);
 function stampedOnArrival<T extends PageDelivery | PageLifecycle>(payload: T): T {
   if (payload.type !== "pageEvent") return payload;
   const { event: shown } = payload as PageDelivery;
+  if (shown.name === "fullscreen") return { ...payload, consent: consentToken() };
   if (shown.name !== "pictureInPicture" || !record(shown.data) || !("fullScreenSpaces" in shown.data)) return payload;
   return { ...payload, event: { ...shown, data: { ...shown.data, epoch: consentEpoch() } } };
 }
@@ -79,6 +81,7 @@ export class HostPageEvents {
   private active = true;
   private installed = false;
   private applying = false;
+  private fullscreen = false;
   private boundary = 0;
   private boundaries = 0;
   private provisional = false;
@@ -182,7 +185,7 @@ export class HostPageEvents {
     }
     this.applying = true;
     try {
-      if (value.type === "pageEvent") this.replay([value.event]);
+      if (value.type === "pageEvent") this.replay([value.event], value.consent ?? null);
       else if (value.action === "reset") this.reset(value.reason);
       else if (value.reason === "restore") { this.reset("restore", new Set(value.events.map(({ name }) => name))); this.replay(value.events); }
       else { this.reset("snapshot"); this.replay(value.events); }
@@ -207,10 +210,15 @@ export class HostPageEvents {
     return true;
   }
 
-  private replay(values: PageEvent[]) {
+  private replay(values: PageEvent[], live?: ConsentToken | null) {
     const popupIds = new Set<string>();
     for (const value of values) {
       if (!this.active) return;
+      if (value.name === "fullscreen" && record(value.data)) {
+        const entered = value.data.fullscreen === true;
+        if (live !== undefined && entered && !this.fullscreen) notePageFullScreenEntered(live);
+        this.fullscreen = entered;
+      }
       if (value.name === "popupBlocked" && record(value.data) && typeof value.data.id === "string") {
         if (popupIds.has(value.data.id)) continue;
         popupIds.add(value.data.id);

@@ -58,16 +58,21 @@ def ninja_for(out, tree_path):
 
 
 def command(rule, variables, source, shadow):
-    includes = " ".join([f"-I{root}" for root in shadow] + [variables.get("include_dirs", "")])
     line = (rule.replace("${defines}", variables.get("defines", ""))
-            .replace("${include_dirs}", includes)
+            .replace("${include_dirs}", "\0INCLUDES\0 " + variables.get("include_dirs", ""))
             .replace("${cflags}", variables.get("cflags", ""))
             .replace("${cflags_cc}", variables.get("cflags_cc", ""))
             .replace("${module_deps}", "")
-            .replace("${in}", shlex.quote(str(source)))
+            .replace("${in}", "\0SOURCE\0")
             .replace("$:", ":"))
     kept = []
     for token in shlex.split(line):
+        if token == "\0INCLUDES\0":
+            kept.extend(f"-I{root}" for root in shadow)
+            continue
+        if token == "\0SOURCE\0":
+            kept.append(str(source))
+            continue
         if token in MODULE_FLAGS or token.startswith(DROPPED_PREFIXES) or "${" in token:
             if kept and kept[-1] == "-Xclang":
                 kept.pop()

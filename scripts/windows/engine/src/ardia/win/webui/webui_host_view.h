@@ -127,6 +127,7 @@ class PageBinding : public content::WebContentsObserver {
   void ReportNavigation();
   void ReportFind(base::DictValue result);
   void ReportClosed();
+  base::DictValue FullscreenEvent(bool fullscreen) const;
   void ReportFullscreen(bool fullscreen);
   ardiacore::LinuxFind* Find();
 
@@ -297,8 +298,7 @@ class ShellHostView : public views::View,
   base::ListValue WindowFrame() const;
   void ReportWindowState();
   bool PageHoldsFullScreen() const;
-  void ReleaseCompanionFullScreen();
-  void ReplyClaimed(Done done, int id);
+  void ReleasePageFullScreen();
   void WatchSystemState();
   void NoteUnhandled(const std::string& method);
   views::Widget* widget() const;
