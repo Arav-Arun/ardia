@@ -252,6 +252,8 @@ class ShellHostView : public views::View,
 
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
   bool CanHandleAccelerators() const override;
+  bool ReservesShortcut(const views::FocusManager* focus,
+                        const ui::Accelerator& accelerator) const;
 
   bool HandleKeyboardEvent(content::WebContents* source,
                            const input::NativeWebKeyboardEvent& event) override;
@@ -306,6 +308,10 @@ class ShellHostView : public views::View,
 
   BrowserWindowInterface* EnsureMember(Profile* profile);
   void ObserveMember(BrowserWindowInterface* member);
+  views::FocusManager* CompanionFocusManager(
+      BrowserWindowInterface* companion) const;
+  void RegisterShortcuts(views::FocusManager* focus);
+  void UnregisterShortcutsEverywhere();
   void CloseCompanions();
   void SelectProfile(Profile* profile);
   Profile* ActiveProfile() const;
