@@ -553,6 +553,12 @@ constexpr bool SameRegularProfile(std::string_view a, std::string_view b) {
   return a == b || (IsAppProfileName(a) && IsAppProfileName(b));
 }
 
+constexpr std::string_view TabProfileName(bool supplied,
+                                          std::string_view requested,
+                                          std::string_view window_profile) {
+  return supplied ? RegularProfileName(requested) : window_profile;
+}
+
 constexpr std::string_view ShellProfileName(std::string_view engine_name) {
   return engine_name == kAppProfileName ? std::string_view() : engine_name;
 }

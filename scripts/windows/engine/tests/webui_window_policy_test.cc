@@ -242,6 +242,17 @@ void TestProfileNames() {
   assert(!SameRegularProfile("default", "p-work"));
   assert(!SameRegularProfile("incognito:w@", "default"));
 
+  assert(TabProfileName(false, "", "p-work") == "p-work");
+  assert(TabProfileName(true, "", "p-work") == "default");
+  assert(!SameRegularProfile(TabProfileName(true, "", "p-work"), "p-work"));
+  assert(TabProfileName(true, "p-work", "default") == "p-work");
+  assert(TabProfileName(false, "", "incognito:w@") == "incognito:w@");
+  assert(TabProfileName(true, "", "incognito:w@") == "default");
+  assert(!SameRegularProfile(TabProfileName(true, "", "incognito:w@"),
+                             "incognito:w@"));
+  assert(SameRegularProfile(TabProfileName(true, "", "default"), "default"));
+  assert(SameRegularProfile(TabProfileName(false, "", "default"), "default"));
+
   assert(ShellProfileName("default").empty());
   assert(ShellProfileName("").empty());
   assert(ShellProfileName("p-work") == "p-work");

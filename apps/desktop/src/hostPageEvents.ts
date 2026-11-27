@@ -139,7 +139,7 @@ export class HostPageEvents {
     this.installed = true;
     this.applying = true;
     try {
-      this.reset("mount");
+      this.resetPage("mount");
       this.replay(snapshot.events);
     } finally { this.applying = false; }
     const buffered = [...this.early, ...this.pending];
@@ -186,9 +186,9 @@ export class HostPageEvents {
     this.applying = true;
     try {
       if (value.type === "pageEvent") this.replay([value.event], value.consent ?? null);
-      else if (value.action === "reset") this.reset(value.reason);
-      else if (value.reason === "restore") { this.reset("restore", new Set(value.events.map(({ name }) => name))); this.replay(value.events); }
-      else { this.reset("snapshot"); this.replay(value.events); }
+      else if (value.action === "reset") this.resetPage(value.reason);
+      else if (value.reason === "restore") { this.resetPage("restore", new Set(value.events.map(({ name }) => name))); this.replay(value.events); }
+      else { this.resetPage("snapshot"); this.replay(value.events); }
     } finally { this.applying = false; }
     return true;
   }
@@ -204,10 +204,15 @@ export class HostPageEvents {
     this.rebound?.({ browserId: next.browserId, chromeTabId: next.chromeTabId });
     this.applying = true;
     try {
-      this.reset("snapshot");
+      this.resetPage("snapshot");
       this.replay(snapshot.events);
     } finally { this.applying = false; }
     return true;
+  }
+
+  private resetPage(reason: PageResetReason, replaced?: ReadonlySet<string>) {
+    if (reason !== "provisional" && (reason !== "restore" || replaced?.has("fullscreen"))) this.fullscreen = false;
+    this.reset(reason, replaced);
   }
 
   private replay(values: PageEvent[], live?: ConsentToken | null) {

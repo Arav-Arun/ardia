@@ -150,9 +150,10 @@ void ShellHostView::StartTab(base::DictValue args,
     return std::move(done).Run(
         false, base::Value("The shell document that asked for this tab is gone"));
   }
-  const std::string profile = Text(args, "profile");
-  if (profile.empty() ||
-      webui_window::SameRegularProfile(profile, config_.page_profile)) {
+  const std::string profile(webui_window::TabProfileName(
+      args.FindString("profile") != nullptr, Text(args, "profile"),
+      config_.page_profile));
+  if (webui_window::SameRegularProfile(profile, config_.page_profile)) {
     return CreateTabIn(std::move(args), std::move(done), std::move(origin),
                        generation, page_profile());
   }
@@ -305,8 +306,11 @@ void ShellHostView::CreateTabIn(base::DictValue args,
   if (!contents) {
     return std::move(done).Run(false, base::Value("The tab did not open"));
   }
-  auto binding = std::make_unique<PageBinding>(this, contents, key,
-                                               Text(args, "profile"));
+  auto binding = std::make_unique<PageBinding>(
+      this, contents, key,
+      std::string(webui_window::TabProfileName(
+          args.FindString("profile") != nullptr, Text(args, "profile"),
+          config_.page_profile)));
   binding->SetClaim(claim);
   binding->renderer_generation = renderer_generation_;
   PageBinding* created = binding.get();

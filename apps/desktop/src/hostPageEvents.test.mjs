@@ -265,5 +265,14 @@ test("a page full-screen entry is counted once when it happens, never when a sna
   restored.send(message(2, "fullscreen", { fullscreen: true }));
   restored.send(control(3, "1", { action: "snapshot", reason: "snapshot", events: [event("fullscreen", { fullscreen: true })] }));
   assert.equal(placement.takeWindowPlacementCounts().page_full_screens_entered, 0, "a page that was already full screen when its view mounted or was restored is not a new entry");
+
+  const rebound = setup();
+  assert.ok(rebound.receiver.install(snapshot()));
+  rebound.send(message(2, "fullscreen", { fullscreen: true }));
+  const creation = { browserId: 9, chromeTabId: 9, lease: { ...lease, bindingGeneration: "4" }, snapshot: { watermark: 1, events: [event("navigation", navigation)] } };
+  assert.ok(rebound.send({ ...lease, type: "pageLifecycle", sequence: 3, action: "rebind", creation }));
+  assert.equal(pageOf(rebound.tab).fullscreen, false, "a rebind's snapshot replaces the page's full screen");
+  rebound.send(message(2, "fullscreen", { fullscreen: true }, { bindingGeneration: "4" }));
+  assert.equal(placement.takeWindowPlacementCounts().page_full_screens_entered, 2, "full screen after a navigation-only rebind is a new entry");
   client.setSharing(false, "settings");
 });
