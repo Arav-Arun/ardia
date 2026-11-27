@@ -1119,9 +1119,7 @@ void ShellHostView::RetireRenderer() {
   handler_ = nullptr;
   renderer_document_ = content::WeakDocumentPtr();
   ++renderer_generation_;
-  if (extension_surfaces_) {
-    extension_surfaces_->RetireOlderThan(renderer_generation_);
-  }
+  RetireExtensionViews(renderer_generation_);
   if (!had_document) {
     return;
   }

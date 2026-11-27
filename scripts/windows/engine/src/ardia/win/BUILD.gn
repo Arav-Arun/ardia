@@ -89,6 +89,7 @@ source_set("win") {
     "webui/webui_caption_script.h",
     "webui/webui_documents.cc",
     "webui/webui_documents.h",
+    "webui/webui_extension_policy.h",
     "webui/webui_extensions.cc",
     "webui/webui_file_picker.cc",
     "webui/webui_file_picker.h",

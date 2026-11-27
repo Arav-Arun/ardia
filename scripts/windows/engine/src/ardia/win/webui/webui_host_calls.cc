@@ -40,8 +40,6 @@
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/version_info/version_info.h"
-#include "components/zoom/zoom_controller.h"
-#include "third_party/blink/public/common/page/page_zoom.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/accelerators/accelerator_manager.h"
 #include "ui/base/clipboard/clipboard.h"
@@ -176,21 +174,7 @@ void ShellHostView::Invoke(const std::string& method,
     return SetInputRegions(args, std::move(done));
   }
   if (ardia::LinuxExtensionSurfaces::Handles(method)) {
-    if (is_utility()) {
-      return std::move(done).Run(
-          false, Failure("ERR_UNKNOWN_CALL",
-                         "Extension views need a browser window"));
-    }
-    ardia::LinuxExtensionSurfaces* surfaces = ExtensionSurfaces();
-    if (!surfaces) {
-      return std::move(done).Run(
-          false, Failure("ERR_WINDOW_CLOSED", "The window is closing"));
-    }
-    return surfaces->Invoke(method, args, ActiveProfile(), renderer_generation_,
-                            blink::ZoomLevelToZoomFactor(
-                                zoom::ZoomController::GetZoomLevelForWebContents(
-                                    shell_contents())),
-                            std::move(done));
+    return InvokeExtensionView(method, args, std::move(done));
   }
   if (method == "ArdiaTabs.unclaimedTabs") {
     return ListUnclaimedTabs(std::move(done));

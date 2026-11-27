@@ -1,3 +1,5 @@
+#include <initializer_list>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -6,6 +8,7 @@
 #include "ardia/linux/ac_linux_extension_views.h"
 #include "ardia/linux/ac_linux_extensions.h"
 #include "ardia/win/profiles.h"
+#include "ardia/win/webui/webui_extension_policy.h"
 #include "ardia/win/webui/webui_host_internal.h"
 #include "ardia/win/webui/webui_host_view.h"
 #include "ardia/win/webui/webui_windows.h"
@@ -44,8 +47,8 @@ Profile* LinuxExtensionViewProfile(Profile* page_profile,
     *code = "ERR_PROFILE_ENDING";
     return nullptr;
   }
-  const std::string own = ardia_win::webui::ArdiaProfileName(page_profile);
-  if (own.empty() || requested != own) {
+  if (!ardia_win::webui_extension::ViewProfileMatches(
+          requested, ardia_win::webui::WindowProfileName(page_profile))) {
     *code = "ERR_PROFILE_WINDOW";
     return nullptr;
   }
@@ -65,9 +68,53 @@ std::string ArdiaProfileName(Profile* profile) {
              : NameOfProfile(profile);
 }
 
+std::string WindowProfileName(Profile* profile) {
+  if (!profile) {
+    return std::string();
+  }
+  for (ShellHostView* host : WindowRegistry::Get().Hosts()) {
+    if (host->private_window() && host->page_profile() == profile) {
+      return host->page_profile_id();
+    }
+  }
+  return profile->IsOffTheRecord() ? std::string() : ArdiaProfileName(profile);
+}
+
 namespace {
 
 namespace ext = ardia::linux_extensions;
+namespace policy = webui_extension;
+
+bool NumbersInRange(const base::DictValue* dict,
+                    std::initializer_list<std::string_view> keys) {
+  if (!dict) {
+    return true;
+  }
+  for (std::string_view key : keys) {
+    const base::Value* value = dict->Find(key);
+    if (value && (!value->is_int() && !value->is_double())) {
+      return false;
+    }
+    if (value && !policy::ViewCoordinateInRange(value->GetDouble())) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool ViewGeometryInRange(const std::string& method,
+                         const base::DictValue& args) {
+  if (method == "extensionView.viewport") {
+    return NumbersInRange(args.FindDict("rect"),
+                          {"x", "y", "width", "height"});
+  }
+  if (method == "extensionView.place") {
+    return NumbersInRange(args.FindDict("anchor"), {"right", "top"}) &&
+           NumbersInRange(args.FindDict("room"), {"left", "right", "bottom"}) &&
+           NumbersInRange(&args, {"radius", "decoratedScale"});
+  }
+  return true;
+}
 
 const extensions::Extension* EnabledExtension(content::BrowserContext* context,
                                               const std::string& id) {
@@ -142,6 +189,83 @@ BrowserWindowInterface* ShellHostView::ActiveMember() const {
 void ShellHostView::DropExtensionSurfaces() {
   extension_surfaces_member_ = nullptr;
   extension_surfaces_.reset();
+  extension_view_ids_.Clear();
+}
+
+void ShellHostView::RetireExtensionViews(uint64_t generation) {
+  extension_view_ids_.ForgetOlderThan(generation);
+  if (extension_surfaces_) {
+    extension_surfaces_->RetireOlderThan(generation);
+  }
+}
+
+void ShellHostView::EmitExtensionView(int internal, base::DictValue event) {
+  const std::optional<int> external = extension_view_ids_.External(internal);
+  if (!external) {
+    return;
+  }
+  const std::string* type = event.FindString("type");
+  if (type && *type == "windowClose") {
+    extension_view_ids_.Forget(*external);
+  }
+  Emit("ArdiaExtensionView", base::NumberToString(*external),
+       base::Value(std::move(event)));
+}
+
+void ShellHostView::InvokeExtensionView(const std::string& method,
+                                        const base::DictValue& args,
+                                        Done done) {
+  if (is_utility()) {
+    return std::move(done).Run(
+        false,
+        Failure("ERR_UNKNOWN_CALL", "Extension views need a browser window"));
+  }
+  if (!ViewGeometryInRange(method, args)) {
+    return std::move(done).Run(
+        false, Failure("ERR_EXTENSION_VIEW_REQUEST",
+                       "Extension view coordinates are out of range"));
+  }
+  ardia::LinuxExtensionSurfaces* surfaces = ExtensionSurfaces();
+  if (!surfaces) {
+    return std::move(done).Run(
+        false, Failure("ERR_WINDOW_CLOSED", "The window is closing"));
+  }
+  Profile* profile = ActiveProfile();
+  const uint64_t generation = renderer_generation_;
+  const double zoom = ShellZoom(shell_contents());
+  if (method == "extensionView.create") {
+    return surfaces->Invoke(
+        method, args, profile, generation, zoom,
+        base::BindOnce(
+            [](base::WeakPtr<ShellHostView> host, uint64_t generation,
+               Done done, bool ok, base::Value reply) {
+              const std::optional<int> internal =
+                  ok && reply.is_dict() ? reply.GetDict().FindInt("id")
+                                        : std::nullopt;
+              if (!internal) {
+                return std::move(done).Run(ok, std::move(reply));
+              }
+              const std::optional<int> external =
+                  host ? host->extension_view_ids_.Assign(*internal, generation)
+                       : std::nullopt;
+              if (!external) {
+                return std::move(done).Run(
+                    false, Failure("ERR_EXTENSION_VIEW_LIMIT",
+                                   "Too many extension views in this window"));
+              }
+              std::move(done).Run(
+                  true, base::Value(base::DictValue().Set("id", *external)));
+            },
+            GetWeakPtr(), generation, std::move(done)));
+  }
+  const base::Value* id = args.Find("id");
+  const int external = id && id->is_int() ? id->GetInt() : 0;
+  base::DictValue routed = args.Clone();
+  routed.Set("id", extension_view_ids_.Internal(external));
+  if (method == "extensionView.release") {
+    extension_view_ids_.Forget(external);
+  }
+  surfaces->Invoke(method, routed, profile, generation, zoom, std::move(done));
 }
 
 ardia::LinuxExtensionSurfaces* ShellHostView::ExtensionSurfaces() {
@@ -157,8 +281,7 @@ ardia::LinuxExtensionSurfaces* ShellHostView::ExtensionSurfaces() {
             [](base::WeakPtr<ShellHostView> host, int id,
                base::DictValue event) {
               if (host) {
-                host->Emit("ArdiaExtensionView", base::NumberToString(id),
-                           base::Value(std::move(event)));
+                host->EmitExtensionView(id, std::move(event));
               }
             },
             GetWeakPtr()),
@@ -188,10 +311,14 @@ ardia::LinuxExtensionSurfaces* ShellHostView::ExtensionSurfaces() {
 void ShellHostView::ExtensionActionStates(const std::string& profile,
                                           const base::Value* args,
                                           Done done) {
+  if (!args || !args->is_string() ||
+      !policy::ActionStatesRequestFits(args->GetString())) {
+    return std::move(done).Run(
+        false, Failure("ERR_EXTENSION_REQUEST",
+                       "Extension states need JSON text of at most 64 KiB"));
+  }
   std::optional<base::Value> parsed =
-      args && args->is_string()
-          ? base::JSONReader::Read(args->GetString(), base::JSON_PARSE_RFC)
-          : std::nullopt;
+      base::JSONReader::Read(args->GetString(), base::JSON_PARSE_RFC, 8);
   const base::DictValue* input =
       parsed && parsed->is_dict() ? &parsed->GetDict() : nullptr;
   const std::string* tab_key = input ? input->FindString("tabId") : nullptr;
