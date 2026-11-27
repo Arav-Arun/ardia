@@ -53,6 +53,19 @@ For the architecture and the test tooling, read `docs/agent-brief.md`.
   - **Do it in the same session, unasked.** Small, safe fixes land on their own. When the fix changes how the owner
     works or costs a lot, propose it in one line.
   - **Fix the kind, not the case.** When the same thing goes wrong twice, the second fix covers the whole kind.
+  - **Remove what keeps slowing shipping.** When the same blocker keeps costing time, improve that part, for
+    example:
+    - a wait;
+    - a manual step;
+    - a lock or queue;
+    - a slow build or check;
+    - a flaky service;
+    - an approval you keep needing.
+
+    Then tell the owner what changed and what it saves. Decide for yourself whether to just do it, or to bring it
+    to the owner first. Bring it first only when it needs their decision, their access or their money, or changes
+    how they work. Bringing it to the owner is never a substitute for doing it: when it's yours to do, do it and
+    report it, and when it isn't, bring a concrete proposal and keep working on what you can.
   - **Never paper over it.** Don't retry, skip, silence or work around a failure without fixing why it happened.
     Something that only looks fixed (a test that fakes the path it covers, a check skipped to get green, a flake
     retried until it passes) counts as broken.
