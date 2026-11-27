@@ -1,6 +1,6 @@
 import type { BrowserState } from "../browser/store";
 import type { Tab } from "../browser/types";
-import { inPinnedContainer, newId, pinKeyOf } from "../browser/model";
+import { inPinnedContainer, isPinnedRow, newId, pinKeyOf } from "../browser/model";
 import { adoptOf, hasPage, holderOfPage, wakeOf } from "../tabs/pageSession";
 import { splitTabIds } from "../splits/splits";
 import { isRegularWindow } from "../windows/small";
@@ -84,18 +84,32 @@ function keepSplitsHome(s: BrowserState, homeId: string, members: Set<string>): 
     const at = s.ui?.focusOrder?.indexOf(windowId) ?? -1;
     return windowId === homeId ? -1 : at < 0 ? Number.MAX_SAFE_INTEGER : at;
   };
+  const mirrored = (v: BrowserState["splits"][string]) => splitTabIds(v).every((id) => released(id) || isPinnedRow(s.tabs[id]));
   const sameTabs = new Map<string, BrowserState["splits"][string][]>();
+  const homeSplits: BrowserState["splits"][string][] = [];
   for (const v of affected) {
+    if (!mirrored(v)) {
+      homeSplits.push(v);
+      continue;
+    }
     const key = splitTabIds(v).map((id) => pinKeyOf(s.tabs[id]!)).sort().join(" ");
     sameTabs.get(key)?.push(v) ?? sameTabs.set(key, [v]);
   }
-  const homeSplits = [...sameTabs.values()].map((copies) => copies.reduce((x, y) => (focusRank(y.windowId) < focusRank(x.windowId) ? y : x)));
-  const homePanes = homeSplits.flatMap((v) => splitTabIds(v)).filter(released);
+  for (const copies of sameTabs.values()) homeSplits.push(copies.reduce((x, y) => (focusRank(y.windowId) < focusRank(x.windowId) ? y : x)));
+  homeSplits.sort((x, y) => focusRank(x.windowId) - focusRank(y.windowId));
+  const claimed = new Set<string>();
+  const apart: string[] = [];
+  for (const id of homeSplits.flatMap((v) => splitTabIds(v)).filter(released)) {
+    const key = `${s.tabs[id]!.profileId} ${pinKeyOf(s.tabs[id]!)}`;
+    if (claimed.has(key)) apart.push(id);
+    else claimed.add(key);
+  }
+  const homePanes = homeSplits.flatMap((v) => splitTabIds(v)).filter((id) => released(id) && !apart.includes(id));
   const profileOf = new Map(homePanes.map((id) => [pinKeyOf(s.tabs[id]!), s.tabs[id]!.profileId]));
   const away = affected.filter((v) => !homeSplits.includes(v));
   const splits = { ...s.splits };
   for (const v of away) delete splits[v.id];
-  let next: BrowserState = { ...s, splits };
+  let next: BrowserState = withOwnKeys({ ...s, splits }, apart);
   const rank = rankFor(homeId);
   for (const id of homePanes) {
     const pane = next.tabs[id]!;

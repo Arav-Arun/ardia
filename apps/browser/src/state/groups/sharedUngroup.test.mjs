@@ -523,3 +523,40 @@ test("ungrouping a shared folder from another window keeps a split with a Top Ap
   assert.equal(splitsIn(a).length, 0);
   assert.equal(S().closedTabs.length, closed);
 });
+
+test("ungrouping a shared folder keeps two splits made separately in two other windows with the same tabs", () => {
+  S().hydrate({});
+  const a = S().createWindow({ url: site("one") });
+  S().newTab(a, { url: site("two"), background: true });
+  S().newTab(a, { url: site("app"), background: true });
+  S().updateSettings({ shareTabsAcrossWindows: true });
+  const b = S().createWindow({ url: site("b") });
+  const c = S().createWindow({ url: site("c") });
+  const pick = (w, name) => rows(w).find((t) => t.url === site(name)).id;
+  S().pinTabs([pick(b, "app")], true);
+  const group = S().groupTabs([pick(b, "one"), pick(b, "two")], { pinned: true });
+  for (const [w, orientation] of [[b, "horizontal"], [c, "vertical"]]) {
+    S().setFocusedWindow(w);
+    S().createSplit([pick(w, "app"), pick(w, "one")]);
+    const made = splitsIn(w)[0];
+    assert.ok(made, "each window makes its own split");
+    useBrowser.setState((st) => ({ splits: { ...st.splits, [made.id]: { ...made, orientation } } }));
+  }
+  const closed = S().closedTabs.length;
+  S().setFocusedWindow(a);
+  S().ungroup(folderOf(a, group).id);
+  for (const w of [b, c]) {
+    const kept = splitsIn(w);
+    assert.equal(kept.length, 1, "both splits survive");
+    assert.ok(splitTabIds(kept[0]).some((id) => S().tabs[id].url === site("one")), "each with its pane of the folder's tab");
+  }
+  assert.equal(splitsIn(b)[0].orientation, "horizontal");
+  assert.equal(splitsIn(c)[0].orientation, "vertical");
+  for (const w of [a, b, c]) {
+    const keys = S().windows[w].tabIds.map((id) => S().tabs[id]).filter((t) => t.profileId === "default").map(pinKeyOf);
+    assert.equal(new Set(keys).size, keys.length, "no tab is listed twice in a window, split panes included");
+  }
+  const live = Object.values(S().tabs).filter(hasPage).map(pinKeyOf);
+  assert.equal(new Set(live).size, live.length, "one live page per tab");
+  assert.equal(S().closedTabs.length, closed);
+});
