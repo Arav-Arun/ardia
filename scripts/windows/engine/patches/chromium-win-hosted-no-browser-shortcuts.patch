@@ -32,7 +32,23 @@
    return false;
  }
  
-@@ -6442,6 +6460,14 @@
+@@ -4008,6 +4026,15 @@
+   }
+ 
+   int id;
++#if BUILDFLAG(IS_WIN)
++  if (g_ardia_win_hosts_normal_windows && GetIsNormalType() &&
++      !focus_manager->HasPriorityHandler(accelerator)) {
++    return focus_manager->IsAcceleratorRegistered(accelerator) &&
++                   event.GetType() == blink::WebInputEvent::Type::kRawKeyDown
++               ? content::KeyboardEventProcessingResult::NOT_HANDLED_IS_SHORTCUT
++               : content::KeyboardEventProcessingResult::NOT_HANDLED;
++  }
++#endif
+   if (!FindCommandIdForAccelerator(accelerator, &id)) {
+     // |accelerator| is not a browser command, it may be handled by ash (e.g.
+     // F4-F10). Report if we handled it.
+@@ -6489,6 +6516,14 @@
    views::FocusManager* focus_manager = GetFocusManager();
    CHECK(focus_manager, base::NotFatalUntil::M162);
  

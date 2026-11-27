@@ -603,6 +603,10 @@ void ShellHostView::SetKeyboardShortcuts(const base::ListValue* values,
         command.empty() || command.size() > 64) {
       return std::move(done).Run(false, base::Value("Invalid keyboard shortcut"));
     }
+    if (!webui_window::ShortcutRegisters(
+            binding.FindBool("suppressed").value_or(false))) {
+      continue;
+    }
     shortcuts.emplace(ui::Accelerator(static_cast<ui::KeyboardCode>(key), flags),
                       binding.Clone());
   }

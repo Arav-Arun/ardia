@@ -793,6 +793,9 @@ BrowserWindowInterface* ShellHostView::EnsureMember(Profile* profile) {
 }
 
 void ShellHostView::CompanionClosed(BrowserWindowInterface* companion) {
+  if (views::FocusManager* focus = CompanionFocusManager(companion)) {
+    focus->UnregisterAccelerators(this);
+  }
   companion->GetTabStripModel()->RemoveObserver(this);
   std::erase_if(companions_, [companion](const auto& weak) {
     return !weak || weak.get() == companion;
@@ -815,8 +818,12 @@ void ShellHostView::RegisterShortcuts(views::FocusManager* focus) {
     return;
   }
   for (const auto& [accelerator, binding] : shortcuts_) {
-    focus->RegisterAccelerator(accelerator,
-                               ui::AcceleratorManager::kNormalPriority, this);
+    focus->RegisterAccelerator(
+        accelerator,
+        webui_window::ShortcutReservedFromPages(Text(binding, "command"))
+            ? ui::AcceleratorManager::kHighPriority
+            : ui::AcceleratorManager::kNormalPriority,
+        this);
   }
 }
 
