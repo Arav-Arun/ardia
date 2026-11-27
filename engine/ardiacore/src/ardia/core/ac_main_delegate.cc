@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "ardia/core/ac_fatal_note.h"
+#include "base/allocator/partition_alloc_features.h"
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/environment.h"
@@ -324,6 +325,32 @@ void MergeFeatures(base::CommandLine* command_line, const char* list, std::strin
                                                         : current + "," + std::string(features));
 }
 
+bool NamesFeature(const base::CommandLine& command_line, std::string_view feature) {
+  for (const char* list : {switches::kEnableFeatures, switches::kDisableFeatures}) {
+    const std::string value = command_line.GetSwitchValueASCII(list);
+    for (std::string_view entry :
+         base::SplitStringPiece(value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+      if (entry.starts_with('*')) {
+        entry.remove_prefix(1);
+      }
+      if (entry.substr(0, entry.find_first_of("<:")) == feature) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void ReportDanglingUnretainedWithoutCrashing(base::CommandLine* command_line) {
+  const std::string_view feature = base::features::kPartitionAllocUnretainedDanglingPtr.name;
+  if (NamesFeature(*command_line, feature)) {
+    return;
+  }
+  MergeFeatures(command_line, switches::kEnableFeatures,
+                std::string(feature) + ":" + base::features::kUnretainedDanglingPtrModeParam.name +
+                    "/dump_without_crashing");
+}
+
 constexpr int kDiskSpaceCheckSeconds = 60;
 
 void QuietIdleTimers(base::CommandLine* command_line) {
@@ -356,6 +383,7 @@ std::optional<int> ACMainDelegate::BasicStartupComplete() {
     command_line->AppendSwitch("keep-old-history");
     command_line->RemoveSwitch(switches::kMakeDefaultBrowser);
     MergeFeatures(command_line, switches::kEnableFeatures, "WebContentsDiscard");
+    ReportDanglingUnretainedWithoutCrashing(command_line);
     QuietIdleTimers(command_line);
   }
   if (command_line->HasSwitch(extensions::switches::kExtensionProcess)) {
