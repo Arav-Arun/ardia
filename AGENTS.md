@@ -157,6 +157,10 @@ For the architecture and the test tooling, read `docs/agent-brief.md`.
   `open -g -n --env ARDIA_BACKGROUND=1 --env ARDIA_DATA_DIR=<throwaway dir> --env ARDIA_REMOTE_DEBUGGING_PORT=<port> <app>`.
   Never use plain `open`. Background mode logs context menus and file panels instead of showing them.
   Keep test data in a scratch dir, not in `~/Documents`.
+  A test copy that LaunchServices can start (Finder's Open With, a URL or file handler) never gets `--env`, so it
+  runs on the default profile. Give every test copy its own bundle id, a distinct `CFBundleName`, and
+  `LSEnvironment` with its scratch `ARDIA_DATA_DIR`. Re-sign it and run `lsregister -f` before it can be
+  launched that way.
   You can make exceptions to this rule at your own discretion but dont misuse it. If you can find another way, prefer that and save that strategy for u to reuse later, maintain a skill file for this repo.
 - **Use Dia as reference.** You may take screenshots, read its app bundle and interact with it.
 - **The owner's real browser data is fair game for debugging.** Read the owner's Ardia, Dia and other browser
