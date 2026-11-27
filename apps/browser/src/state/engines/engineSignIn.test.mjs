@@ -159,7 +159,7 @@ test("a value WebKit changed goes back to Chromium with the SameSite WebKit can'
   }
 });
 
-test("the hourly counts take only the cookies Chromium accepted, not the ones a carry sent", async () => {
+test("the hourly counts take a carry's same-site and replaced cookies only when Chromium accepted all of them", async () => {
   const { takeSiteDataCounts } = await import("../telemetry/siteDataCounts.ts");
   const { setSharing, consentToken } = await import("../telemetry/client.ts");
   const { tabId } = setup();
@@ -169,14 +169,17 @@ test("the hourly counts take only the cookies Chromium accepted, not the ones a 
   try {
     await carrySignIn(tabId, `${ORIGIN}/home`, "webkit", null);
     webKit.cookies = webKit.cookies.map((c) => ({ ...asWebKitHolds(c), value: "w2" }));
+    webKit.cookies.push({ ...signedIn, name: "fresh", value: "new", session: true });
     const write = page.siteData;
-    page.siteData = async (request) => (request.op === "write" ? { cookiesWritten: 0, removed: 0, storageWritten: 0 } : write(request));
-    takeSiteDataCounts();
-    await carrySite("", "app.test", "chromium", { consent: consentToken() });
-    const counts = takeSiteDataCounts();
-    assert.equal(counts.site_data_same_site_kept, 0);
-    assert.equal(counts.site_data_chromium_values_replaced, 0);
-    assert.equal(counts.site_data_chromium_writes_no_webkit_record, 0);
+    for (const accepted of [0, 1]) {
+      page.siteData = async (request) => (request.op === "write" ? { cookiesWritten: accepted, removed: 0, storageWritten: 0 } : write(request));
+      takeSiteDataCounts();
+      await carrySite("", "app.test", "chromium", { consent: consentToken() });
+      const counts = takeSiteDataCounts();
+      assert.equal(counts.site_data_same_site_kept, 0, `${accepted} of 2 accepted`);
+      assert.equal(counts.site_data_chromium_values_replaced, 0, `${accepted} of 2 accepted`);
+      assert.equal(counts.site_data_chromium_writes_no_webkit_record, accepted, `${accepted} of 2 accepted`);
+    }
   } finally {
     await setSharing(false, "settings");
   }

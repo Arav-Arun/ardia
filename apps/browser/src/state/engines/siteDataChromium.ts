@@ -203,8 +203,9 @@ export async function writeChromium(
   const reply = sent.length || remove.length ? await read.page.siteData({ op: "write", cookies: sent.map(chromiumCookie), remove, storage: {} }).catch(() => null) : { cookiesWritten: 0, removed: 0 };
   if (!reply) return null;
   const landedCookies = reply.cookiesWritten ?? 0;
-  const sameSiteKept = Math.min(landedCookies, sent.filter((c, i) => c !== cookies[i]).length);
-  const replaced = Math.min(landedCookies, cookies.filter((c) => (present.get(cookieKey(c))?.value ?? c.value) !== c.value).length);
+  const allLanded = landedCookies >= sent.length;
+  const sameSiteKept = allLanded ? sent.filter((c, i) => c !== cookies[i]).length : 0;
+  const replaced = allLanded ? cookies.filter((c) => (present.get(cookieKey(c))?.value ?? c.value) !== c.value).length : 0;
   const landed = new Set<string>();
   let stored = 0;
   let overQuota = 0;
