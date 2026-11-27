@@ -57,6 +57,7 @@ export type SyncDoc = {
   setupAt: number | null;
   joining: boolean;
   seqs?: Record<string, number>;
+  reseedScopes?: string[];
   sends?: Record<string, SendLedger>;
   tabCloses?: Record<string, string[]>;
   removing?: string[] | Record<string, ProfileRemoval>;
@@ -103,6 +104,8 @@ export type SyncUi = {
   status: SyncStatus;
   enabled: boolean;
   joining: boolean;
+  reseeding: boolean;
+  dataMissing: boolean;
   folder: string | null;
   types: Record<DataType, boolean>;
   profiles: Record<string, ProfileLink>;
@@ -119,6 +122,8 @@ export const emptyUi = (status: SyncStatus): SyncUi => ({
   status,
   enabled: false,
   joining: false,
+  reseeding: false,
+  dataMissing: false,
   folder: null,
   types: defaultTypes(),
   profiles: {},
