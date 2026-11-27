@@ -33,24 +33,25 @@ For the architecture and the test tooling, read `docs/agent-brief.md`.
   changed since the last round, how you verified it and which earlier findings you fixed or rejected and why.
   Reproduce each finding before fixing it. Cap review loops at 5 rounds per PR (stop earlier once approved
   or only nits remain; if blockers stay open after round 5, stop and escalate to the owner).
-- **Checks improve and heal themselves.** Every bug found, whether by a review, the owner, a crash or telemetry,
-  leaves behind a check that would have caught it, so it can't come back unnoticed. Pick the cheapest kind that
-  catches it:
-  - a regression test on the real path;
-  - a case in a fuzzer or the race explorer;
-  - a hostile input in the shared corpus;
-  - a lint.
-  When the same kind of bug turns up twice, fix the kind, not the instance: add the invariant to the shared harness,
-  generator or lint. The differential fuzzers (new code against the old implementation) and the deterministic
-  race explorer run with every review round and before every release. A new failure gets fixed or assigned at once,
-  without waiting to be asked. Keep the checks honest:
-  - A test that fakes the path it claims to cover (a mock that answers without running the script, a harness that
-    refreshes everything and hides a cache) doesn't count.
-  - A check that fails because the code changed on purpose is updated in the same change. It is never deleted,
-    skipped or ignored just to get green.
-  - A flaky check is a bug to root-cause, not something to retry.
-  - When the owner or a reviewer corrects how agents work, write the rule where agents read it (this file, the
-    skill, the brief) in the same session.
+- **The system improves and heals itself.** "The system" is everything agents work with: this file, the docs,
+  skills and briefs, the scripts and tools, the build and test machinery, the review loop and how agents are
+  orchestrated. When anything goes wrong, fix the cause in the system so the next agent can't hit it, then carry
+  on. Anything going wrong includes:
+  - a bug that shipped or nearly shipped;
+  - an agent stuck, killed or working from a wrong instruction;
+  - a tool that misled you, or a build that collided with another;
+  - a reviewer catching something the process should have;
+  - the owner correcting you.
+  - **Fix it where it's written.** A wrong instruction gets fixed in this file, the skill or the brief that gave it.
+    A missing guard becomes a script check or a hook. A slow or fragile step becomes a tool. A kind of bug that keeps
+    coming back becomes an invariant every future change is checked against, whether that's a harness, a generator,
+    a lint or a review prompt.
+  - **Do it in the same session, unasked.** Small, safe fixes land on their own. When the fix changes how the owner
+    works or costs a lot, propose it in one line.
+  - **Fix the kind, not the case.** When the same thing goes wrong twice, the second fix covers the whole kind.
+  - **Never paper over it.** Don't retry, skip, silence or work around a failure without fixing why it happened.
+    Something that only looks fixed (a test that fakes the path it covers, a check skipped to get green, a flake
+    retried until it passes) counts as broken.
 - **Worktrees are fine.** Use a git worktree or a scratch clone for isolated feature, PR and full-send work, so
   you can switch branches, reset and stash without touching anyone else. `scripts/agent/guard-git` only blocks
   `checkout`, `switch`, `restore`, `stash`, `reset --hard` and `clean` in the shared root checkout (the primary
