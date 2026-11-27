@@ -552,6 +552,39 @@ test("a tab the ardia command holds stays in Chromium when it lands on a site ro
   S().updateSettings({ websiteEngines: {} });
 });
 
+test("a hold the ardia command takes while a move is getting ready stops the move, and the same site's next page after the hold applies the rule", async () => {
+  const { holdForCli, releaseFromCli } = await import("../tabs/cliHolds.ts");
+  S().hydrate({});
+  S().updateSettings({ websiteEngines: { "https://read.example": "webkit" } });
+  setConsentPeriod(true, "test-epoch");
+  const w = S().createWindow({ url: "https://search.example/" });
+  const tabId = model.activeTabId(S(), w);
+  S().updateTab(tabId, { engine: "chromium", url: "https://search.example/" });
+  webviews.set(tabId, { evaluate: () => new Promise((resolve) => setTimeout(() => resolve(false), 20)), pageCookies: () => new Promise((resolve) => setTimeout(() => resolve([]), 20)) });
+  takeEngineSwitchCounts();
+  S().updateTab(tabId, { url: "https://read.example/a" });
+  followSiteChoice(tabId, "chromium", "https://read.example/a", "https://search.example/");
+  assert.deepEqual(holdForCli("cli-session", [tabId]).started, [tabId]);
+  for (let i = 0; i < 20; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(tabEngine(S(), tabId), "chromium", "the swap that was getting ready doesn't land on a tab the command now holds");
+  let counts = takeEngineSwitchCounts();
+  assert.deepEqual([counts.engine_site_moves_kept_for_cli, counts.engine_site_moves, counts.engine_site_moves_dropped], [1, 0, 0]);
+  releaseFromCli("cli-session");
+  S().updateTab(tabId, { url: "https://read.example/b" });
+  followSiteChoice(tabId, "chromium", "https://read.example/b", "https://read.example/a");
+  assert.ok(await waitFor(() => tabEngine(S(), tabId) === "webkit"), "a page on the same site after the hold still gets the site's engine");
+  counts = takeEngineSwitchCounts();
+  assert.deepEqual([counts.engine_site_moves_kept_for_cli, counts.engine_site_moves], [0, 1]);
+  S().updateTab(tabId, { url: "https://read.example/c" });
+  followSiteChoice(tabId, "webkit", "https://read.example/c", "https://read.example/b");
+  for (let i = 0; i < 6; i++) await settle();
+  assert.equal(takeEngineSwitchCounts().engine_site_moves, 0, "after that the same site's pages move nothing again");
+  dropSwap(tabId);
+  webviews.clear();
+  setConsentPeriod(false, null);
+  S().updateSettings({ websiteEngines: {} });
+});
+
 function streamingWindow(source = "https://blog.example/", settings = {}) {
   S().hydrate({});
   S().updateSettings({ protectedVideoInWebKit: true, websiteEngines: {}, engineMode: "automatic", ...settings });

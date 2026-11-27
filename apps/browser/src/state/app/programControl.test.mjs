@@ -193,3 +193,36 @@ test("a restore after the engine stopped control itself is counted as restored o
   assert.equal(replies.length, 0);
   setConsentPeriod(false, null);
 });
+
+test("a restore the person cancels with Off isn't counted when they turn control on themselves later", async () => {
+  const { restoreControlAtLaunch, controlStoppedItself } = await import("./programControlSetting.ts");
+  const { consentToken } = await import("../telemetry/consentPeriod.ts");
+  setConsentPeriod(true, "test-epoch");
+  setOn(false);
+  while (replies.length) replies.shift()({ state: "off", generation: 8 });
+  await settle();
+  setOn(true);
+  replies.shift()({ state: "on", generation: 8, connections: 0 });
+  await settle();
+  emit({ state: "off", generation: 8, reason: "The control server didn't start." });
+  await settle();
+  replies.shift()({ state: "off", generation: 8, reason: "The control server didn't start." });
+  await settle();
+  assert.equal(controlStoppedItself(), true);
+  takeCliCounts();
+  restoreControlAtLaunch(consentToken());
+  const restoring = replies.shift();
+  cli.stopProgramControl();
+  restoring({ state: "starting", generation: 9 });
+  replies.shift()({ state: "off", generation: 9 });
+  await settle();
+  setOn(true);
+  replies.shift()({ state: "on", generation: 10, connections: 0 });
+  await settle();
+  emit({ state: "on", generation: 10, connections: 1 });
+  await settle();
+  const counts = takeCliCounts();
+  assert.deepEqual([counts.cli_control_restore_tries_launch, counts.cli_control_restored], [1, 0], "the person's own On isn't the cancelled restore coming back");
+  assert.equal(replies.length, 0);
+  setConsentPeriod(false, null);
+});

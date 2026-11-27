@@ -160,6 +160,12 @@ export function startProgramControl() {
   let latest = 0;
   let inFlight = 0;
   let newest = 0;
+  let restoring: { request: number; consent: ConsentToken | null } | null = null;
+  const settleRestore = (server: ControlStatus) => {
+    if (!restoring || restoring.request !== latest || (server.state !== "on" && server.state !== "off")) return;
+    if (server.state === "on") noteControlRestored(restoring.consent);
+    restoring = null;
+  };
   const apply = (server: ControlStatus, mayReconcile: boolean, consent?: ConsentToken | null) => {
     noteDragsEnded(server.dragsEnded, consent);
     const generation = server.state === "external" ? newest : server.generation;
@@ -167,10 +173,8 @@ export function startProgramControl() {
     newest = generation;
     useControlServer.setState({ server });
     const stoppedItself = server.state === "off" ? server.reason : undefined;
-    const restore = server.state === "on" ? takeControlRestore() : null;
-    if (restore) noteControlRestored(restore.consent);
+    settleRestore(server);
     if (mayReconcile && stoppedItself && programControlOn(useBrowser.getState())) {
-      takeControlRestore();
       setControlByApp(false);
       noteControlSelfStop(stoppedItself, consent);
     }
@@ -184,6 +188,8 @@ export function startProgramControl() {
     applied = on;
     const request = ++latest;
     const consent = consentToken();
+    const restore = takeControlRestore();
+    restoring = on && restore ? { request, consent: restore.consent } : null;
     inFlight++;
     const settle = (server: ControlStatus) => {
       inFlight--;
