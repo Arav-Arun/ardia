@@ -17,6 +17,7 @@
 #include "ardia/desktop/ac_desktop_webui_process_policy.h"
 #include "ardia/desktop/ac_desktop_window_state.h"
 #include "ardia/desktop/generated/ac_desktop_routes.h"
+#include "ardia/linux/ac_linux_extension_views.h"
 #include "ardia/win/main.h"
 #include "ardia/win/private_sessions.h"
 #include "ardia/win/profiles.h"
@@ -645,6 +646,7 @@ void ShellHostView::DetachBrowser() {
     return;
   }
   closing_ = true;
+  DropExtensionSurfaces();
   RetireRenderer();
   telemetry_.CancelAll();
   file_picker_.reset();
@@ -792,6 +794,9 @@ BrowserWindowInterface* ShellHostView::EnsureMember(Profile* profile) {
 }
 
 void ShellHostView::CompanionClosed(BrowserWindowInterface* companion) {
+  if (extension_surfaces_member_ == companion) {
+    DropExtensionSurfaces();
+  }
   companion->GetTabStripModel()->RemoveObserver(this);
   std::erase_if(companions_, [companion](const auto& weak) {
     return !weak || weak.get() == companion;
@@ -802,6 +807,7 @@ void ShellHostView::CompanionClosed(BrowserWindowInterface* companion) {
 }
 
 void ShellHostView::CloseCompanions() {
+  DropExtensionSurfaces();
   std::vector<base::WeakPtr<BrowserWindowInterface>> companions =
       std::move(companions_);
   companions_.clear();
@@ -963,6 +969,9 @@ void ShellHostView::LayoutOverlay() {
   if (views::WebView* chrome_view = browser_view_->GetActiveContentsWebView()) {
     chrome_view->SetVisible(false);
   }
+  if (extension_surfaces_) {
+    extension_surfaces_->Relayout();
+  }
   Restack();
   ApplyShellInput();
 }
@@ -973,6 +982,9 @@ void ShellHostView::Restack() {
   }
   browser_view_->ReorderChildView(this, browser_view_->children().size());
   ReorderChildView(shell_, children().size());
+  if (extension_surfaces_) {
+    extension_surfaces_->RaisePopups();
+  }
 }
 
 void ShellHostView::ReattachViewports() {
@@ -1107,6 +1119,9 @@ void ShellHostView::RetireRenderer() {
   handler_ = nullptr;
   renderer_document_ = content::WeakDocumentPtr();
   ++renderer_generation_;
+  if (extension_surfaces_) {
+    extension_surfaces_->RetireOlderThan(renderer_generation_);
+  }
   if (!had_document) {
     return;
   }

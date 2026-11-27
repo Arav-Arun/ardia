@@ -43,6 +43,10 @@ class BrowserWindowInterface;
 class GURL;
 class Profile;
 
+namespace ardia {
+class LinuxExtensionSurfaces;
+}
+
 namespace aura {
 class Window;
 class WindowTargeter;
@@ -284,6 +288,14 @@ class ShellHostView : public views::View,
   void ObserveMember(BrowserWindowInterface* member);
   void CloseCompanions();
   void SelectProfile(Profile* profile);
+  Profile* ActiveProfile() const;
+  BrowserWindowInterface* ActiveMember() const;
+
+  ardia::LinuxExtensionSurfaces* ExtensionSurfaces();
+  void DropExtensionSurfaces();
+  void ExtensionActionStates(const std::string& profile,
+                             const base::Value* args,
+                             Done done);
 
   PageBinding* ClaimedBinding(const base::DictValue& args) const;
   void CreateTab(const base::DictValue& args, Done done);
@@ -353,6 +365,8 @@ class ShellHostView : public views::View,
   bool painted_ = false;
   std::vector<base::WeakPtr<BrowserWindowInterface>> companions_;
   base::WeakPtr<Profile> active_profile_;
+  std::unique_ptr<ardia::LinuxExtensionSurfaces> extension_surfaces_;
+  raw_ptr<BrowserWindowInterface> extension_surfaces_member_ = nullptr;
   webui_window::SelectionSequence selection_;
 
   raw_ptr<views::WebView> shell_ = nullptr;
