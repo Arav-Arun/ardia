@@ -17,7 +17,8 @@ For the architecture and the test tooling, read `docs/agent-brief.md`.
 - **Orchestrate.** The main session plans, hands implementation to Opus subagents, and verifies what they
   return (build, run, capture). Give each agent its own files, its own derived-data dir and its own
   `ARDIA_DATA_DIR`. When several agents edit one checkout, none of them waits for another's edit to settle: it
-  builds and tests in a scratch `rsync` copy, with others' half-done files swapped for the last good version,
+  builds and tests in a scratch copy (`rsync -a --no-times --checksum`; plain `rsync -a` keeps old mtimes, and
+  cargo then builds a stale file), with others' half-done files swapped for the last good version,
   then keeps its real edits in the shared tree. Agents left waiting were killed mid-run. Keep total build jobs
   under about 2× the cores, and send the overflow to an idle Mac.
 - **Watch the agents.** Every ~30 minutes the main session checks any agent it hasn't heard from (last
