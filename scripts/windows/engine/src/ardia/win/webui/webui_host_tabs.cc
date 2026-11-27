@@ -3,10 +3,13 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "ardia/core/ac_launch_switches.h"
+#include "ardia/linux/ac_linux_find.h"
+#include "ardia/linux/ac_linux_page_evaluation.h"
 #include "ardia/win/profiles.h"
 #include "ardia/win/webui/webui_bridge.h"
 #include "ardia/win/webui/webui_host_internal.h"
@@ -14,6 +17,8 @@
 #include "ardia/win/webui/webui_windows.h"
 #include "base/auto_reset.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/json/json_reader.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
@@ -24,13 +29,17 @@
 #include "chrome/browser/ui/navigator/browser_navigator_params.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/chrome_isolated_world_ids.h"
 #include "components/zoom/page_zoom.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/reload_type.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/referrer.h"
 #include "content/public/common/page_zoom.h"
+#include "crypto/sha2.h"
+#include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/views/controls/webview/webview.h"
@@ -44,6 +53,51 @@ constexpr int kNavigationEntryLimit = 1000;
 
 bool BlankUrl(const GURL& url) {
   return url.is_empty() || url.IsAboutBlank();
+}
+
+bool Scriptable(content::RenderFrameHost* frame) {
+  const GURL& url = frame->GetLastCommittedURL();
+  return url.SchemeIsHTTPOrHTTPS() || url.SchemeIsFile();
+}
+
+std::string Sha256(std::string_view text) {
+  return base::HexEncodeLower(crypto::SHA256HashString(text));
+}
+
+std::optional<base::Value> ParseList(std::string_view json) {
+  auto value = base::JSONReader::Read(json, base::JSON_PARSE_RFC, 4);
+  if (!value || !value->is_list()) {
+    return std::nullopt;
+  }
+  return value;
+}
+
+using PageEvaluated =
+    base::OnceCallback<void(bool refused, std::optional<std::string> result)>;
+
+void RunPageEvaluation(content::RenderFrameHost* frame,
+                       const std::string& code,
+                       PageEvaluated done) {
+  const std::optional<std::string> script =
+      ardiacore::LinuxPageEvaluationScript(code, &Sha256, &ParseList);
+  if (!script) {
+    return std::move(done).Run(true, std::nullopt);
+  }
+  if (!frame || !frame->IsRenderFrameLive() || !frame->IsActive() ||
+      !Scriptable(frame)) {
+    return std::move(done).Run(false, std::nullopt);
+  }
+  frame->ExecuteJavaScriptInIsolatedWorld(
+      base::UTF8ToUTF16(*script),
+      mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+          base::BindOnce(
+              [](PageEvaluated done, base::Value value) {
+                std::move(done).Run(
+                    false, ardiacore::LinuxPageEvaluationResult(value));
+              },
+              std::move(done)),
+          base::Value()),
+      ISOLATED_WORLD_ID_CHROME_INTERNAL);
 }
 
 }
@@ -445,6 +499,54 @@ void ShellHostView::TabCommand(const base::DictValue& args, Done done) {
                          .Set("current", index == current));
     }
     return std::move(done).Run(true, base::Value(std::move(entries)));
+  }
+  if (command == "find") {
+    if (!values || values->size() != 3 || !(*values)[0].is_string() ||
+        !(*values)[1].is_bool() || !(*values)[2].is_bool()) {
+      return std::move(done).Run(
+          false, Failure("ERR_PAGE_ARGUMENT",
+                         "find requires text, forward and findNext"));
+    }
+    ardiacore::LinuxFind* find = binding->Find();
+    if (!find || !find->Start(base::UTF8ToUTF16((*values)[0].GetString()),
+                              (*values)[1].GetBool())) {
+      return std::move(done).Run(
+          false, Failure("ERR_PAGE_UNAVAILABLE", "Find helper is unavailable"));
+    }
+    return std::move(done).Run(true, base::Value());
+  }
+  if (command == "stopFinding") {
+    if (!values || values->size() != 1 || !(*values)[0].is_bool()) {
+      return std::move(done).Run(
+          false, Failure("ERR_PAGE_ARGUMENT",
+                         "stopFinding requires clearSelection"));
+    }
+    ardiacore::LinuxFind* find = binding->Find();
+    if (!find || !find->Stop((*values)[0].GetBool())) {
+      return std::move(done).Run(
+          false, Failure("ERR_PAGE_UNAVAILABLE", "Find helper is unavailable"));
+    }
+    return std::move(done).Run(true, base::Value());
+  }
+  if (command == "evaluate") {
+    if (!values || values->size() != 1 || !(*values)[0].is_string()) {
+      return std::move(done).Run(false,
+                                 base::Value("evaluate requires one script"));
+    }
+    RunPageEvaluation(
+        contents->GetPrimaryMainFrame(), (*values)[0].GetString(),
+        base::BindOnce(
+            [](Done done, bool refused, std::optional<std::string> result) {
+              if (refused) {
+                return std::move(done).Run(
+                    false, Failure("ERR_PAGE_EVALUATION_REFUSED",
+                                   "Ardia runs only its own page operations"));
+              }
+              std::move(done).Run(true, result ? base::Value(*result)
+                                               : base::Value());
+            },
+            std::move(done)));
+    return;
   }
   NoteUnhandled("tab.command " + command);
   std::move(done).Run(true, base::Value());

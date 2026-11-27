@@ -17,6 +17,7 @@
 #include "ardia/desktop/ac_desktop_webui_process_policy.h"
 #include "ardia/desktop/ac_desktop_window_state.h"
 #include "ardia/desktop/generated/ac_desktop_routes.h"
+#include "ardia/linux/ac_linux_find.h"
 #include "ardia/win/main.h"
 #include "ardia/win/private_sessions.h"
 #include "ardia/win/profiles.h"
@@ -441,6 +442,7 @@ PageBinding::~PageBinding() {
 }
 
 void PageBinding::MoveTo(ShellHostView* owner) {
+  find_.reset();
   if (viewport && owner_) {
     viewport->SetWebContents(nullptr);
     owner_->RemoveChildViewT(viewport.get());
@@ -501,6 +503,34 @@ void PageBinding::ReportClosed() {
                base::Value(std::move(delivery)));
 }
 
+bool PageBinding::CanReport() const {
+  return owner_ && !claim.empty() && web_contents();
+}
+
+ardiacore::LinuxFind* PageBinding::Find() {
+  if (!find_ && web_contents()) {
+    find_ = std::make_unique<ardiacore::LinuxFind>(
+        web_contents(),
+        base::BindRepeating(&PageBinding::CanReport, base::Unretained(this)),
+        base::BindRepeating(&PageBinding::ReportFind, base::Unretained(this)));
+  }
+  return find_.get();
+}
+
+void PageBinding::ReportFind(base::DictValue result) {
+  const std::string* type = result.FindString("type");
+  base::DictValue* value = result.FindDict("value");
+  if (!CanReport() || !type || *type != "findResult" || !value) {
+    return;
+  }
+  base::DictValue delivery = Envelope("pageEvent");
+  delivery.Set("event", base::DictValue()
+                            .Set("name", "find")
+                            .Set("data", std::move(*value)));
+  owner_->Emit("ArdiaWebView", base::NumberToString(id_),
+               base::Value(std::move(delivery)));
+}
+
 bool PageBinding::ReportOpenPrivateWindow(const GURL& url,
                                           const std::string& profile) {
   if (!owner_ || claim.empty() || !url.is_valid() ||
@@ -523,6 +553,7 @@ bool PageBinding::ReportOpenPrivateWindow(const GURL& url,
 }
 
 void PageBinding::Rebind(content::WebContents* contents) {
+  find_.reset();
   if (viewport) {
     viewport->SetWebContents(nullptr);
   }
@@ -549,6 +580,7 @@ void PageBinding::DidStopLoading() {
 }
 
 void PageBinding::WebContentsDestroyed() {
+  find_.reset();
   ReportClosed();
   if (viewport) {
     viewport->SetWebContents(nullptr);

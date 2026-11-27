@@ -53,6 +53,10 @@ class WebContents;
 class WebUI;
 }
 
+namespace ardiacore {
+class LinuxFind;
+}
+
 namespace views {
 class FocusManager;
 class WebView;
@@ -115,7 +119,9 @@ class PageBinding : public content::WebContentsObserver {
   base::DictValue NavigationEvent() const;
   base::DictValue Envelope(std::string_view type);
   void ReportNavigation();
+  void ReportFind(base::DictValue result);
   void ReportClosed();
+  ardiacore::LinuxFind* Find();
 
  private:
   void DidFinishNavigation(content::NavigationHandle* handle) override;
@@ -124,10 +130,13 @@ class PageBinding : public content::WebContentsObserver {
   void DidStopLoading() override;
   void WebContentsDestroyed() override;
 
+  bool CanReport() const;
+
   raw_ptr<ShellHostView> owner_;
   int id_ = 0;
   std::string key_;
   std::string profile_;
+  std::unique_ptr<ardiacore::LinuxFind> find_;
 };
 
 class ShellHostView : public views::View,
