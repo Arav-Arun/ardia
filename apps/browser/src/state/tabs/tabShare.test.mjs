@@ -3,6 +3,7 @@ import { test } from "node:test";
 const { useBrowser } = await import("../browser/store.ts");
 const model = await import("../browser/model.ts");
 const { splitTabIdsOf } = await import("../splits/splits.ts");
+const { wakeOf, withWake } = await import("./pageSession.ts");
 const { pinKeyOf } = model;
 
 const S = () => useBrowser.getState();
@@ -188,6 +189,21 @@ for (const focused of ["the split's window", "the other window"]) {
     assert.ok(shown(a) && S().tabs[shown(a)].windowId === a, "A still shows a tab of its own");
   });
 }
+
+test("a copy of a split pane that holds a restore stays, as a tab of its own", () => {
+  reset();
+  const { a, b, a1, a2 } = twoWindows();
+  share(true);
+  const copy = rowOf(b, "https://a1.com");
+  useBrowser.setState((s) => ({ tabs: { ...s.tabs, [copy]: { ...s.tabs[copy], page: withWake(s.tabs[copy].page, "restore:kept") } } }));
+  S().setFocusedWindow(a);
+  S().createSplit([a1, a2]);
+  assert.ok(S().tabs[copy], "the copy is still there");
+  assert.equal(wakeOf(S().tabs[copy]), "restore:kept", "with its restore");
+  assert.equal(S().tabs[copy].url, "https://a1.com", "at its address");
+  assert.notEqual(pinKeyOf(S().tabs[copy]), pinKeyOf(S().tabs[a1]), "as a tab of its own");
+  assert.equal(pages("https://a1.com").length, 1, "the pane keeps the only live page");
+});
 
 test("the ⌘T bar's open tabs rank a shared tab by its last use in any window, listing it once", async () => {
   reset();
