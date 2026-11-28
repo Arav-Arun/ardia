@@ -1092,8 +1092,10 @@ until the step's marker exists. It never changes `User Data`, which stays as a b
   - A saved plan keeps its mode only while it still holds: a `Replace` plan always, a `Restored` plan only while the
     live key and RNW's key are still the one they share (otherwise it is planned again). Every profile not yet
     installed is staged again from `User Data` on each try, the list of RNW profiles is read again so one made between
-    tries joins the plan, and a profile restored by hand in the meantime isn't staged. If RNW's key changed, the try
-    carries the new key and redoes the key step, backing up the live tree first. A cookie or login added in RNW
+    tries joins the plan, and a profile restored by hand in the meantime isn't staged. If RNW's key changed, the plan
+    resets as a replace under the new key with nothing installed: profiles already installed under the old key are
+    moved aside beside its `Local State` and installed again from RNW. A saved plan with no profiles is never final;
+    the try reads RNW's profiles again. A cookie or login added in RNW
     between tries is never left behind, and a resume never waits on staging an earlier try lost.
   - Every backup folder that receives a profile also receives the live `Local State` first (once, never replacing an
     earlier copy), so each folder holds the key that opens what's in it, even when a later try moves aside a profile
