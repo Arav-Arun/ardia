@@ -1129,8 +1129,8 @@ impl Run<'_> {
             .filter(|progress| progress.staged);
         let stored_was_some = stored.is_some();
         let planned = match &stored {
-            Some(progress) => progress.profiles.clone(),
-            None => self.plan(source).map_err(|e| (ChromiumStage::Scan, e))?,
+            Some(progress) if !progress.profiles.is_empty() => progress.profiles.clone(),
+            _ => self.plan(source).map_err(|e| (ChromiumStage::Scan, e))?,
         };
         if planned.is_empty() {
             return Ok(Step::Nothing);
@@ -1246,6 +1246,12 @@ impl Run<'_> {
     fn restage(&mut self, source: &Dir, progress: &mut Progress, current: Option<String>) -> StepResult<()> {
         let scan = |e| (ChromiumStage::Scan, e);
         let live = self.chromium(false).map_err(scan)?;
+        if progress.key != current {
+            progress.key = current;
+            progress.mode = Mode::Replace;
+            progress.local_state = false;
+            progress.installed.clear();
+        }
         let mut planned = std::mem::take(&mut progress.profiles);
         for (from, to) in self.plan(source).map_err(scan)? {
             if !planned.iter().any(|(_, known)| known.eq_ignore_ascii_case(&to)) {
@@ -1275,10 +1281,6 @@ impl Run<'_> {
         }
         profiles.sort_by(|a, b| a.1.cmp(&b.1));
         progress.profiles = profiles;
-        if progress.key != current {
-            progress.key = current;
-            progress.local_state = false;
-        }
         if !pending.is_empty() {
             self.stage_profiles(source, &pending)?;
         }

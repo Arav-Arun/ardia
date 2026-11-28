@@ -1777,3 +1777,109 @@ fn a_backup_that_stops_part_way_already_holds_the_key_beside_it() {
     launch_chromium(&layout, &mut fresh);
     assert_nothing_lost(&layout, &seeded, "after a stopped backup");
 }
+
+#[test]
+fn rnw_changing_its_key_after_a_profile_is_installed_moves_it_aside_and_installs_it_again() {
+    let mut second_stops = 0;
+    for second in 1..=10 {
+        let scratch = Scratch::new("chromium-rekey-after-install");
+        let sealer = FakeDpapi::new();
+        let layout = layout(&scratch.0);
+        let seeded = seed_both(&layout, &sealer);
+        crash_until(&layout, &sealer, |p| {
+            p["local_state"] == json!(true)
+                && p["installed"]
+                    .as_array()
+                    .is_some_and(|i| i.iter().any(|n| n == "Ardia default"))
+        });
+        let mut fresh = 0;
+        launch_chromium(&layout, &mut fresh);
+        let newer = chromium_key(&sealer, &[4; 32]);
+        let state = json!({ "os_crypt": { "encrypted_key": newer } });
+        fs::write(
+            layout.rnw_chromium.join(names::LOCAL_STATE),
+            serde_json::to_vec(&state).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            layout.rnw_chromium.join("Default/Network/Cookies"),
+            cookie(&newer, "rnw-rekeyed"),
+        )
+        .unwrap();
+        let label = format!("second stop at {second}");
+        let stopped = migrate_chromium(&layout, &sealer, &faults(Some(Stop::Crash(second))));
+        if stopped.outcome == Outcome::Failed {
+            second_stops += 1;
+            if let Some(saved) = progress(&layout) {
+                if saved["local_state"] == json!(false) {
+                    assert_eq!(
+                        saved["installed"],
+                        json!([]),
+                        "{label}: an unwritten key has nothing installed"
+                    );
+                }
+            }
+            launch_chromium(&layout, &mut fresh);
+        }
+        let report = run(&layout, &sealer);
+        assert!(
+            matches!(report.outcome, Outcome::Migrated | Outcome::AlreadyMigrated),
+            "{label}: {}",
+            report.to_json()
+        );
+        launch_chromium(&layout, &mut fresh);
+        let chromium = webui_chromium(&layout);
+        assert_eq!(live_key(&chromium).as_deref(), Some(newer.as_str()), "{label}");
+        assert!(
+            has_line(
+                &chromium.join("Ardia default/Network/Cookies"),
+                &format!("{newer}|rnw-rekeyed")
+            ),
+            "{label}: the default profile is installed again under the new key"
+        );
+        assert!(
+            kept_holds(&layout, "Ardia default", &seeded.rnw_key, "rnw-cookie"),
+            "{label}: the copy installed under the old key is kept beside it"
+        );
+        assert_backups_open_with_their_own_key(&layout, &label);
+        if stopped.outcome != Outcome::Failed {
+            break;
+        }
+    }
+    assert!(second_stops >= 3, "{second_stops}");
+}
+
+#[test]
+fn an_empty_saved_plan_still_picks_up_a_profile_made_in_rnw_since() {
+    let scratch = Scratch::new("chromium-empty-plan-late");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    let rnw_key = seed_rnw(&layout, &sealer);
+    let chromium = webui_chromium(&layout);
+    write(&chromium.join(names::LOCAL_STATE), &webui_state_with(&rnw_key));
+    write(&chromium.join("Ardia default/Preferences"), b"{}");
+    write(&chromium.join("Ardia p-work/Preferences"), b"{}");
+    let mut saved_empty = false;
+    for at in 1..=6 {
+        let report = migrate_chromium(&layout, &sealer, &faults(Some(Stop::Crash(at))));
+        if report.outcome != Outcome::Failed {
+            break;
+        }
+        if progress(&layout).is_some_and(|p| p["profiles"] == json!([])) {
+            saved_empty = true;
+            break;
+        }
+    }
+    assert!(saved_empty, "a crash saved an empty plan");
+    write(&layout.rnw_chromium.join("Ardia p-late/Preferences"), b"{}");
+    write(
+        &layout.rnw_chromium.join("Ardia p-late/Network/Cookies"),
+        &cookie(&rnw_key, "late-cookie"),
+    );
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    assert!(has_line(
+        &chromium.join("Ardia p-late/Network/Cookies"),
+        &format!("{rnw_key}|late-cookie")
+    ));
+}
