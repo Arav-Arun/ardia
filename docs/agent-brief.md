@@ -349,6 +349,12 @@ Engine files are in `engine/ardiacore/src/ardia/core`, app files in `packages/ar
     `ac.engine.call("windows.dev", { window: <windows.list's hasRoot window>, action: "mouse:down:x,y" })`, capture, then
     `mouse:up`. `ac.shell.devHoverStats(false).log` lists the enters and leaves the pointer caused. Controls that are
     disabled (back, forward and reload on a New Tab) show no hover.
+  - Trackpad scrolling in a hidden instance: `scripts/agent/trackpad <pid> <window-number> <x> <y> <dy> <steps>
+    [end|hold|momentum]` posts a phased two-finger scroll through the system event path, so a native scroll view
+    scrolls, coasts and rubber-bands as under a finger, with no pointer move or activation (`--help`). Use it for any
+    scroll, momentum or bounce check. `expo.modules.ArdiaSwipe.devSimulate` sends its events straight to `NSApp`, which
+    `NSScrollView`'s responsive scrolling never tracks: a list then shows only a few points of elastic pull and never
+    scrolls, so it can't prove scrolling works or doesn't.
 - Code style: read the surrounding code first and match its naming and idioms. No comments (AGENTS.md).
   Keep files cohesive; new features go in new files where sensible.
 - Dia fidelity: when you build UI, match Dia, and check it with numbers against a Dia capture
