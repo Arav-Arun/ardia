@@ -1518,3 +1518,99 @@ fn a_profile_chromium_recreated_after_the_key_swap_is_kept_beside_the_key_that_o
     launch_chromium(&layout, &mut fresh);
     assert_nothing_lost(&layout, &seeded, "recreated after the swap");
 }
+
+#[test]
+fn a_rekeyed_webui_under_an_installed_profile_is_backed_up_before_the_key_is_written_again() {
+    let scratch = Scratch::new("chromium-installed-rekeyed");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    let seeded = seed_both(&layout, &sealer);
+    crash_until(&layout, &sealer, |p| {
+        p["local_state"] == json!(true)
+            && p["installed"]
+                .as_array()
+                .is_some_and(|i| i.iter().any(|n| n == "Ardia default"))
+    });
+    let chromium = webui_chromium(&layout);
+    let other = "UkVLRVlFRA==";
+    write(&chromium.join(names::LOCAL_STATE), &webui_state_with(other));
+    write(
+        &chromium.join("Ardia default/Network/Cookies"),
+        &cookie(other, "browsed-under-another-key"),
+    );
+    let mut fresh = 0;
+    launch_chromium(&layout, &mut fresh);
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    assert_eq!(live_key(&chromium).as_deref(), Some(seeded.rnw_key.as_str()));
+    assert!(kept_holds(&layout, "Ardia default", other, "browsed-under-another-key"));
+    assert_backups_open_with_their_own_key(&layout, "installed then rekeyed");
+}
+
+#[test]
+fn an_unfinished_restored_plan_becomes_a_replace_when_rnw_changes_its_key() {
+    let scratch = Scratch::new("chromium-restored-rnw-rekeyed");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    let rnw_key = seed_rnw(&layout, &sealer);
+    let chromium = webui_chromium(&layout);
+    write(&chromium.join(names::LOCAL_STATE), &webui_state_with(&rnw_key));
+    write(&chromium.join("Ardia default/Preferences"), b"{}");
+    let mut stopped = false;
+    for at in 1..=6 {
+        let report = migrate_chromium(&layout, &sealer, &faults(Some(Stop::Crash(at))));
+        if report.outcome != Outcome::Failed {
+            break;
+        }
+        if progress(&layout).is_some_and(|p| p["mode"] == "restored" && p["local_state"] == json!(false)) {
+            stopped = true;
+            break;
+        }
+    }
+    assert!(stopped, "a crash leaves an unfinished restored plan");
+    let newer = chromium_key(&sealer, &[6; 32]);
+    let state = json!({ "os_crypt": { "encrypted_key": newer } });
+    fs::write(
+        layout.rnw_chromium.join(names::LOCAL_STATE),
+        serde_json::to_vec(&state).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        layout.rnw_chromium.join("Ardia p-work/Network/Cookies"),
+        cookie(&newer, "after-rnw-rekeyed"),
+    )
+    .unwrap();
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    assert_eq!(counts(&report)["key_shared"], 0);
+    assert_eq!(live_key(&chromium).as_deref(), Some(newer.as_str()));
+    assert!(has_line(
+        &chromium.join("Ardia p-work/Network/Cookies"),
+        &format!("{newer}|after-rnw-rekeyed")
+    ));
+}
+
+#[test]
+fn running_out_of_disk_after_the_key_swap_keeps_the_record_that_finishes_it() {
+    let scratch = Scratch::new("chromium-space-after-swap");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    let seeded = seed_both(&layout, &sealer);
+    crash_until(&layout, &sealer, |p| {
+        p["local_state"] == json!(true) && p["installed"] == json!([])
+    });
+    let mut fresh = 0;
+    launch_chromium(&layout, &mut fresh);
+    let tight = Faults {
+        free_space: Some(1024),
+        ..Faults::default()
+    };
+    let starved = migrate_chromium(&layout, &sealer, &tight);
+    assert_eq!(starved.outcome, Outcome::Failed);
+    assert_eq!(starved.failed_stage.map(|s| s.as_str()), Some("space"));
+    assert_eq!(progress(&layout).unwrap()["local_state"], json!(true));
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    launch_chromium(&layout, &mut fresh);
+    assert_nothing_lost(&layout, &seeded, "out of disk after the swap");
+}

@@ -1032,7 +1032,7 @@ impl Run<'_> {
                 .clone()
                 .filter(|key| progress.mode == Mode::Replace && webui.encrypted_key() != Some(key.as_str()));
             if let Some(key) = key {
-                self.back_up_live(&targets, webui)?;
+                self.back_up_live(&pending, webui)?;
                 for to in &pending {
                     if self.move_aside(to).map_err(swap)? {
                         self.journal.push(Undo::MovedAside(to.clone()));
@@ -1158,8 +1158,11 @@ impl Run<'_> {
             self.counts.local_state_malformed = 1;
         }
 
-        let usable = stored
-            .filter(|progress| progress.mode == Mode::Replace || webui.encrypted_key() == progress.key.as_deref());
+        let usable = stored.filter(|progress| {
+            progress.mode == Mode::Replace
+                || (webui.encrypted_key() == progress.key.as_deref()
+                    && (progress.local_state || progress.key.as_deref() == rnw_key.encrypted_key()))
+        });
         let planned = match (&usable, stored_was_some) {
             (None, true) => self.plan(source).map_err(|e| (ChromiumStage::Scan, e))?,
             _ => planned,
@@ -1288,8 +1291,11 @@ impl Run<'_> {
     }
 
     fn clear_staging(&mut self) {
+        let committed = matches!(self.read_progress(), Ok(Some(progress)) if progress.local_state);
         let _ = self.webui.dir().remove_tree(names::CHROMIUM_STAGING_FOLDER);
-        let _ = self.webui.dir().remove_file(names::CHROMIUM_PROGRESS_NAME);
+        if !committed {
+            let _ = self.webui.dir().remove_file(names::CHROMIUM_PROGRESS_NAME);
+        }
         self.counts.staging_cleared = 1;
     }
 }
