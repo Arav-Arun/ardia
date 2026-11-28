@@ -409,6 +409,10 @@ mod sys {
         Ok(!matches!(child_entry(dir, name)?, Entry::Missing))
     }
 
+    pub fn delete_when_closed(_file: &File) -> io::Result<()> {
+        Ok(())
+    }
+
     pub fn free_space(path: &std::path::Path) -> io::Result<u64> {
         use std::os::unix::ffi::OsStrExt;
         let c = CString::new(path.as_os_str().as_bytes()).map_err(|_| unsafe_path(path.to_path_buf()))?;
@@ -431,7 +435,7 @@ mod sys {
     use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
     use windows_sys::Wdk::Storage::FileSystem::{
         FileDispositionInformationEx, FileRenameInformation, FileRenameInformationEx, NtCreateFile,
-        NtSetInformationFile, FILE_CREATE, FILE_DELETE_ON_CLOSE, FILE_DIRECTORY_FILE, FILE_DISPOSITION_DELETE,
+        NtSetInformationFile, FILE_CREATE, FILE_DIRECTORY_FILE, FILE_DISPOSITION_DELETE,
         FILE_DISPOSITION_INFORMATION_EX, FILE_DISPOSITION_POSIX_SEMANTICS, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
         FILE_OPEN_IF, FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION, FILE_RENAME_POSIX_SEMANTICS,
         FILE_RENAME_REPLACE_IF_EXISTS, FILE_SYNCHRONOUS_IO_NONALERT,
@@ -573,11 +577,7 @@ mod sys {
             Opening::Read => (FILE_GENERIC_READ, FILE_OPEN, 0),
             Opening::CreateNew => (FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE, FILE_CREATE, 0),
             Opening::Lock => (FILE_GENERIC_READ | FILE_GENERIC_WRITE, FILE_OPEN_IF, 0),
-            Opening::Hold => (
-                FILE_GENERIC_WRITE | FILE_READ_ATTRIBUTES | DELETE,
-                FILE_OPEN_IF,
-                FILE_DELETE_ON_CLOSE,
-            ),
+            Opening::Hold => (FILE_GENERIC_WRITE | FILE_READ_ATTRIBUTES | DELETE, FILE_OPEN_IF, 0),
         };
         nt_open_shared(dir, name, access, disposition, FILE_NON_DIRECTORY_FILE | options, share)
     }
@@ -692,6 +692,22 @@ mod sys {
         }
     }
 
+    pub fn delete_when_closed(file: &File) -> io::Result<()> {
+        let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+        let set = unsafe {
+            SetFileInformationByHandle(
+                handle(file),
+                FileDispositionInfo,
+                &disposition as *const _ as *const c_void,
+                std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+            )
+        };
+        if set == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
     pub fn free_space(path: &std::path::Path) -> io::Result<u64> {
         use std::os::windows::ffi::OsStrExt;
         use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
@@ -758,17 +774,23 @@ pub struct Staged {
 }
 
 pub struct HeldLock {
-    _file: File,
+    file: File,
     #[cfg(unix)]
     dir: File,
     #[cfg(unix)]
     name: String,
 }
 
-#[cfg(unix)]
 impl Drop for HeldLock {
+    #[cfg(unix)]
     fn drop(&mut self) {
+        let _ = sys::delete_when_closed(&self.file);
         let _ = sys::remove(&self.dir, &self.name);
+    }
+
+    #[cfg(windows)]
+    fn drop(&mut self) {
+        let _ = sys::delete_when_closed(&self.file);
     }
 }
 
@@ -945,7 +967,7 @@ impl Dir {
             return Err(unsafe_path(self.path.join(name)));
         }
         Ok(HeldLock {
-            _file: file,
+            file,
             #[cfg(unix)]
             dir: self.file.try_clone()?,
             #[cfg(unix)]

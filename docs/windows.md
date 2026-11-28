@@ -1058,8 +1058,8 @@ until the step's marker exists. It never changes `User Data`, which stays as a b
 - **Nobody may be running.** The step waits (`busy`, `failed_stage: in_use`, exit 3) while either `Chromium\lockfile` or
   `User Data\lockfile` is held: Chromium holds it open with `GENERIC_WRITE, FILE_SHARE_READ` while it runs
   (`process_singleton_win.cc`), so the step opens it for writing and a sharing violation means a running shell. Once it
-  has a plan, the step holds both lockfiles itself, the way Chromium does (open for writing, sharing only reads,
-  `FILE_DELETE_ON_CLOSE`), until it finishes, so
+  has a plan, the step holds both lockfiles itself, the way Chromium does (open for writing, sharing only reads),
+  until it finishes, and deletes them through the held handle when it lets go, so
   neither shell can start on either tree mid-copy or mid-swap. Chromium deletes the file itself on exit, so nothing is
   left in `User Data`. It shares `rnw-migration.lock` with the documents step.
 - **What it decides.** The rule is "the React Native profile wins, and nothing is ever deleted or overwritten":

@@ -375,4 +375,13 @@ fn a_held_lockfile_keeps_chromium_from_starting_and_goes_away_with_its_holder() 
     assert!(root.dir().held_open("lockfile").unwrap());
     drop(held);
     assert!(!scratch.0.join("lockfile").exists());
+
+    fs::write(scratch.0.join("elsewhere"), b"not a lockfile").unwrap();
+    fs::hard_link(scratch.0.join("elsewhere"), scratch.0.join("linked")).unwrap();
+    assert!(root.dir().hold_lockfile("linked").is_err());
+    assert!(
+        scratch.0.join("linked").exists(),
+        "a refused lockfile is left where it was"
+    );
+    assert_eq!(fs::read(scratch.0.join("elsewhere")).unwrap(), b"not a lockfile");
 }
