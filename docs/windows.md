@@ -1089,6 +1089,12 @@ until the step's marker exists. It never changes `User Data`, which stays as a b
     profile installed. The swaps are directory renames on the same volume through held handles
     (`NtSetInformationFile(FileRenameInformation)` with the destination folder's handle, `renameat`), retried briefly
     while antivirus holds a folder.
+  - A saved plan keeps its mode only while it still holds: a `Replace` plan always, a `Restored` plan only while the
+    live key is still the one it shares with RNW (otherwise it is planned again). Every profile not yet installed is
+    staged again from `User Data` on each try, so a cookie or login added in RNW between tries is never left behind.
+  - Every backup folder that receives a profile also receives the live `Local State` first (once, never replacing an
+    earlier copy), so each folder holds the key that opens what's in it, even when a later try moves aside a profile
+    Chromium recreated after the key swap.
   - On a resume, the record is checked against the disk before it is trusted: a profile it lists as installed that is
     back in staging is installed again, and a key it lists as written that isn't the live key is written again.
   - A try that fails while it swaps undoes its own steps in reverse, saving each undo in the record before it makes it,

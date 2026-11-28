@@ -301,6 +301,7 @@ fn assert_nothing_lost(layout: &Layout, seeded: &Seeded, label: &str) {
         kept_holds(layout, "Ardia p-new", &seeded.webui_key, "new-cookie"),
         "{label}: the profile made only on 0.2.49 keeps its cookie beside its key"
     );
+    assert_backups_open_with_their_own_key(layout, label);
     assert!(
         !chromium.join(names::CHROMIUM_LOCK_FILE).exists(),
         "{label}: lockfile released"
@@ -309,6 +310,27 @@ fn assert_nothing_lost(layout: &Layout, seeded: &Seeded, label: &str) {
         !layout.rnw_chromium.join(names::CHROMIUM_LOCK_FILE).exists(),
         "{label}: RNW lockfile released"
     );
+}
+
+fn assert_backups_open_with_their_own_key(layout: &Layout, label: &str) {
+    for folder in kept_folders(layout) {
+        let key = live_key(&folder);
+        for profile in profiles(&folder) {
+            assert!(
+                key.is_some(),
+                "{label}: {folder:?} keeps {profile} without the Local State that opens it"
+            );
+            let Ok(text) = fs::read_to_string(folder.join(&profile).join("Network/Cookies")) else {
+                continue;
+            };
+            for line in text.lines() {
+                assert!(
+                    line.starts_with(&format!("{}|", key.as_deref().unwrap())),
+                    "{label}: {folder:?}/{profile} holds {line:?}, which its kept key can't open"
+                );
+            }
+        }
+    }
 }
 
 fn assert_write_once(before: &Snapshot, after: &Snapshot, label: &str) {
@@ -1394,4 +1416,105 @@ fn a_hard_linked_lockfile_is_refused_and_left_alone() {
     assert!(root.dir().hold_lockfile("held").is_err());
     assert_eq!(fs::read(&elsewhere).unwrap(), b"not a lockfile");
     assert!(layout.rnw_chromium.join("held").exists());
+}
+
+#[test]
+fn a_cookie_added_in_rnw_after_a_rolled_back_try_is_migrated() {
+    let scratch = Scratch::new("chromium-fresh-after-rollback");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    let seeded = seed_both(&layout, &sealer);
+    let mut rolled = false;
+    for at in 2..=12 {
+        let report = migrate_chromium(&layout, &sealer, &faults(Some(Stop::Fail(at))));
+        if report.outcome != Outcome::Failed {
+            break;
+        }
+        if counts(&report)["swap_rolled_back"] == 1 {
+            rolled = true;
+            break;
+        }
+    }
+    assert!(rolled, "a try rolled back");
+    let cookies = layout.rnw_chromium.join("Default/Network/Cookies");
+    let mut text = fs::read(&cookies).unwrap();
+    text.extend(cookie(&seeded.rnw_key, "signed-in-after-the-rollback"));
+    fs::write(&cookies, text).unwrap();
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    assert!(has_line(
+        &webui_chromium(&layout).join("Ardia default/Network/Cookies"),
+        &format!("{}|signed-in-after-the-rollback", seeded.rnw_key)
+    ));
+    let mut fresh = 0;
+    launch_chromium(&layout, &mut fresh);
+    assert_nothing_lost(&layout, &seeded, "after the rollback");
+}
+
+#[test]
+fn a_restored_plan_is_planned_again_when_the_webui_key_changed() {
+    let scratch = Scratch::new("chromium-restored-key-moved");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    let rnw_key = seed_rnw(&layout, &sealer);
+    let chromium = webui_chromium(&layout);
+    write(&chromium.join(names::LOCAL_STATE), &webui_state_with(&rnw_key));
+    write(&chromium.join("Ardia default/Preferences"), b"{}");
+    let mut crashed_after_plan = false;
+    for at in 1..=8 {
+        let report = migrate_chromium(&layout, &sealer, &faults(Some(Stop::Crash(at))));
+        if report.outcome != Outcome::Failed {
+            break;
+        }
+        let saved = progress(&layout);
+        if saved
+            .as_ref()
+            .is_some_and(|p| p["mode"] == "restored" && p["local_state"] == json!(true) && p["installed"] == json!([]))
+        {
+            crashed_after_plan = true;
+            break;
+        }
+    }
+    assert!(crashed_after_plan, "a crash stops a restored plan before it installs");
+    let other = "T1RIRVI=";
+    write(&chromium.join(names::LOCAL_STATE), &webui_state_with(other));
+    write(
+        &chromium.join("Ardia default/Network/Cookies"),
+        &cookie(other, "under-a-new-key"),
+    );
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    assert_eq!(counts(&report)["key_shared"], 0, "planned again as a replace");
+    assert_eq!(live_key(&chromium).as_deref(), Some(rnw_key.as_str()));
+    assert!(has_line(
+        &chromium.join("Ardia p-work/Network/Cookies"),
+        &format!("{rnw_key}|work-cookie")
+    ));
+    assert!(kept_holds(&layout, "Ardia default", other, "under-a-new-key"));
+    assert_backups_open_with_their_own_key(&layout, "restored then rekeyed");
+}
+
+#[test]
+fn a_profile_chromium_recreated_after_the_key_swap_is_kept_beside_the_key_that_opens_it() {
+    let scratch = Scratch::new("chromium-recreated-after-swap");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    let seeded = seed_both(&layout, &sealer);
+    crash_until(&layout, &sealer, |p| {
+        p["local_state"] == json!(true) && p["installed"] == json!([])
+    });
+    let mut fresh = 0;
+    launch_chromium(&layout, &mut fresh);
+    let recreated = webui_chromium(&layout).join("Ardia default/Network/Cookies");
+    assert!(has_line(&recreated, &format!("{}|made-after-a-crash", seeded.rnw_key)));
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    assert!(kept_holds(
+        &layout,
+        "Ardia default",
+        &seeded.rnw_key,
+        "made-after-a-crash"
+    ));
+    launch_chromium(&layout, &mut fresh);
+    assert_nothing_lost(&layout, &seeded, "recreated after the swap");
 }

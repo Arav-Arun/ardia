@@ -921,11 +921,29 @@ impl Run<'_> {
         Ok(())
     }
 
+    fn keep_local_state(&mut self, chromium: &Dir) -> io::Result<()> {
+        let kept = self.kept()?;
+        if kept.entry(names::LOCAL_STATE)? != Entry::Missing {
+            return Ok(());
+        }
+        let (mut live, meta) = match chromium.open_source(names::LOCAL_STATE)? {
+            Opened::File(file, meta) => (file, meta),
+            Opened::Missing => return Ok(()),
+            _ => return Err(fsafe::unsafe_path(names::LOCAL_STATE.into())),
+        };
+        let mut buffer = vec![0u8; COPY_BUFFER];
+        let (staged, _) = kept.stage_copy(&mut live, &mut buffer, modified(&meta))?;
+        kept.commit(staged, names::LOCAL_STATE)?;
+        self.counts.local_state_kept = 1;
+        Ok(())
+    }
+
     fn move_aside(&mut self, to: &str) -> io::Result<bool> {
         let chromium = self.live()?;
         if chromium.entry(to)? == Entry::Missing {
             return Ok(false);
         }
+        self.keep_local_state(&chromium)?;
         self.checkpoint()?;
         let kept = self.kept()?;
         moved(|| chromium.move_to(to, kept, to))?;
@@ -1140,8 +1158,8 @@ impl Run<'_> {
             self.counts.local_state_malformed = 1;
         }
 
-        let usable =
-            stored.filter(|progress| progress.local_state || progress.key.as_deref() == rnw_key.encrypted_key());
+        let usable = stored
+            .filter(|progress| progress.mode == Mode::Replace || webui.encrypted_key() == progress.key.as_deref());
         let planned = match (&usable, stored_was_some) {
             (None, true) => self.plan(source).map_err(|e| (ChromiumStage::Scan, e))?,
             _ => planned,
@@ -1151,12 +1169,17 @@ impl Run<'_> {
         }
         let stored = usable;
         let mut progress = match stored {
-            Some(progress) => {
-                [
-                    self.counts.skipped_links,
-                    self.counts.skipped_invalid,
-                    self.counts.skipped_clash,
-                ] = progress.skipped;
+            Some(mut progress) => {
+                let current = rnw_key.encrypted_key().map(str::to_string);
+                if progress.local_state && progress.key != current {
+                    [
+                        self.counts.skipped_links,
+                        self.counts.skipped_invalid,
+                        self.counts.skipped_clash,
+                    ] = progress.skipped;
+                } else {
+                    self.restage(source, &mut progress, current)?;
+                }
                 progress
             }
             None => {
@@ -1227,6 +1250,41 @@ impl Run<'_> {
         }
         let _ = self.webui.dir().remove_tree(names::CHROMIUM_STAGING_FOLDER);
         Ok(Step::Done)
+    }
+
+    fn restage(&mut self, source: &Dir, progress: &mut Progress, current: Option<String>) -> StepResult<()> {
+        let scan = |e| (ChromiumStage::Scan, e);
+        let live = self.chromium(false).map_err(scan)?;
+        let mut profiles = Vec::new();
+        let mut pending = Vec::new();
+        for (from, to) in std::mem::take(&mut progress.profiles) {
+            let in_live = match &live {
+                Some(live) => live.entry(&to).map_err(scan)? == Entry::Directory,
+                None => false,
+            };
+            if progress.installed.contains(&to) && in_live {
+                profiles.push((from, to));
+                continue;
+            }
+            progress.installed.remove(&to);
+            if source.entry(&from).map_err(scan)? == Entry::Directory {
+                pending.push((from.clone(), to.clone()));
+                profiles.push((from, to));
+            }
+        }
+        progress.profiles = profiles;
+        if !progress.local_state {
+            progress.key = current;
+        }
+        if !pending.is_empty() {
+            self.stage_profiles(source, &pending)?;
+        }
+        progress.skipped = [
+            self.counts.skipped_links,
+            self.counts.skipped_invalid,
+            self.counts.skipped_clash,
+        ];
+        self.save_progress(progress)
     }
 
     fn clear_staging(&mut self) {
