@@ -339,7 +339,9 @@ Engine files are in `engine/ardiacore/src/ardia/core`, app files in `packages/ar
     For the New Tab intro, launch with `--test shadersKeyWindow` (it only plays in a key window).
   - The user's screen may be locked: screen captures then fail or deliver no frames. Fall back to
     `ac.shell.devSnapshotWindow(windowId, path)` (`false` means it failed; the window's layers at 2x; Metal views
-    render blank; text opacity is applied twice, so a label at α reads 1 − (1 − α)², don't match colours on it),
+    render blank; text opacity is applied twice, so a label at α reads 1 − (1 − α)², don't match colours on it; the
+    traffic lights and other window chrome are missing, so PR and owner-facing media use `screencapture -l` whenever the
+    screen is unlocked),
     `globalThis.expo.modules.ArdiaAreaLight.debugSnapshot(dir)` (every Metal view, offscreen, with its frame),
     the accessibility tree and store state, and list "needs visual check" items in your report.
   - Hover and pressed states in a hidden instance (Debug builds): `ac.shell.devSetPointer(windowId, { x, y })` puts the
