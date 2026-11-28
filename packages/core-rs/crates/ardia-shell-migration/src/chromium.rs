@@ -820,7 +820,10 @@ impl Run<'_> {
     }
 
     fn room_for(&self, jobs: &[Job]) -> io::Result<()> {
-        let needed: u64 = jobs.iter().map(|job| job.len).sum();
+        self.room_for_bytes(jobs.iter().map(|job| job.len).sum())
+    }
+
+    fn room_for_bytes(&self, needed: u64) -> io::Result<()> {
         let free = match self.faults.free_space {
             Some(free) => free,
             None => fsafe::free_space(&self.webui.resolved)?,
@@ -883,21 +886,17 @@ impl Run<'_> {
         if left.is_empty() && !webui.exists() {
             return Ok(());
         }
-        let chromium = Arc::new(chromium);
-        let kept = Arc::new(self.kept().map_err(backup)?.try_clone().map_err(backup)?);
-        let mut jobs = Vec::new();
         if webui.exists() {
             let len = match chromium.open_source(names::LOCAL_STATE).map_err(backup)? {
                 Opened::File(_, meta) => meta.len(),
                 _ => return Err(backup(fsafe::unsafe_path(names::LOCAL_STATE.into()))),
             };
-            jobs.push(Job {
-                from: Arc::clone(&chromium),
-                to: Arc::clone(&kept),
-                name: names::LOCAL_STATE.to_string(),
-                len,
-            });
+            self.room_for_bytes(len).map_err(|e| (ChromiumStage::Space, e))?;
+            self.keep_local_state(&chromium).map_err(backup)?;
         }
+        let chromium = Arc::new(chromium);
+        let kept = Arc::new(self.kept().map_err(backup)?.try_clone().map_err(backup)?);
+        let mut jobs = Vec::new();
         for name in &left {
             let inner = chromium
                 .child(name, false)
@@ -915,9 +914,6 @@ impl Run<'_> {
         drop(jobs);
         files.map_err(backup)?;
         self.counts.webui_profiles_backed_up += left.len() as u64;
-        if webui.exists() {
-            self.counts.local_state_kept = 1;
-        }
         Ok(())
     }
 
@@ -1107,7 +1103,7 @@ impl Run<'_> {
                 }
             }
         }
-        self.counts.swap_rolled_back = 1;
+        self.counts.swap_rolled_back = u64::from(self.rollback_steps > 0);
         Ok(())
     }
 
@@ -1161,7 +1157,7 @@ impl Run<'_> {
         let usable = stored.filter(|progress| {
             progress.mode == Mode::Replace
                 || (webui.encrypted_key() == progress.key.as_deref()
-                    && (progress.local_state || progress.key.as_deref() == rnw_key.encrypted_key()))
+                    && progress.key.as_deref() == rnw_key.encrypted_key())
         });
         let planned = match (&usable, stored_was_some) {
             (None, true) => self.plan(source).map_err(|e| (ChromiumStage::Scan, e))?,
@@ -1174,15 +1170,7 @@ impl Run<'_> {
         let mut progress = match stored {
             Some(mut progress) => {
                 let current = rnw_key.encrypted_key().map(str::to_string);
-                if progress.local_state && progress.key != current {
-                    [
-                        self.counts.skipped_links,
-                        self.counts.skipped_invalid,
-                        self.counts.skipped_clash,
-                    ] = progress.skipped;
-                } else {
-                    self.restage(source, &mut progress, current)?;
-                }
+                self.restage(source, &mut progress, current)?;
                 progress
             }
             None => {
@@ -1258,9 +1246,15 @@ impl Run<'_> {
     fn restage(&mut self, source: &Dir, progress: &mut Progress, current: Option<String>) -> StepResult<()> {
         let scan = |e| (ChromiumStage::Scan, e);
         let live = self.chromium(false).map_err(scan)?;
+        let mut planned = std::mem::take(&mut progress.profiles);
+        for (from, to) in self.plan(source).map_err(scan)? {
+            if !planned.iter().any(|(_, known)| known.eq_ignore_ascii_case(&to)) {
+                planned.push((from, to));
+            }
+        }
         let mut profiles = Vec::new();
         let mut pending = Vec::new();
-        for (from, to) in std::mem::take(&mut progress.profiles) {
+        for (from, to) in planned {
             let in_live = match &live {
                 Some(live) => live.entry(&to).map_err(scan)? == Entry::Directory,
                 None => false,
@@ -1270,14 +1264,20 @@ impl Run<'_> {
                 continue;
             }
             progress.installed.remove(&to);
+            if progress.mode == Mode::Restored && in_live {
+                profiles.push((from, to));
+                continue;
+            }
             if source.entry(&from).map_err(scan)? == Entry::Directory {
                 pending.push((from.clone(), to.clone()));
                 profiles.push((from, to));
             }
         }
+        profiles.sort_by(|a, b| a.1.cmp(&b.1));
         progress.profiles = profiles;
-        if !progress.local_state {
+        if progress.key != current {
             progress.key = current;
+            progress.local_state = false;
         }
         if !pending.is_empty() {
             self.stage_profiles(source, &pending)?;
@@ -1291,7 +1291,14 @@ impl Run<'_> {
     }
 
     fn clear_staging(&mut self) {
-        let committed = matches!(self.read_progress(), Ok(Some(progress)) if progress.local_state);
+        let live = self
+            .chromium(false)
+            .ok()
+            .flatten()
+            .and_then(|chromium| webui_state(Some(&chromium)).ok());
+        let live_key = live.as_ref().and_then(WebUIState::encrypted_key);
+        let committed = matches!(self.read_progress(), Ok(Some(progress)) if progress.local_state
+            || (progress.mode == Mode::Replace && progress.key.is_some() && progress.key.as_deref() == live_key));
         let _ = self.webui.dir().remove_tree(names::CHROMIUM_STAGING_FOLDER);
         if !committed {
             let _ = self.webui.dir().remove_file(names::CHROMIUM_PROGRESS_NAME);

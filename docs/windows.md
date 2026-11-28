@@ -1090,8 +1090,11 @@ until the step's marker exists. It never changes `User Data`, which stays as a b
     (`NtSetInformationFile(FileRenameInformation)` with the destination folder's handle, `renameat`), retried briefly
     while antivirus holds a folder.
   - A saved plan keeps its mode only while it still holds: a `Replace` plan always, a `Restored` plan only while the
-    live key is still the one it shares with RNW (otherwise it is planned again). Every profile not yet installed is
-    staged again from `User Data` on each try, so a cookie or login added in RNW between tries is never left behind.
+    live key and RNW's key are still the one they share (otherwise it is planned again). Every profile not yet
+    installed is staged again from `User Data` on each try, the list of RNW profiles is read again so one made between
+    tries joins the plan, and a profile restored by hand in the meantime isn't staged. If RNW's key changed, the try
+    carries the new key and redoes the key step, backing up the live tree first. A cookie or login added in RNW
+    between tries is never left behind, and a resume never waits on staging an earlier try lost.
   - Every backup folder that receives a profile also receives the live `Local State` first (once, never replacing an
     earlier copy), so each folder holds the key that opens what's in it, even when a later try moves aside a profile
     Chromium recreated after the key swap.
@@ -1105,7 +1108,9 @@ until the step's marker exists. It never changes `User Data`, which stays as a b
     aside anything Chromium made in the gap. `tests/chromium.rs` stops a try before every commit, both as a failure and
     as a kill, starts an emulated Chromium that deletes cookies its key can't open, runs again (and stops again), and
     checks that every cookie survives live or beside its key and that no backup file ever changes.
-  - A copy that runs out of disk removes its staging folder. `rnw-chromium-migration.json` is the marker, written after
+  - The backup copies `Local State` before any profile, so a backup cut short still holds the key beside what it has.
+  - A copy that runs out of disk removes its staging folder, and also the progress record unless the key step
+    already committed (recorded, or RNW's key already live), so the next try still finishes as a replace. `rnw-chromium-migration.json` is the marker, written after
     its attempt report.
 - **Report and telemetry.** `rnw-chromium-migration-attempt.json` carries `step: "chromium"`, the outcome, stage
   (`layout`, `lock`, `in_use`, `local_state`, `scan`, `space`, `staging`, `backup`, `swap`, `progress`, `report`,

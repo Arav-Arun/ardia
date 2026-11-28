@@ -320,8 +320,11 @@ fn assert_backups_open_with_their_own_key(layout: &Layout, label: &str) {
                 key.is_some(),
                 "{label}: {folder:?} keeps {profile} without the Local State that opens it"
             );
-            let Ok(text) = fs::read_to_string(folder.join(&profile).join("Network/Cookies")) else {
-                continue;
+            let path = folder.join(&profile).join("Network/Cookies");
+            let text = match fs::read_to_string(&path) {
+                Ok(text) => text,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => panic!("{label}: {path:?} can't be read: {error}"),
             };
             for line in text.lines() {
                 assert!(
@@ -1276,12 +1279,16 @@ fn progress(layout: &Layout) -> Option<Value> {
 }
 
 fn crash_until(layout: &Layout, sealer: &FakeDpapi, wanted: impl Fn(&Value) -> bool) -> usize {
+    crash_until_on(layout, sealer, |progress, _| wanted(progress))
+}
+
+fn crash_until_on(layout: &Layout, sealer: &FakeDpapi, wanted: impl Fn(&Value, &Layout) -> bool) -> usize {
     for at in 1..=20 {
         let scratch = Scratch::new("chromium-probe");
         let probe = self::layout(&scratch.0);
         let _ = seed_both(&probe, sealer);
         let report = migrate_chromium(&probe, sealer, &faults(Some(Stop::Crash(at))));
-        if report.outcome == Outcome::Failed && progress(&probe).is_some_and(|p| wanted(&p)) {
+        if report.outcome == Outcome::Failed && progress(&probe).is_some_and(|p| wanted(&p, &probe)) {
             let real = migrate_chromium(layout, sealer, &faults(Some(Stop::Crash(at))));
             assert_eq!(real.outcome, Outcome::Failed);
             return at;
@@ -1424,18 +1431,25 @@ fn a_cookie_added_in_rnw_after_a_rolled_back_try_is_migrated() {
     let sealer = FakeDpapi::new();
     let layout = layout(&scratch.0);
     let seeded = seed_both(&layout, &sealer);
-    let mut rolled = false;
-    for at in 2..=12 {
-        let report = migrate_chromium(&layout, &sealer, &faults(Some(Stop::Fail(at))));
-        if report.outcome != Outcome::Failed {
-            break;
-        }
-        if counts(&report)["swap_rolled_back"] == 1 {
-            rolled = true;
-            break;
-        }
-    }
-    assert!(rolled, "a try rolled back");
+    let live_before = live_files_without_lock(&layout);
+    let at = (1..=12)
+        .find(|at| {
+            let probe_scratch = Scratch::new("chromium-rollback-probe");
+            let probe = self::layout(&probe_scratch.0);
+            seed_both(&probe, &sealer);
+            let report = migrate_chromium(&probe, &sealer, &faults(Some(Stop::Fail(*at))));
+            let counted = counts(&report);
+            report.outcome == Outcome::Failed && counted["key_carried"] == 1 && counted["swap_rolled_back"] == 1
+        })
+        .expect("some failure lands after the key write and rolls it back");
+    let rolled = migrate_chromium(&layout, &sealer, &faults(Some(Stop::Fail(at))));
+    assert_eq!(counts(&rolled)["key_carried"], 1);
+    assert_eq!(counts(&rolled)["swap_rolled_back"], 1);
+    assert_eq!(
+        live_files_without_lock(&layout),
+        live_before,
+        "the rollback put 0.2.49 back exactly"
+    );
     let cookies = layout.rnw_chromium.join("Default/Network/Cookies");
     let mut text = fs::read(&cookies).unwrap();
     text.extend(cookie(&seeded.rnw_key, "signed-in-after-the-rollback"));
@@ -1613,4 +1627,153 @@ fn running_out_of_disk_after_the_key_swap_keeps_the_record_that_finishes_it() {
     assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
     launch_chromium(&layout, &mut fresh);
     assert_nothing_lost(&layout, &seeded, "out of disk after the swap");
+}
+
+#[test]
+fn running_out_of_disk_after_the_key_write_but_before_its_record_keeps_the_plan() {
+    let scratch = Scratch::new("chromium-space-key-unrecorded");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    let seeded = seed_both(&layout, &sealer);
+    crash_until_on(&layout, &sealer, |p, probe| {
+        let rnw: Value =
+            serde_json::from_slice(&fs::read(probe.rnw_chromium.join(names::LOCAL_STATE)).unwrap()).unwrap();
+        p["local_state"] == json!(false)
+            && live_key(&webui_chromium(probe)).as_deref() == rnw["os_crypt"]["encrypted_key"].as_str()
+    });
+    let mut fresh = 0;
+    launch_chromium(&layout, &mut fresh);
+    let tight = Faults {
+        free_space: Some(1024),
+        ..Faults::default()
+    };
+    let starved = migrate_chromium(&layout, &sealer, &tight);
+    assert_eq!(starved.failed_stage.map(|s| s.as_str()), Some("space"));
+    assert!(progress(&layout).is_some(), "the plan survives the low-disk cleanup");
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    assert_eq!(counts(&report)["key_shared"], 0, "still a replace");
+    launch_chromium(&layout, &mut fresh);
+    assert_nothing_lost(&layout, &seeded, "out of disk before the record");
+}
+
+#[test]
+fn a_cleared_staging_and_a_new_rnw_key_still_finish_the_migration() {
+    let scratch = Scratch::new("chromium-cleared-then-rekeyed");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    seed_both(&layout, &sealer);
+    crash_until(&layout, &sealer, |p| {
+        p["local_state"] == json!(true) && p["installed"] == json!([])
+    });
+    let mut fresh = 0;
+    launch_chromium(&layout, &mut fresh);
+    let tight = Faults {
+        free_space: Some(1024),
+        ..Faults::default()
+    };
+    assert_eq!(migrate_chromium(&layout, &sealer, &tight).outcome, Outcome::Failed);
+    assert!(!layout.webui_data.join(names::CHROMIUM_STAGING_FOLDER).exists());
+    let newer = chromium_key(&sealer, &[8; 32]);
+    let state = json!({ "os_crypt": { "encrypted_key": newer } });
+    fs::write(
+        layout.rnw_chromium.join(names::LOCAL_STATE),
+        serde_json::to_vec(&state).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        layout.rnw_chromium.join("Default/Network/Cookies"),
+        cookie(&newer, "rnw-under-a-new-key"),
+    )
+    .unwrap();
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    let chromium = webui_chromium(&layout);
+    assert_eq!(live_key(&chromium).as_deref(), Some(newer.as_str()));
+    assert!(has_line(
+        &chromium.join("Ardia default/Network/Cookies"),
+        &format!("{newer}|rnw-under-a-new-key")
+    ));
+    launch_chromium(&layout, &mut fresh);
+    assert_backups_open_with_their_own_key(&layout, "cleared then rekeyed");
+}
+
+#[test]
+fn a_profile_made_in_rnw_between_tries_is_migrated_too() {
+    let scratch = Scratch::new("chromium-late-profile");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    let seeded = seed_both(&layout, &sealer);
+    crash_until(&layout, &sealer, |p| {
+        p["local_state"] == json!(true) && p["installed"] == json!([])
+    });
+    write(&layout.rnw_chromium.join("Ardia p-late/Preferences"), b"{}");
+    write(
+        &layout.rnw_chromium.join("Ardia p-late/Network/Cookies"),
+        &cookie(&seeded.rnw_key, "late-cookie"),
+    );
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    assert!(has_line(
+        &webui_chromium(&layout).join("Ardia p-late/Network/Cookies"),
+        &format!("{}|late-cookie", seeded.rnw_key)
+    ));
+}
+
+#[test]
+fn a_profile_restored_by_hand_between_tries_is_not_staged_again() {
+    let scratch = Scratch::new("chromium-restored-not-staged");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    let rnw_key = seed_rnw(&layout, &sealer);
+    let chromium = webui_chromium(&layout);
+    write(&chromium.join(names::LOCAL_STATE), &webui_state_with(&rnw_key));
+    write(&chromium.join("Ardia default/Preferences"), b"{}");
+    assert_eq!(
+        migrate_chromium(&layout, &sealer, &faults(Some(Stop::Fail(2)))).outcome,
+        Outcome::Failed
+    );
+    assert_eq!(progress(&layout).unwrap()["mode"], "restored");
+    write(&chromium.join("Ardia p-work/Preferences"), b"restored by hand");
+    let tight = Faults {
+        free_space: Some(1024),
+        ..Faults::default()
+    };
+    let report = migrate_chromium(&layout, &sealer, &tight);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    assert_eq!(
+        fs::read(chromium.join("Ardia p-work/Preferences")).unwrap(),
+        b"restored by hand"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_backup_that_stops_part_way_already_holds_the_key_beside_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new("chromium-backup-stops");
+    let sealer = FakeDpapi::new();
+    let layout = layout(&scratch.0);
+    let seeded = seed_both(&layout, &sealer);
+    let locked = webui_chromium(&layout).join("Ardia p-new/History");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::File::open(&locked).is_ok() {
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+        return;
+    }
+    let report = run(&layout, &sealer);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(report.outcome, Outcome::Failed, "{}", report.to_json());
+    assert_eq!(report.failed_stage.map(|s| s.as_str()), Some("backup"));
+    assert_backups_open_with_their_own_key(&layout, "a backup that stopped");
+    for folder in kept_folders(&layout) {
+        if !profiles(&folder).is_empty() {
+            assert_eq!(live_key(&folder).as_deref(), Some(seeded.webui_key.as_str()));
+        }
+    }
+    let report = run(&layout, &sealer);
+    assert_eq!(report.outcome, Outcome::Migrated, "{}", report.to_json());
+    let mut fresh = 0;
+    launch_chromium(&layout, &mut fresh);
+    assert_nothing_lost(&layout, &seeded, "after a stopped backup");
 }
