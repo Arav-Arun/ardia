@@ -173,6 +173,22 @@ test("making a split from a shared tab live in another window brings its page in
   assert.equal(pages("https://a1.com").length, 1);
 });
 
+for (const focused of ["the split's window", "the other window"]) {
+  test(`a split made while ${focused} is focused lists each of its tabs once, with one live page`, () => {
+    reset();
+    const { a, b, a1, b1 } = twoWindows();
+    share(true);
+    S().setFocusedWindow(focused === "the split's window" ? b : a);
+    S().createSplit([b1, rowOf(b, "https://a1.com")]);
+    for (const url of ["https://a1.com", "https://b1.com"]) {
+      assert.equal(rowOf(a, url), undefined, `A doesn't list ${url} beside B's split`);
+      assert.equal(list(b).filter((id) => S().tabs[id].url === url).length, 1, `B lists ${url} once, as its pane`);
+      assert.equal(pages(url).length, 1, `${url} has one live page`);
+    }
+    assert.ok(shown(a) && S().tabs[shown(a)].windowId === a, "A still shows a tab of its own");
+  });
+}
+
 test("the ⌘T bar's open tabs rank a shared tab by its last use in any window, listing it once", async () => {
   reset();
   const { recentTabSuggestions } = await import("@ardia/core");
