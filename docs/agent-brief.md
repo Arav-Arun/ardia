@@ -257,6 +257,8 @@ Engine files are in `engine/ardiacore/src/ardia/core`, app files in `packages/ar
     `--prebuilt-engine` to use the published engine instead of a stale `~/chromium-build`. A new engine framework is staged
     under the chromium lock: `--release` your chromium take first, or it uses your take (`--as`).
     `/tmp/ac-<name>.holder` says who holds a lock. Every `scripts/agent` script takes `--help`.
+    To choose where a heavy build or test run goes, `scripts/agent/pick-host [min_free_gb]` prints the least
+    loaded Mac on AC power with enough disk and reserves it for 5 minutes, so parallel agents spread out.
     When the main session runs the build train (`scripts/agent/train serve`: one shared build of the tree), don't
     build yourself: `train request --as <you>`, then `train wait --as <you>` prints the app to run.
   - Run: `scripts/agent/ac launch <the app build-app printed> --data <scratch>/data`
