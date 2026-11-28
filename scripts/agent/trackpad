@@ -8,12 +8,12 @@ scroll and momentum phases a real trackpad sends, without moving the pointer or 
 responsive scrolling tracks these like a finger, so a list really scrolls, coasts and rubber-bands. ArdiaSwipe's
 devSimulate hands events straight to NSApp instead: a scroll view only shows the elastic part of those.
 
-  scripts/agent/trackpad <pid> <window-number> <x> <y> <dy-per-step> <steps> [end|hold|momentum]
+  scripts/agent/trackpad <pid> <window-number> <x> <y> <dy-per-step> <steps> [end|hold|continue|momentum]
 
 <window-number> is the CGWindowID (CGWindowListCopyWindowInfo, or cua-driver's list_windows), <x> <y> are points
 from the window's top left, and a negative <dy-per-step> scrolls the content up (toward the end of a list).
-end (default) lifts the fingers, hold keeps them down for a mid-gesture capture (send `0 0 end` to lift), momentum
-lifts them and coasts.
+end (default) lifts the fingers, hold keeps them down for a mid-gesture capture, continue moves fingers already held
+down by an earlier hold, and momentum lifts them and coasts. Send `0 0 end` to lift held fingers.
 """
 
 let args = CommandLine.arguments
@@ -28,7 +28,7 @@ guard let pidValue = Int32(args[1]), let windowNumber = Int(args[2]), let localX
 }
 let pid = pid_t(pidValue)
 let release = args.count > 7 ? args[7] : "end"
-guard ["end", "hold", "momentum"].contains(release) else {
+guard ["end", "hold", "continue", "momentum"].contains(release) else {
   print(usage)
   exit(2)
 }
@@ -66,6 +66,10 @@ func post(_ dy: Double, phase: CGScrollPhase?, momentum: CGMomentumScrollPhase?)
   usleep(16_000)
 }
 
+if release == "continue" {
+  for _ in 0..<steps { post(perStep, phase: .changed, momentum: nil) }
+  exit(0)
+}
 if steps > 0 || perStep != 0 {
   post(0, phase: .mayBegin, momentum: nil)
   post(perStep, phase: .began, momentum: nil)
